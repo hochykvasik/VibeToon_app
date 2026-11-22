@@ -1460,7 +1460,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Опорная точка выделенного слоя на экране: x, y, признак «сдвинута» (1/0), признак «тащится» (1/0); null - не показывать. */
     val pivotOverlay: StateFlow<FloatArray?> = _pivotOverlay.asStateFlow()
     private val PIVOT_GRAB = 60_000
-    private val PIVOT_HIT_PX = 44f
+    private val PIVOT_HIT_PX = 36f
     private val PIVOT_SNAP_PX = 14f
     private var pivotLayer = -1
 
