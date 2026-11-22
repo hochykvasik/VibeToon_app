@@ -19,7 +19,6 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Видео готово" to R.string.ui_video_ready,
     "Файл готов" to R.string.ui_file_ready,
     "Поделиться" to R.string.ui_share,
-    "Совместимый экспорт видео" to R.string.ui_compatible_video_export,
     "Закрыть" to R.string.ui_close,
     "Не получилось" to R.string.ui_failed,
     "Новый текст" to R.string.ui_new_text,
@@ -1057,6 +1056,20 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Нет совпадающих ключей эффектов группы на этом кадре" to R.string.ui_no_matching_group_effect_keys_on_thi,
     "Ключ −1" to R.string.ui_key_1,
     "Ключ +1" to R.string.ui_key_1_2,
+    "Группы" to R.string.ui_groups,
+    "Границы клипа меняются перетаскиванием его краёв на таймлайне. Кнопка «Разделить» разрезает клип на текущем кадре." to R.string.ui_drag_clip_edges_on_the_timeline_to_c,
+    "Границы клипа на таймлайне" to R.string.ui_clip_bounds_on_the_timeline,
+    "Края клипа" to R.string.ui_clip_edges,
+    "Жёлтый маркер на холсте перетаскивается; «Пивот в центр» ставит точку в центр рамки. Пивот сохраняется в проекте и учитывается в экспорте." to R.string.ui_drag_the_yellow_marker_on_the_canvas,
+    "Выделите слои и соберите их в группу. Группа вращается и масштабируется вокруг своей опорной точки." to R.string.ui_select_layers_and_group_them_the_gro,
+    "Траектория" to R.string.ui_motion_path,
+    "Включите «Показывать траекторию» в настройках: путь опорной точки слоя рисуется на холсте. Траектория не экспортируется." to R.string.ui_turn_on_show_motion_path_in_settings,
+    "Кнопка «Родитель» в инспекторе: слой повторяет сдвиг, поворот и масштаб родителя." to R.string.ui_parent_button_in_the_inspector_the_l,
+    "Ключи и траектория движения" to R.string.ui_keys_and_motion_path_2,
+    "Опорная точка" to R.string.ui_pivot_point,
+    "Связи" to R.string.ui_links,
+    "Группы, связи и опорные точки" to R.string.ui_groups_links_and_pivots,
+    "Совместимый экспорт видео" to R.string.ui_compatible_video_export,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */

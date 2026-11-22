@@ -867,4 +867,18 @@ Warp для групп: в разработке|Warp for groups: coming soon
 Нет совпадающих ключей эффектов группы на этом кадре|No matching group effect keys on this frame
 Ключ −1|Key −1
 Ключ +1|Key +1
+Группы|Groups
+Границы клипа меняются перетаскиванием его краёв на таймлайне. Кнопка «Разделить» разрезает клип на текущем кадре.|Drag clip edges on the timeline to change its bounds. The Split button cuts the clip at the current frame.
+Границы клипа на таймлайне|Clip bounds on the timeline
+Края клипа|Clip edges
+Жёлтый маркер на холсте перетаскивается; «Пивот в центр» ставит точку в центр рамки. Пивот сохраняется в проекте и учитывается в экспорте.|Drag the yellow marker on the canvas; Pivot to Center puts the point in the middle of the frame. The pivot is saved in the project and used in export.
+Выделите слои и соберите их в группу. Группа вращается и масштабируется вокруг своей опорной точки.|Select layers and group them. The group rotates and scales around its pivot point.
+Траектория|Motion path
+Включите «Показывать траекторию» в настройках: путь опорной точки слоя рисуется на холсте. Траектория не экспортируется.|Turn on Show Motion Path in settings: the layer pivot path is drawn on the canvas. The path is not exported.
+Кнопка «Родитель» в инспекторе: слой повторяет сдвиг, поворот и масштаб родителя.|Parent button in the inspector: the layer follows the parent's move, rotation and scale.
+Ключи и траектория движения|Keys and motion path
+Опорная точка|Pivot point
+Связи|Links
+Группы, связи и опорные точки|Groups, links and pivots
+Совместимый экспорт видео|Compatible video export
 """

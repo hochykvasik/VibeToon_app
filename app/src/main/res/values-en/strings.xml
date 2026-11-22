@@ -1176,5 +1176,18 @@
     <string name="ui_no_matching_group_effect_keys_on_thi">No matching group effect keys on this frame</string>
     <string name="ui_key_1">Key −1</string>
     <string name="ui_key_1_2">Key +1</string>
+    <string name="ui_groups">Groups</string>
+    <string name="ui_drag_clip_edges_on_the_timeline_to_c">Drag clip edges on the timeline to change its bounds. The Split button cuts the clip at the current frame.</string>
+    <string name="ui_clip_bounds_on_the_timeline">Clip bounds on the timeline</string>
+    <string name="ui_clip_edges">Clip edges</string>
+    <string name="ui_drag_the_yellow_marker_on_the_canvas">Drag the yellow marker on the canvas; Pivot to Center puts the point in the middle of the frame. The pivot is saved in the project and used in export.</string>
+    <string name="ui_select_layers_and_group_them_the_gro">Select layers and group them. The group rotates and scales around its pivot point.</string>
+    <string name="ui_motion_path">Motion path</string>
+    <string name="ui_turn_on_show_motion_path_in_settings">Turn on Show Motion Path in settings: the layer pivot path is drawn on the canvas. The path is not exported.</string>
+    <string name="ui_parent_button_in_the_inspector_the_l">Parent button in the inspector: the layer follows the parent\'s move, rotation and scale.</string>
+    <string name="ui_keys_and_motion_path_2">Keys and motion path</string>
+    <string name="ui_pivot_point">Pivot point</string>
+    <string name="ui_links">Links</string>
+    <string name="ui_groups_links_and_pivots">Groups, links and pivots</string>
     <string name="ui_compatible_video_export">Compatible video export</string>
 </resources>

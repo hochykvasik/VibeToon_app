@@ -61,6 +61,9 @@ data class Camera(
 
     /** Экранная точка -> холст (обратное к [toScreen]). */
     fun toCanvas(sx: Float, sy: Float, viewW: Float, viewH: Float, canvasW: Int, canvasH: Int): Pair<Float, Float> {
+        // Неверный ввод/геометрия: точка заведомо вне холста, без NaN (касание ничего не задевает).
+        if (!sx.isFinite() || !sy.isFinite() || !viewW.isFinite() || !viewH.isFinite() || viewW <= 0f || viewH <= 0f ||
+            canvasW <= 0 || canvasH <= 0 || !zoom.isFinite() || zoom <= 0f || !panX.isFinite() || !panY.isFinite()) return OUTSIDE
         val fit = fitScale(viewW, viewH, canvasW, canvasH)
         val fx = (viewW - canvasW * fit) / 2f
         val fy = (viewH - canvasH * fit) / 2f
@@ -105,6 +108,7 @@ data class Camera(
         const val MIN_ZOOM = 0.2f
         const val MAX_ZOOM = 20f
         const val SNAP_DEG = 6f
+        private val OUTSIDE = -1f to -1f
 
         /** Масштаб вписывания холста в вид (поля 5%). */
         fun fitScale(viewW: Float, viewH: Float, canvasW: Int, canvasH: Int): Float =

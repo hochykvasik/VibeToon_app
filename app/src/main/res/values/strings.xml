@@ -1176,5 +1176,18 @@
     <string name="ui_no_matching_group_effect_keys_on_thi">Нет совпадающих ключей эффектов группы на этом кадре</string>
     <string name="ui_key_1">Ключ −1</string>
     <string name="ui_key_1_2">Ключ +1</string>
+    <string name="ui_groups">Группы</string>
+    <string name="ui_drag_clip_edges_on_the_timeline_to_c">Границы клипа меняются перетаскиванием его краёв на таймлайне. Кнопка «Разделить» разрезает клип на текущем кадре.</string>
+    <string name="ui_clip_bounds_on_the_timeline">Границы клипа на таймлайне</string>
+    <string name="ui_clip_edges">Края клипа</string>
+    <string name="ui_drag_the_yellow_marker_on_the_canvas">Жёлтый маркер на холсте перетаскивается; «Пивот в центр» ставит точку в центр рамки. Пивот сохраняется в проекте и учитывается в экспорте.</string>
+    <string name="ui_select_layers_and_group_them_the_gro">Выделите слои и соберите их в группу. Группа вращается и масштабируется вокруг своей опорной точки.</string>
+    <string name="ui_motion_path">Траектория</string>
+    <string name="ui_turn_on_show_motion_path_in_settings">Включите «Показывать траекторию» в настройках: путь опорной точки слоя рисуется на холсте. Траектория не экспортируется.</string>
+    <string name="ui_parent_button_in_the_inspector_the_l">Кнопка «Родитель» в инспекторе: слой повторяет сдвиг, поворот и масштаб родителя.</string>
+    <string name="ui_keys_and_motion_path_2">Ключи и траектория движения</string>
+    <string name="ui_pivot_point">Опорная точка</string>
+    <string name="ui_links">Связи</string>
+    <string name="ui_groups_links_and_pivots">Группы, связи и опорные точки</string>
     <string name="ui_compatible_video_export">Совместимый экспорт видео</string>
 </resources>
