@@ -834,4 +834,22 @@
     <string name="ui_my_projects">My projects</string>
     <string name="ui_layer_has_no_animation_edits_apply_t">Layer has no animation: edits apply to all frames. To animate, add a key with the ◎ button on the timeline</string>
     <string name="ui_press_back_again_to_return_to_the_pr">Press Back again to return to the projects list</string>
+    <string name="ui_view_rotation_0">View rotation: 0°</string>
+    <string name="ui_rotate_view_90_left">Rotate view 90° left</string>
+    <string name="ui_rotate_view_90_right">Rotate view 90° right</string>
+    <string name="ui_no_flip">No flip</string>
+    <string name="ui_pivot_moved">Pivot: moved</string>
+    <string name="ui_pivot_center">Pivot: center</string>
+    <string name="ui_center_2">Center</string>
+    <string name="ui_symbols_prefabs">Symbols (prefabs)</string>
+    <string name="ui_no_symbols_yet_select_layers_and_cre">No symbols yet: select layers and create a symbol</string>
+    <string name="ui_instances">Instances: {}</string>
+    <string name="ui_project_images">Project images</string>
+    <string name="ui_no_imported_images">No imported images</string>
+    <string name="ui_to_symbol">To symbol</string>
+    <string name="ui_import_image">Import image…</string>
+    <string name="ui_shared_library_across_projects">Shared library across projects</string>
+    <string name="ui_importing_images_as_symbols_is_enabl">Importing images as symbols is enabled in Settings → Import.</string>
+    <string name="ui_coming_soon_2">Coming soon</string>
+    <string name="ui_items_marked_coming_soon_do_nothing_">Items marked “Coming soon” do nothing yet; the rest are saved and apply immediately.</string>
 </resources>

@@ -522,4 +522,22 @@ Transform Layer (null)|Transform Layer (null)
 Мои работы|My projects
 Слой без анимации: правка действует на все кадры. Чтобы анимировать, поставьте ключ кнопкой ◎ на таймлайне|Layer has no animation: edits apply to all frames. To animate, add a key with the ◎ button on the timeline
 Нажмите «Назад» ещё раз, чтобы выйти в список проектов|Press Back again to return to the projects list
+Поворот вида: 0°|View rotation: 0°
+Повернуть вид на 90° влево|Rotate view 90° left
+Повернуть вид на 90° вправо|Rotate view 90° right
+Без отражения|No flip
+Опорная точка: сдвинута|Pivot: moved
+Опорная точка: центр|Pivot: center
+В центр|Center
+Символы (префабы)|Symbols (prefabs)
+Символов пока нет: выделите слои и создайте символ|No symbols yet: select layers and create a symbol
+Экземпляров: {}|Instances: {}
+Картинки проекта|Project images
+Импортированных картинок нет|No imported images
+В символ|To symbol
+Импортировать картинку…|Import image…
+Общая библиотека между проектами|Shared library across projects
+Импорт картинок сразу символами включается в Настройки → Импорт.|Importing images as symbols is enabled in Settings → Import.
+В разработке|Coming soon
+Пункты с пометкой «В разработке» пока не действуют; остальные сохраняются и работают сразу.|Items marked “Coming soon” do nothing yet; the rest are saved and apply immediately.
 """
