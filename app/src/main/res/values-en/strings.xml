@@ -852,4 +852,9 @@
     <string name="ui_importing_images_as_symbols_is_enabl">Importing images as symbols is enabled in Settings → Import.</string>
     <string name="ui_coming_soon_2">Coming soon</string>
     <string name="ui_items_marked_coming_soon_do_nothing_">Items marked “Coming soon” do nothing yet; the rest are saved and apply immediately.</string>
+    <string name="ui_compatible_video_export_if_the_video">Compatible video export (if the video has stripes)</string>
+    <string name="ui_symbol_has_not_redrawn_yet_showing_t">Symbol “{}” has not redrawn yet: showing the previous frame, retrying</string>
+    <string name="ui_gpu_memory_is_almost_full_of_mb_some">GPU memory is almost full ({} of {} MB): some layers are shown at reduced size</string>
+    <string name="ui_export_interrupted_the_app_was_sent_">Export interrupted: the app was sent to the background. Start the export again</string>
+    <string name="ui_export_interrupted">Export interrupted</string>
 </resources>

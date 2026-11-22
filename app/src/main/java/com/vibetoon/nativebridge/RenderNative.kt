@@ -8,6 +8,8 @@ object RenderNative {
 
     external fun create(): Long
     external fun destroy(renderer: Long)
+    /** Освобождает рендерер без вызовов GL: его контекст уже потерян (имена объектов недействительны). */
+    external fun abandon(renderer: Long)
     /** Возвращает GL_MAX_TEXTURE_SIZE или -1 при ошибке. */
     external fun initGL(renderer: Long): Int
     external fun setViewport(renderer: Long, width: Int, height: Int)
@@ -84,4 +86,10 @@ object RenderNative {
     external fun readPixel(renderer: Long, x: Int, y: Int): Int
     /** true = нужен ещё кадр (позже: идёт загрузка текстур). */
     external fun drawFrame(renderer: Long): Boolean
+    /** Кадр экспорта: вся очередь текстур, затем одна отрисовка. */
+    external fun drawFrameComplete(renderer: Long)
+    /** Предел стороны внеэкранного снимка (GL_MAX_TEXTURE_SIZE, но не больше 8192). */
+    external fun maxCaptureSide(renderer: Long): Int
+    /** Память текстур: [занято МБ, бюджет МБ, слоёв уменьшено из-за бюджета, не загружено]. Из GL-потока. */
+    external fun textureStats(renderer: Long): IntArray
 }

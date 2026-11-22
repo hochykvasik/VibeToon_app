@@ -103,8 +103,16 @@ public:
     // Снимок кадра в память: холст w x h (без камеры и рамки) через внутренний FBO; RGBA premultiplied, строка 0 - низ.
     // transparent: без фона холста (PNG/GIF с прозрачностью). Вызывать с текущим GL-контекстом.
     bool captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out);
+    // Загружает всю очередь текстур (до maxRounds порций по kUploadBytesPerFrame). true - очередь пуста.
+    bool drainUploads(int maxRounds = 64);
+    // Кадр «целиком»: сначала все ожидающие текстуры, потом одна отрисовка (экспорт, снимки).
+    void drawFrameComplete() { drainUploads(); drawFrame(); }
+    // Предел стороны внеэкранного снимка: GL_MAX_TEXTURE_SIZE устройства, но не больше kMaxCaptureSide.
+    int maxCaptureSide() const;
     // Цвет пикселя экрана (ARGB) после drawFrame: для пипетки. Координаты вида, ось y вниз.
     int readPixel(int x, int y) const;
+    // Память текстур: {занято МБ, бюджет МБ, уменьшено из-за бюджета, не загружено из-за бюджета}.
+    void textureStats(int out[4]) const;
     // Освобождает GL-объекты (контекст должен быть текущим).
     void release();
 
@@ -140,6 +148,8 @@ private:
     };
 
     void uploadPending();                        // не более kUploadBytesPerFrame за кадр
+    void deleteLayerTexture(int layerId);        // безопасное удаление: сначала отцепляется от FBO рисования
+    void detachPaintTarget();                    // layerFbo_ больше не ссылается на текстуру слоя
     ViewAffine view() const;                     // холст -> экран с камерой (поворот и отражения тоже)
     void drawOutsideCanvas();                    // при повороте: закрашивает всё, что вылезло за холст
     void drawSelection();
@@ -230,6 +240,19 @@ private:
     std::vector<Fbo> fboPool_;                   // свободные FBO
     int fboCreated_ = 0;
     GLuint backdropTex_ = 0, backdropFbo_ = 0;
+    int backdropW_ = 0, backdropH_ = 0;
+    int budgetReduced_ = 0, budgetSkipped_ = 0;   // счётчики бюджета текстур (для предупреждения в UI)   // размер подложки (пересоздаётся при смене размера цели)
+    // На время экспорта/снимка цели экранного размера откладываются (а не удаляются и создаются заново):
+    // меньше create/delete имён GL, после снимка экран рисуется теми же буферами.
+    std::vector<Fbo> stashPool_;
+    int stashCreated_ = 0;
+    GLuint stashBackdropTex_ = 0, stashBackdropFbo_ = 0;
+    int stashBackdropW_ = 0, stashBackdropH_ = 0;
+    bool stashed_ = false;
+    // Постоянная цель снимков (пересоздаётся только при смене размера).
+    GLuint captureTex_ = 0, captureFbo_ = 0;
+    int captureW_ = 0, captureH_ = 0;
+    int maxTex_ = 4096;
 
     std::unordered_map<int, Tex> textures_;
     size_t textureBytes_ = 0;

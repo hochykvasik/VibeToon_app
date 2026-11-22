@@ -63,10 +63,11 @@ class GrainPresetTest {
         assertTrue(BrushPresets.brushes.none { it.params.mode == StrokeMode.ERASE })
         assertEquals(BrushShape.SQUARE, BrushPresets.byId("square")!!.params.shape)
         assertEquals(BrushShape.SQUARE, BrushPresets.byId("e_square")!!.params.shape)
-        // карандаш: зерно едет и поворачивается со штампом; скринтоны и штриховки стоят на холсте
+        // карандаш: зерно бумаги неподвижно на холсте (CANVAS), штампы не накапливаются (CAP_OPACITY) - фактура видна
         val pencil = BrushPresets.byId("pencil")!!.params
-        assertEquals(GrainMode.MOVING, pencil.grainMode)
-        assertEquals(DabRotation.RANDOM, pencil.rotation)
+        assertEquals(GrainMode.CANVAS, pencil.grainMode)
+        assertEquals(GrainKind.PENCIL, pencil.grain)
+        assertEquals(StrokeMode.CAP_OPACITY, pencil.mode)
         for (id in listOf("screentone", "screentone_coarse")) {
             val p = BrushPresets.byId(id)!!.params
             assertEquals(GrainMode.CANVAS, p.grainMode)

@@ -113,7 +113,15 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
     // Автосохранение при сворачивании приложения
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) vm.flushSave() }
+        // Sprint 6.9.1: GL-вид получает onPause/onResume (раньше не получал - чёрный экран, ANR и вылет после возврата)
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> vm.onHostPause()
+                Lifecycle.Event.ON_RESUME -> vm.onHostResume()
+                Lifecycle.Event.ON_STOP -> vm.flushSave()
+                else -> Unit
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
@@ -265,8 +273,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
     val slop = LocalViewConfiguration.current.touchSlop
     Box(modifier) {
         AndroidView(
-            factory = { ctx -> VtGLSurfaceView(ctx).also { RenderHost.view = it } },
-            onRelease = { it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
+            factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextReady = vm::onGlContextReady; RenderHost.view = it } },
+            onRelease = { it.onContextReady = null; it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
             modifier = Modifier.matchParentSize()
         )
         BoneOverlayLayer(vm)
@@ -280,8 +288,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         PivotOverlayLayer(vm)
         val gs = com.vibetoon.ui.theme.LocalAppSettings.current
         // переключатели настроек, влияющие на логику редактора (поворот холста, опорные точки, Auto Pixel, контуры, импорт)
-        if (gs != null) LaunchedEffect(gs.rotateCanvas, gs.pivotEditing, gs.temporaryPivots, gs.autoPixelEdit, gs.onlySelectedPath, gs.vectorWorkflow, gs.importAsSymbols) {
-            vm.setEditorPrefs(MainViewModel.EditorPrefs(gs.rotateCanvas, gs.pivotEditing, gs.temporaryPivots, gs.autoPixelEdit, gs.onlySelectedPath, gs.vectorWorkflow, gs.importAsSymbols))
+        if (gs != null) LaunchedEffect(gs.rotateCanvas, gs.pivotEditing, gs.temporaryPivots, gs.autoPixelEdit, gs.onlySelectedPath, gs.vectorWorkflow, gs.importAsSymbols, gs.compatExport) {
+            vm.setEditorPrefs(MainViewModel.EditorPrefs(gs.rotateCanvas, gs.pivotEditing, gs.temporaryPivots, gs.autoPixelEdit, gs.onlySelectedPath, gs.vectorWorkflow, gs.importAsSymbols, gs.compatExport))
         }
         Box(
             modifier = Modifier.matchParentSize().onSizeChanged { vm.onViewSize(it.width.toFloat(), it.height.toFloat()) }

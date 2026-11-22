@@ -20,9 +20,12 @@ object BrushPresets {
         ),
         BrushPreset(
             "pencil", "Карандаш",
+            // Зерно бумаги неподвижно на холсте (CANVAS) и мельче (масштаб 0.5): у тонкой линии видна фактура.
+            // Режим CAP_OPACITY (GL_MAX) не даёт перекрытым штампам «залить» зерно до сплошной линии, как было с
+            // ACCUMULATE + MOVING: каждый штамп брал один и тот же центр текстуры, и карандаш выглядел как Перо.
             BrushParams(
-                size = 12f, spacing = 0.12f, minSizePercent = 0.35f, flow = 0.55f, hardness = 0.7f, mode = StrokeMode.ACCUMULATE,
-                grain = GrainKind.PENCIL, grainMode = GrainMode.MOVING, rotation = DabRotation.RANDOM, grainScale = 1f, grainContrast = 1.4f, presetId = "pencil"
+                size = 12f, spacing = 0.12f, minSizePercent = 0.35f, flow = 0.9f, hardness = 0.75f, mode = StrokeMode.CAP_OPACITY,
+                grain = GrainKind.PENCIL, grainMode = GrainMode.CANVAS, rotation = DabRotation.RANDOM, grainScale = 0.5f, grainContrast = 1.6f, presetId = "pencil"
             )
         ),
         BrushPreset(

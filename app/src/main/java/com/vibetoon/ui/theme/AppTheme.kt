@@ -65,10 +65,13 @@ class AppSettings(context: Context) {
     var vectorWorkflow by mutableStateOf(p.getBoolean("vecFlow", false))
     /** Import Images as Symbols: импортированная картинка сразу становится символом (префабом). */
     var importAsSymbols by mutableStateOf(p.getBoolean("impSym", false))
+    /** Compatible Video Export: кадры читаются из GL и кодируются из YUV-буферов (медленнее, для устройств с полосами в видео). */
+    var compatExport by mutableStateOf(p.getBoolean("compatExp", false))
     fun saveEditor() {
         p.edit().putBoolean("rot2", rotateCanvas).putBoolean("pivEdit", pivotEditing).putBoolean("pivTemp", temporaryPivots)
             .putBoolean("autoPx", autoPixelEdit).putBoolean("onlySelPath", onlySelectedPath)
-            .putBoolean("vecFlow", vectorWorkflow).putBoolean("impSym", importAsSymbols).apply()
+            .putBoolean("vecFlow", vectorWorkflow).putBoolean("impSym", importAsSymbols)
+            .putBoolean("compatExp", compatExport).apply()
     }
     /** Свои клавиши: действие -> код клавиши Android (только отличающиеся от умолчания). */
     val hotkeys = androidx.compose.runtime.mutableStateMapOf<com.vibetoon.domain.HotkeyAction, Int>().also { m ->

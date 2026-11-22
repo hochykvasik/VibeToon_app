@@ -540,4 +540,9 @@ Transform Layer (null)|Transform Layer (null)
 Импорт картинок сразу символами включается в Настройки → Импорт.|Importing images as symbols is enabled in Settings → Import.
 В разработке|Coming soon
 Пункты с пометкой «В разработке» пока не действуют; остальные сохраняются и работают сразу.|Items marked “Coming soon” do nothing yet; the rest are saved and apply immediately.
+Совместимый экспорт видео (если в видео полосы)|Compatible video export (if the video has stripes)
+Символ «{}» пока не перерисовался: показан прежний кадр, идут повторы|Symbol “{}” has not redrawn yet: showing the previous frame, retrying
+Память видеокарты почти заполнена ({} из {} МБ): часть слоёв показана в уменьшенном размере|GPU memory is almost full ({} of {} MB): some layers are shown at reduced size
+Экспорт прерван: приложение было свёрнуто. Запустите экспорт ещё раз|Export interrupted: the app was sent to the background. Start the export again
+Экспорт прерван|Export interrupted
 """

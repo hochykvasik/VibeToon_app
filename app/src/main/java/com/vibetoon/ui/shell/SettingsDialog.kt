@@ -70,6 +70,7 @@ private val RU: Map<String, String> = mapOf(
     "Cursor Hover Preview" to "Предпросмотр под курсором",
     "Only Erase/Smudge Selected Path Layers" to "Стирать/размазывать только выбранные слои-контуры",
     "Import Images as Symbols" to "Импортировать картинки как символы",
+    "Compatible Video Export" to "Совместимый экспорт видео (если в видео полосы)",
     "Insert Images into Existing Drawing" to "Вставлять картинки в существующий рисунок",
     "PSD Import Mode: слои как в файле" to "Импорт PSD: слои как в файле",
     "Resolution Limit" to "Ограничение разрешения",
@@ -102,7 +103,7 @@ private fun ru(t: String) = RU[t] ?: t
 private val WIRED = setOf(
     "Rotate Canvas 2 Fingers", "Layer Pivot Editing", "Temporary Pivots", "Auto Pixel Edit Mode",
     "Only Erase/Smudge Selected Path Layers", "Vector Workflow", "Import Images as Symbols",
-    "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)"
+    "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)", "Compatible Video Export"
 )
 
 private val TABS: List<Pair<String, List<Item>>> = listOf(
@@ -110,7 +111,7 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
     "General" to toggles(
         "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)", "Play Audio While Scrubbing",
         "Quick Layer Delete: рисунок (иначе анимация)", "Follow Camera", "Reset Frame After Pause",
-        "Forward/Backward: кадры (иначе рисунки)", "Vector Workflow", "Auto-Add Keyframes"
+        "Forward/Backward: кадры (иначе рисунки)", "Vector Workflow", "Auto-Add Keyframes", "Compatible Video Export"
     ),
     "Tools" to toggles(
         "Layer Pivot Editing", "Temporary Pivots", "Show Motion Path", "Quick Selection", "Auto Pixel Edit Mode",
@@ -197,6 +198,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                         "Only Erase/Smudge Selected Path Layers" -> st.onlySelectedPath
                                         "Vector Workflow" -> st.vectorWorkflow
                                         "Import Images as Symbols" -> st.importAsSymbols
+                                        "Compatible Video Export" -> st.compatExport
                                         "Flip Canvas (горизонтально)" -> flip.first
                                         "Flip Canvas (вертикально)" -> flip.second
                                         else -> false
@@ -210,6 +212,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                             "Only Erase/Smudge Selected Path Layers" -> st.onlySelectedPath = v
                                             "Vector Workflow" -> st.vectorWorkflow = v
                                             "Import Images as Symbols" -> st.importAsSymbols = v
+                                            "Compatible Video Export" -> st.compatExport = v
                                             "Flip Canvas (горизонтально)" -> vm?.toggleViewFlipX()
                                             "Flip Canvas (вертикально)" -> vm?.toggleViewFlipY()
                                         }

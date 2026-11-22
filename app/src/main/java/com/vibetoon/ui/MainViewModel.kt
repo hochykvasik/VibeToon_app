@@ -91,6 +91,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.Executors
@@ -146,6 +147,8 @@ data class ColorAdjust(val exposure: Float = 0f, val contrast: Float = 0f, val s
 
 /** Начало id призраков кальки. */
 const val GHOST_BASE = 900_000
+/** Память под кэш картинок символов (полный размер холста): при смене маркера заливка идёт из памяти. */
+const val SYMBOL_CACHE_BYTES = 96L * 1024 * 1024
 /** Тип эффекта Тонировка для кальки: kFragFx, режим 20. */
 private const val TINT_FX = 20f
 
@@ -382,7 +385,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun openProject(id: String) {
         if (projectId == id) return
         closing = false
+        opening = true
         viewModelScope.launch {
+          try {
             resetEditor()
             val data = withContext(Dispatchers.IO) { projects.load(id) }.getOrElse {
                 _state.value = UiState.Error(it.message ?: "Не удалось открыть проект")
@@ -418,6 +423,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             RenderNative.clearPendingUploads()   // текстуры прежнего проекта: id слоёв пересекаются
             RenderHost.view?.clearTextures()
             awaitView()
+            glView = RenderHost.view
             RenderHost.view?.setBackground(data.meta.background.toInt())
             val empty = SceneBuilder.buildTree(emptyList(), canvasW, canvasH)
             scene = empty
@@ -435,6 +441,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 com.vibetoon.ui.shell.Lesson.pending = false
                 addLessonShapes()
             }
+          } finally {
+            opening = false
+          }
         }
     }
 
@@ -466,6 +475,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         clearSelection(); penCancel(); _rasterTool.value = null
         _loop.value = true; _magnet.value = false; vecLayer = -1; vecPts.clear(); vecGen.clear()
         thumbGen++; thumbs.clear(); thumbPending.clear()   // миниатюры прошлого проекта не должны всплывать у новых слоёв
+        resetSymbolImages(); _markerThumbs.value = emptyMap()   // id символов разных проектов совпадают
         stroker = null; _paintCursor.value = null; _paintTool.value = null
         paintSizes.clear(); paintDirty.clear()
         saveJob?.cancel()
@@ -557,6 +567,81 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------------------------------------------------------------- жизненный цикл GL (Sprint 6.9.1)
+
+    /**
+     * Приложение уходит в фон (ON_PAUSE). Сначала в очередь GL ставятся чтения ещё не сохранённых рисунков
+     * (очередь GLSurfaceView выполняется до обработки паузы, контекст ещё жив), затем вид ставится на паузу:
+     * тяжёлые GL-задачи больше не принимаются, идущий экспорт останавливается. Раньше вид не получал onPause вовсе,
+     * и снимки символов/экспорт продолжали занимать GL-поток, пока система уничтожала поверхность - отсюда ANR.
+     */
+    fun onHostPause() {
+        val view = RenderHost.view ?: return
+        val pid = projectId
+        if (pid != null) {
+            val ids = synchronized(paintDirty) { val c = paintDirty.toList(); paintDirty.clear(); c }
+            for (id in ids) {
+                val file = paintFile(pid, id) ?: continue
+                view.layerPixels(id) { bytes ->
+                    if (bytes == null || bytes.size <= 8) paintDirty += id
+                    else viewModelScope.launch(Dispatchers.IO) { writeLayerPng(bytes, file) }
+                }
+            }
+        }
+        view.onPause()
+    }
+
+    /** Возврат из фона (ON_RESUME): вид снова рисует, пропущенные на паузе символы перерисовываются. */
+    fun onHostResume() {
+        val view = RenderHost.view ?: return
+        view.onResume()
+        symRetryAt.clear()
+        if (projectId != null && _editingSymbol.value == null) updateSymbols(_frame.value)
+    }
+
+    private var glRestoreJob: Job? = null
+    /** Вид, в контекст которого залиты текстуры проекта. */
+    private var glView: Any? = null
+    @Volatile private var opening = false
+
+    /**
+     * Создан новый GL-контекст (вызов из GL-потока). Если это не первый контекст вида - старый потерян вместе со
+     * всеми текстурами: картинки, кадры, тексты, символы и слои PSD заливаются заново из файлов проекта и памяти.
+     * Раньше здесь был TODO, и после возврата из фона холст оставался наполовину чёрным.
+     */
+    fun onGlContextReady(recreated: Boolean) {
+        viewModelScope.launch(Dispatchers.Main) {
+            val v = RenderHost.view
+            // новый вид (Activity пересоздана) с первым контекстом тоже пуст: openProject того же id ничего не делает
+            if (!recreated && (v == null || v === glView)) {
+                // первый контекст того же вида: текстуры уже в очереди, но символы могли быть пропущены (поверхности ещё не было)
+                if (projectId != null && _editingSymbol.value == null) updateSymbols(_frame.value)
+                return@launch
+            }
+            if (opening) return@launch   // проект ещё открывается: openProject сам зальёт текстуры
+            glView = v
+            val pid = projectId ?: return@launch
+            glRestoreJob?.cancel()
+            glRestoreJob = viewModelScope.launch {
+                Log.i("VT/GL", "context recreated: reloading textures of $pid")
+                textFxKeys.clear(); cellShown.clear()
+                symShown.clear(); symTries.clear(); symRetryAt.clear()   // картинки символов в памяти остаются годными
+                RenderHost.view?.setBackground((meta?.background ?: 0xFFFFFFFFL).toInt())
+                scene?.let { RenderHost.view?.setScene(it) }
+                restoreMediaTextures(pid)   // медиа, кадры, затем updateCells -> updateSymbols
+                updateTextFx(_frame.value)
+                val ref = psdRef
+                if (ref != null) {
+                    if (_state.value == UiState.Loading || _state.value is UiState.Rendering) {
+                        // PSD как раз загружается: его текстуры уже идут в новый контекст через общую очередь
+                    } else loadPsd(keepState = true) { repo.parseFile(projects.assetFile(pid), ref.name) }
+                }
+                pushScene()
+                RenderHost.view?.requestRender()
+            }
+        }
+    }
+
     /** Выход из проекта: сохранение и миниатюра (вид без рамки и в исходном масштабе), затем [done]. */
     fun closeProject(done: () -> Unit) {
         if (closing) return
@@ -628,6 +713,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             Log.i("VT/Psd", "textures queued: $loaded of ${psdTextureIds.size}, ${bytes / 1048576f} MB RGBA")
+            // символы, снятые пока слои PSD ещё грузились, могли получиться без них: картинки снимаются заново
+            withContext(Dispatchers.Main) { resetSymbolImages(); updateSymbols(_frame.value) }
             _state.value = UiState.Success(summary.layers.size, summary.millis, loaded, bytes / 1048576f)
             psdRef = PsdRef("assets/source.psd", summary.name, psdW, psdH)
             markDirty()
@@ -858,8 +945,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun updateTextFx(f: Int) {
         val fps = _animation.value.settings.fps.coerceAtLeast(1)
         val tSec = f.toFloat() / fps
+        val skip = if (_editingSymbol.value == null) allSymbolMembers() else emptySet()
         for (m in media) {
-            if (!m.isText || !m.fx.animated) continue
+            if (!m.isText || !m.fx.animated || m.id in skip) continue
             if (m.id in textFxBusy || textFxKeys[m.id] == m.fx.stateKey(tSec, fps)) continue
             textFxBusy += m.id
             viewModelScope.launch {
@@ -1440,7 +1528,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val autoPixelEdit: Boolean = true,
         val onlySelectedPath: Boolean = false,
         val vectorWorkflow: Boolean = false,
-        val importAsSymbols: Boolean = false
+        val importAsSymbols: Boolean = false,
+        val compatExport: Boolean = false
     )
     private var prefs = EditorPrefs()
     fun setEditorPrefs(p: EditorPrefs) {
@@ -1662,7 +1751,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun restore(snap: Snapshot) {
         val oldMedia = media.toList()
         lastCheckKey = null
-        symShown.clear()
+        resetSymbolImages()
         base.clear(); base.putAll(snap.base)
         override.clear()
         _animation.value = snap.animation
@@ -1975,6 +2064,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val symShown = java.util.concurrent.ConcurrentHashMap<Int, Int>()
     private val symBusy = HashSet<Int>()
     private val symTries = HashMap<Int, Int>()
+    // ---- Sprint 6.9.1: надёжность символов ----
+    /** Один снимок символа за раз: сборка вложенной сцены заливает текстуры участников, параллельные снимки их путали. */
+    private val symbolLock = kotlinx.coroutines.sync.Mutex()
+    /** Ревизия содержимого символов: растёт при выходе из редактирования, Undo/Redo, смене холста, открытии проекта. */
+    @Volatile private var symRev = 0
+    /** Готовые картинки внутренних кадров (ключ SymbolMath.cacheKey): смена маркера - заливка из памяти, без снимка GL. */
+    private val symImages = LinkedHashMap<String, android.graphics.Bitmap>(16, 0.75f, true)
+    private var symImagesBytes = 0L
+    private val symRetryAt = HashMap<Int, Long>()
     private val _editingSymbol = MutableStateFlow<Int?>(null)
     /** Id группы-определения символа, открытого на редактирование; null - главная сцена. */
     val editingSymbol: StateFlow<Int?> = _editingSymbol.asStateFlow()
@@ -2079,51 +2177,122 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return SymbolMath.duration(frames, _animation.value.settings.durationFrames)
     }
 
-    private fun symbolDims(): Pair<Int, Int> {
-        val k = minOf(1f, 1024f / maxOf(canvasW, canvasH))
-        return maxOf(1, (canvasW * k).toInt()) to maxOf(1, (canvasH * k).toInt())
+    /** Размер картинки символа = размер холста (экземпляр занимает весь холст); раньше потолок 1024 px давал мыло. */
+    private fun symbolDims(): Pair<Int, Int> = SymbolMath.renderSize(canvasW, canvasH, RenderHost.view?.maxCaptureSide ?: 4096)
+
+    private var budgetWarned = 0
+    /** Бюджет памяти текстур: раз в сессию предупреждаем, если слои пришлось уменьшить или не удалось загрузить. */
+    private fun checkTextureBudget() {
+        RenderHost.view?.textureStats { st ->
+            if (st == null || st.size < 4) return@textureStats
+            val issues = st[2] + st[3]
+            if (issues <= budgetWarned) return@textureStats
+            viewModelScope.launch {
+                if (budgetWarned == 0) _state.value = UiState.Message("Память видеокарты почти заполнена (${st[0]} из ${st[1]} МБ): часть слоёв показана в уменьшенном размере")
+                budgetWarned = issues
+            }
+        }
     }
 
-    /** Подставляет в экземпляры символов картинку вложенной сцены на кадре [f]. */
+    /** Содержимое символов изменилось: старые картинки не годятся, экземпляры перерисуются. */
+    private fun resetSymbolImages() {
+        symShown.clear(); symTries.clear(); symRetryAt.clear()
+        symRev++
+        synchronized(symImages) { symImages.clear(); symImagesBytes = 0L }
+    }
+
+    /** Все участники всех определений символов (на главной сцене они скрыты; их текстуры нужны только снимкам символов). */
+    private fun allSymbolMembers(): Set<Int> {
+        val out = HashSet<Int>()
+        for (d in media) if (d.kind == MediaKind.GROUP && d.symDur > 0) out += symbolMembers(d.id)
+        return out
+    }
+
+    /** Картинка внутреннего кадра [local] символа [defId]: из кэша или новым снимком. Вызывать под [symbolLock]. */
+    private suspend fun symbolImage(defId: Int, local: Int): android.graphics.Bitmap? {
+        val key = SymbolMath.cacheKey(defId, local, symRev)
+        synchronized(symImages) { symImages[key] }?.let { return it }
+        flushPaintSaves()   // нарисованное в символе должно попасть в файлы кадров до снимка
+        val bmp = symbolBitmap(defId, local, 0) ?: return null
+        synchronized(symImages) {
+            symImages[key] = bmp
+            symImagesBytes += bmp.byteCount
+            val it = symImages.entries.iterator()
+            while (symImagesBytes > SYMBOL_CACHE_BYTES && symImages.size > 1 && it.hasNext()) {
+                val e = it.next()
+                if (e.key == key) continue
+                symImagesBytes -= e.value.byteCount
+                it.remove()   // без recycle: картинку может читать заливка/миниатюра, память освободит GC
+            }
+        }
+        return bmp
+    }
+
+    /**
+     * Подставляет в экземпляры символов картинку вложенной сцены на кадре [f].
+     * Sprint 6.9.1: снимки идут по одному ([symbolLock]), картинки кэшируются; при сбое прежняя текстура остаётся (экземпляр
+     * не пустеет), повтор с паузой 0.4-5 с без пометки «показан»; на паузе приложения снимки не ставятся вовсе.
+     */
     private fun updateSymbols(f: Int) {
         if (projectId == null || _editingSymbol.value != null) return
-        val inside = HashSet<Int>()
-        for (d in media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }) inside += symbolMembers(d.id)
+        if (RenderHost.view?.active != true) return   // после возврата onHostResume / onGlContextReady вызовут снова
+        val inside = allSymbolMembers()
         for (inst in media.filter { it.kind == MediaKind.SYMBOL && it.id !in inside }) {   // вложенные экземпляры рисуются внутри родителя
             val def = media.firstOrNull { it.id == inst.symRef && it.symDur > 0 } ?: continue
             val key = symbolKey(inst, def, f)
             if (symShown[inst.id] == key || inst.id in symBusy) continue
+            val retryAt = symRetryAt[inst.id]
+            if (retryAt != null && android.os.SystemClock.uptimeMillis() < retryAt) continue
             symBusy += inst.id
+            val instId = inst.id; val defId = def.id; val defName = def.name
             viewModelScope.launch {
                 var ok = false
+                var paused = false
                 try {
-                    val bmp = symbolBitmap(def.id, key, 0)
-                    if (bmp != null) { RenderNative.uploadBitmap(inst.id, bmp); bmp.recycle(); invalidateThumb(inst.id); restoreMemberTextures(def.id); RenderHost.view?.requestRender(); ok = true }
+                    symbolLock.withLock {
+                        val bmp = symbolImage(defId, key)
+                        if (bmp != null) {
+                            withContext(Dispatchers.Default) { RenderNative.uploadBitmap(instId, bmp) }
+                            restoreMemberTextures(defId)
+                            ok = true
+                        } else paused = RenderHost.view?.active != true
+                    }
+                    if (ok) { invalidateThumb(instId); RenderHost.view?.requestRender(); checkTextureBudget() }
                 } catch (t: kotlinx.coroutines.CancellationException) {
                     throw t
                 } catch (t: Throwable) {
-                    Log.w("VT/Symbols", "symbol ${def.name} not drawn: ${t.message}")
+                    Log.w("VT/Symbols", "symbol $defName not drawn: ${t.message}")
                 } finally {
-                    symBusy -= inst.id
+                    symBusy -= instId
                 }
-                // сбой не должен оставлять экземпляр пустым навсегда: до 3 повторов с паузой, потом сообщение
-                val tries = if (ok) 0 else (symTries[inst.id] ?: 0) + 1
-                if (ok || tries >= 3) { symShown[inst.id] = key; symTries.remove(inst.id) } else symTries[inst.id] = tries
-                if (!ok && tries >= 3) _state.value = UiState.Message("Не удалось нарисовать символ «${def.name}»: откройте и закройте его (кнопка «На главную сцену»)")
-                if (!ok && tries < 3) kotlinx.coroutines.delay(400)
+                when {
+                    ok -> { symShown[instId] = key; symTries.remove(instId); symRetryAt.remove(instId) }
+                    paused -> Unit   // вид на паузе: не ошибка, повтор после возврата
+                    else -> {
+                        val tries = (symTries[instId] ?: 0) + 1
+                        symTries[instId] = tries
+                        val wait = SymbolMath.retryDelayMs(tries)
+                        symRetryAt[instId] = android.os.SystemClock.uptimeMillis() + wait
+                        if (tries == 3) _state.value = UiState.Message("Символ «$defName» пока не перерисовался: показан прежний кадр, идут повторы")
+                        kotlinx.coroutines.delay(wait)
+                    }
+                }
                 if (_editingSymbol.value == null) updateSymbols(_frame.value)
             }
         }
     }
 
     /** Текстуры участников (рисунки кадров, тексты с эффектами) остались на внутреннем кадре символа: вернуть кадр сцены. */
+    // Sprint 6.9.1: на главной сцене участники скрыты, поэтому их текстуры не заливаются заново после каждого снимка
+    // (раньше updateCells главного кадра и снимок внутреннего кадра писали в одни и те же id наперегонки - маркеры
+    // «переставали переключаться», в символ попадал не тот рот). Сбрасываются только отметки, а заливка - при входе в символ.
     private fun restoreMemberTextures(defId: Int) {
         val mem = symbolMembers(defId)
-        if (media.any { it.id in mem && (it.cells.isNotEmpty() || (it.isText && it.fx.animated)) }) {
-            for (m in media) if (m.id in mem && m.cells.isNotEmpty()) cellShown.remove(m.id)
-            textFxKeys.clear()
-            updateCells(_frame.value); updateTextFx(_frame.value)
+        for (m in media) if (m.id in mem) {
+            if (m.cells.isNotEmpty()) cellShown.remove(m.id)
+            if (m.isText && m.fx.animated) textFxKeys.remove(m.id)
         }
+        if (_editingSymbol.value != null) { updateCells(_frame.value); updateTextFx(_frame.value) }
     }
 
     /** Вложенные экземпляры символа [defId] на его внутреннем кадре [local]: их текстуры рисуются рекурсивно (глубина до MAX_SYMBOL_DEPTH). */
@@ -2144,7 +2313,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val (w, h) = symbolDims()
         val scene = withContext(Dispatchers.Default) { buildSceneAt(fps, null, defId)(local) }
         val bytes = captureNow(scene, true, w, h) ?: return null
-        return captureBitmap(bytes, w, h)
+        return withContext(Dispatchers.Default) { captureBitmap(bytes, w, h) }   // переворот строк и Bitmap - не в UI-потоке
     }
 
     /** Предварительная отрисовка вложенных сцен для экспорта: определение -> PNG каждого внутреннего кадра (null - не снялся). [frame] - только кадр проекта. */
@@ -2165,13 +2334,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val list = MutableList<ByteArray?>(n) { null }
             for (k in keys) {
                 if (k !in list.indices) continue
-                val b = symbolBitmap(d.id, k, 0) ?: continue
+                val b = symbolLock.withLock { symbolImage(d.id, k) } ?: continue
                 list[k] = withContext(Dispatchers.Default) {
                     val bo = java.io.ByteArrayOutputStream()
-                    b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo); b.recycle()
+                    b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo)   // картинка из кэша: не recycle
                     bo.toByteArray()
                 }
             }
+            restoreMemberTextures(d.id)
             out[d.id] = list
         }
         return out
@@ -2230,6 +2400,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _editingSymbol.value = gid
         selectLayer(null)
         refreshSymbolState(); rebuildRows(); pushScene()
+        restoreMemberTextures(gid)   // участники получают рисунки текущего кадра (на главной сцене они не обновлялись)
         _state.value = UiState.Message("Редактирование «${def.name}»: правки видны во всех экземплярах")
     }
 
@@ -2240,7 +2411,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (i >= 0) media[i] = media[i].copy(symDur = computeSymbolDuration(gid))
         _editingSymbol.value = null
         selectLayer(null)
-        symShown.clear()
+        resetSymbolImages()   // содержимое могло измениться: кэш картинок и отметки сбрасываются
         refreshSymbolState(); rebuildRows(); pushScene(); updateSymbols(_frame.value); markDirty()
         regenMarkerThumbs(gid, force = true)
     }
@@ -2295,7 +2466,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (_markerThumbs.value.containsKey(key)) continue
                 val f = projects.mediaFile(pid, thumbName(def.id, mk.frame))
                 if (mk.thumb.isEmpty() || !f.exists()) continue
-                val bmp = withContext(Dispatchers.IO) { android.graphics.BitmapFactory.decodeFile(f.absolutePath) } ?: continue
+                val bmp = withContext(Dispatchers.IO) { if (thumbOutdated(f)) null else android.graphics.BitmapFactory.decodeFile(f.absolutePath) } ?: continue
                 _markerThumbs.value = _markerThumbs.value + (key to bmp.asImageBitmap())
             }
         }
@@ -2333,7 +2504,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun thumbName(defId: Int, frame: Int) = "st${defId}_$frame.png"
 
-    /** Миниатюры маркеров (PNG ~96 px в папке проекта; ссылка хранится в маркере). Недостающие или устаревшие (force) рисуются заново. */
+    /** Миниатюра из прошлых версий (96 px) - мыльная, её нужно перерисовать. */
+    private fun thumbOutdated(f: java.io.File): Boolean {
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(f.absolutePath, o)
+        return maxOf(o.outWidth, o.outHeight) < SymbolMath.THUMB_SIDE * 3 / 4
+    }
+
+    /**
+     * Миниатюры маркеров (PNG до [SymbolMath.THUMB_SIDE] px в папке проекта; ссылка хранится в маркере). Недостающие,
+     * старые 96-пиксельные или устаревшие (force) рисуются заново - асинхронно: снимок под [symbolLock] из той же картинки,
+     * что идёт в экземпляр (данные символа не трогаются), масштаб и PNG - в фоновых потоках.
+     */
     private fun regenMarkerThumbs(defId: Int, force: Boolean) {
         val pid = projectId ?: return
         viewModelScope.launch {
@@ -2341,11 +2523,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val got = HashMap<Int, String>()
             for (mk in def.markers) {
                 val f = projects.mediaFile(pid, thumbName(defId, mk.frame))
-                if (!force && mk.thumb.isNotEmpty() && f.exists()) continue
-                val b = runCatching { symbolBitmap(defId, mk.frame, 0) }.getOrNull() ?: continue
-                val k = 96f / maxOf(b.width, b.height)
-                val small = android.graphics.Bitmap.createScaledBitmap(b, maxOf(1, (b.width * k).toInt()), maxOf(1, (b.height * k).toInt()), true)
-                if (small !== b) b.recycle()
+                if (!force && mk.thumb.isNotEmpty() && f.exists() && !withContext(Dispatchers.IO) { thumbOutdated(f) }) continue
+                if (RenderHost.view?.active != true) break   // на паузе не снимаем: дорисуются при следующем открытии панели
+                val small = symbolLock.withLock {
+                    val b = runCatching { symbolImage(defId, mk.frame) }.getOrNull() ?: return@withLock null
+                    withContext(Dispatchers.Default) {
+                        val (tw, th) = SymbolMath.thumbSize(b.width, b.height)
+                        android.graphics.Bitmap.createScaledBitmap(b, tw, th, true)   // b остаётся в кэше нетронутой
+                    }
+                } ?: continue
                 withContext(Dispatchers.IO) { f.outputStream().use { small.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
                 _markerThumbs.value = _markerThumbs.value + ("$defId:${mk.frame}" to small.asImageBitmap())
                 got[mk.frame] = "assets/${f.name}"
@@ -2442,8 +2628,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun updateCells(f: Int) {
         val pid = projectId ?: return
         updateSymbols(f)
+        // участники символов на главной сцене скрыты: их текстуру заливает снимок символа, а не кадр сцены
+        val skip = if (_editingSymbol.value == null) allSymbolMembers() else emptySet()
         for (m in media) {
-            if (m.kind != MediaKind.IMAGE || m.cells.isEmpty()) continue
+            if (m.kind != MediaKind.IMAGE || m.cells.isEmpty() || m.id in skip) continue
             val act = FrameMath.active(m.cells, f) ?: continue
             if (cellShown[m.id] == act.file || m.id in cellBusy) continue
             cellBusy += m.id
@@ -2999,7 +3187,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         meta = meta?.copy(width = newW, height = newH)
         if (psdRef != null) fit = ProjectMath.fit(psdW, psdH, canvasW, canvasH)
         resetCamera()
-        symShown.clear()
+        resetSymbolImages()
         rebuildLayers(); pushScene(); updateSymbols(_frame.value)
         val items = media.filter { it.id in texts }
         if (items.isNotEmpty()) rerenderTexts(items)
@@ -6812,10 +7000,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Размер видео и число кадров для диалога. */
     fun exportInfo(shortSide: Int, fps: Int): Triple<Int, Int, Int> {
-        val (w, h) = ExportMath.size(canvasW, canvasH, shortSide)
+        val (w, h) = encoderSize(ExportMath.size(canvasW, canvasH, shortSide))
         val st = _animation.value.settings
         return Triple(w, h, ExportMath.frameCount(st.durationFrames, st.fps, fps))
     }
+
+    private val encoderSizes = HashMap<Pair<Int, Int>, Pair<Int, Int>>()
+    /** Размер, который примет кодировщик устройства (кратно 16, в его пределах); опрос кодеков кэшируется. */
+    private fun encoderSize(s: Pair<Int, Int>): Pair<Int, Int> =
+        encoderSizes.getOrPut(s) { runCatching { com.vibetoon.render.VideoExporter.supportedSize(s.first, s.second) }.getOrDefault(s) }
 
     /**
      * Рендер всей анимации в MP4 (без звука) в папку проекта. Идёт в GL-потоке прямо в кодек, быстрее
@@ -6907,7 +7100,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
         val sceneAt = buildSceneAt(fps, symCache = prerenderSymbols())
         view.exportVideo(
-            ExportSpec(w, h, fps, frames, file), bg, sceneAt,
+            ExportSpec(w, h, fps, frames, file, compat = prefs.compatExport), bg, sceneAt,
             onProgress = { _export.value = ExportUi.Running(it, frames) }, cancel = cancel
         ) { result ->
             viewModelScope.launch { restoreAfterExport() }   // тексты с эффектами и покадровые слои возвращаются на текущий кадр
@@ -6919,7 +7112,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }.onFailure {
                 file.delete()
-                _export.value = if (cancel.get()) ExportUi.Idle else ExportUi.Failed(it.message ?: "Не удалось записать видео")
+                _export.value = when {
+                    it is com.vibetoon.render.ExportInterruptedException -> ExportUi.Failed(it.message ?: "Экспорт прерван")
+                    cancel.get() -> ExportUi.Idle
+                    else -> ExportUi.Failed(it.message ?: "Не удалось записать видео")
+                }
             }
         }
         }

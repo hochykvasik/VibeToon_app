@@ -852,4 +852,9 @@
     <string name="ui_importing_images_as_symbols_is_enabl">Импорт картинок сразу символами включается в Настройки → Импорт.</string>
     <string name="ui_coming_soon_2">В разработке</string>
     <string name="ui_items_marked_coming_soon_do_nothing_">Пункты с пометкой «В разработке» пока не действуют; остальные сохраняются и работают сразу.</string>
+    <string name="ui_compatible_video_export_if_the_video">Совместимый экспорт видео (если в видео полосы)</string>
+    <string name="ui_symbol_has_not_redrawn_yet_showing_t">Символ «{}» пока не перерисовался: показан прежний кадр, идут повторы</string>
+    <string name="ui_gpu_memory_is_almost_full_of_mb_some">Память видеокарты почти заполнена ({} из {} МБ): часть слоёв показана в уменьшенном размере</string>
+    <string name="ui_export_interrupted_the_app_was_sent_">Экспорт прерван: приложение было свёрнуто. Запустите экспорт ещё раз</string>
+    <string name="ui_export_interrupted">Экспорт прерван</string>
 </resources>

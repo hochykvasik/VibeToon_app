@@ -25,6 +25,14 @@ Java_com_vibetoon_nativebridge_RenderNative_destroy(JNIEnv*, jobject, jlong h) {
     delete R(h);
 }
 
+// Контекст GL уже потерян (новый onSurfaceCreated): имена объектов принадлежали старому контексту,
+// удалять их в новом нельзя - там те же числа могут означать уже другие объекты. Только освобождаем память.
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_abandon(JNIEnv*, jobject, jlong h) {
+    if (!h) return;
+    delete R(h);
+}
+
 JNIEXPORT jint JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_initGL(JNIEnv*, jobject, jlong h) {
     return R(h)->initGL();
@@ -372,6 +380,26 @@ Java_com_vibetoon_nativebridge_RenderNative_readPixel(JNIEnv*, jobject, jlong h,
 JNIEXPORT jboolean JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_drawFrame(JNIEnv*, jobject, jlong h) {
     return R(h)->drawFrame() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Кадр экспорта: вся очередь текстур, затем ровно одна отрисовка (вместо цикла перерисовок).
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_drawFrameComplete(JNIEnv*, jobject, jlong h) {
+    R(h)->drawFrameComplete();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_maxCaptureSide(JNIEnv*, jobject, jlong h) {
+    return R(h)->maxCaptureSide();
+}
+
+JNIEXPORT jintArray JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_textureStats(JNIEnv* env, jobject, jlong h) {
+    int v[4] = {0, 0, 0, 0};
+    R(h)->textureStats(v);
+    jintArray out = env->NewIntArray(4);
+    if (out) env->SetIntArrayRegion(out, 0, 4, reinterpret_cast<const jint*>(v));
+    return out;
 }
 
 }  // extern "C"

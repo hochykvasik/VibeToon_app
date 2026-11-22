@@ -1,9 +1,11 @@
 #include "render/Renderer.h"
+#include "render/TexMath.h"
 
 #include <algorithm>
 #include <cmath>
 
 #include "common/Log.h"
+#include "render/GlState.h"
 #include "render/GlUtil.h"
 #include "render/UploadQueue.h"
 
@@ -14,6 +16,8 @@ namespace {
 constexpr size_t kTextureBudgetBytes = 192u * 1024u * 1024u;
 // Сколько байт грузим в GPU за один кадр (чтобы не подвешивать UI).
 constexpr size_t kUploadBytesPerFrame = 16u * 1024u * 1024u;
+// Сторона внеэкранного снимка (символы, PNG, GIF): не больше этого и не больше GL_MAX_TEXTURE_SIZE.
+constexpr int kMaxCaptureSide = 8192;
 
 const char* kVertex = R"(#version 300 es
 layout(location = 0) in vec2 aPos;   // единичный квадрат, y вниз (в пространстве слоя)
@@ -447,11 +451,16 @@ int Renderer::initGL() {
     fboPool_.clear();
     fboCreated_ = 0;
     backdropTex_ = backdropFbo_ = 0;
+    backdropW_ = backdropH_ = 0;
+    budgetReduced_ = budgetSkipped_ = 0;
     // рисование: id объектов прошлого контекста недействительны
     progDab_ = dabVao_ = dabVbo_ = strokeTex_ = strokeFbo_ = backupTex_ = backupFbo_ = layerFbo_ = 0;
     paintW_ = paintH_ = 0;
     paintActive_ = false;
-    grainTex_[0] = grainTex_[1] = grainTex_[2] = grainTex_[3] = 0;
+    for (GLuint& gt : grainTex_) gt = 0;   // все виды зерна (раньше сбрасывались только 0..3)
+    stashPool_.clear(); stashCreated_ = 0; stashBackdropTex_ = stashBackdropFbo_ = 0; stashed_ = false;
+    captureTex_ = captureFbo_ = 0; captureW_ = captureH_ = 0;
+    maxTex_ = maxTex > 0 ? maxTex : 4096;
     curFbo_ = 0;
     return checkGl("initGL") ? maxTex : -1;
 }
@@ -473,37 +482,66 @@ void Renderer::beginExport(int width, int height) {
     exportMode_ = true;
     // экспорт и снимки всегда без поворота и отражения вида: поворот холста не искажает результат
     zoom_ = 1.f; panX_ = panY_ = 0.f; rot_ = 0.f; flipX_ = flipY_ = false;
-    setViewport(width, height);
+    const int w = width > 0 ? width : 1, h = height > 0 ? height : 1;
+    if (w != width_ || h != height_) {
+        // буферы экранного размера откладываются до endExport, а не удаляются
+        stashPool_.swap(fboPool_); fboPool_.clear();
+        stashCreated_ = fboCreated_; fboCreated_ = 0;
+        stashBackdropTex_ = backdropTex_; stashBackdropFbo_ = backdropFbo_;
+        stashBackdropW_ = backdropW_; stashBackdropH_ = backdropH_;
+        backdropTex_ = backdropFbo_ = 0;
+        stashed_ = true;
+    }
+    width_ = w; height_ = h;
+    glViewport(0, 0, width_, height_);
+}
+
+int Renderer::maxCaptureSide() const { return std::min(maxTex_, kMaxCaptureSide); }
+
+bool Renderer::drainUploads(int maxRounds) {
+    for (int i = 0; i < maxRounds && !uploadQueue::empty(); ++i) uploadPending();
+    return uploadQueue::empty();
 }
 
 bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out) {
-    if (w < 1 || h < 1 || w > 4096 || h > 4096 || exportMode_) return false;
-    GLuint tex = 0, fbo = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    if (w < 1 || h < 1 || w > maxCaptureSide() || h > maxCaptureSide() || exportMode_) return false;
+    GlStateGuard guard;   // снимок не меняет ни FBO, ни viewport, ни scissor/blend/текстуры экранного кадра
+    if (!captureFbo_ || captureW_ != w || captureH_ != h) {
+        if (captureFbo_) glDeleteFramebuffers(1, &captureFbo_);
+        if (captureTex_) glDeleteTextures(1, &captureTex_);
+        captureFbo_ = captureTex_ = 0;
+        glGenTextures(1, &captureTex_);
+        glBindTexture(GL_TEXTURE_2D, captureTex_);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glGenFramebuffers(1, &captureFbo_);
+        glBindFramebuffer(GL_FRAMEBUFFER, captureFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, captureTex_, 0);
+        captureW_ = w; captureH_ = h;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, captureFbo_);
+    const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
     if (ok) {
         beginExport(w, h);
-        screenFbo_ = fbo;
+        screenFbo_ = captureFbo_;
         transparentCapture_ = transparent;
-        int guard = 0;
-        while (drawFrame() && guard++ < 500) { /* ждём все текстуры из очереди */ }
+        // раньше здесь было до 500 полных перерисовок «пока есть загрузки»: GL-поток занимался секундами,
+        // очередь событий росла, а onPause/surfaceDestroyed ждали его (ANR). Теперь: загрузка очереди и один проход.
+        drawFrameComplete();
         out.assign(static_cast<size_t>(w) * h * 4, 0);
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, captureFbo_);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
         transparentCapture_ = false;
         screenFbo_ = 0;
         endExport();
+    } else {
+        LOGW("capture FBO incomplete %dx%d", w, h);
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDeleteFramebuffers(1, &fbo);
-    glDeleteTextures(1, &tex);
-    return ok;
+    curFbo_ = 0;
+    return ok && checkGl("captureFrame");
 }
 
 void Renderer::endExport() {
@@ -511,7 +549,17 @@ void Renderer::endExport() {
     exportMode_ = false;
     zoom_ = savedZoom_; panX_ = savedPanX_; panY_ = savedPanY_;
     rot_ = savedRot_; flipX_ = savedFlipX_; flipY_ = savedFlipY_;
-    setViewport(savedW_, savedH_);
+    if (stashed_) {
+        releaseTargets();                     // буферы размера снимка/видео
+        fboPool_.swap(stashPool_); stashPool_.clear();
+        fboCreated_ = stashCreated_; stashCreated_ = 0;
+        backdropTex_ = stashBackdropTex_; backdropFbo_ = stashBackdropFbo_;
+        backdropW_ = stashBackdropW_; backdropH_ = stashBackdropH_;
+        stashBackdropTex_ = stashBackdropFbo_ = 0;
+        stashed_ = false;
+    }
+    width_ = savedW_; height_ = savedH_;
+    glViewport(0, 0, width_, height_);
 }
 
 void Renderer::setCanvas(int width, int height) {
@@ -652,10 +700,7 @@ const uint8_t* Renderer::layerAlpha(int layerId, int& w, int& h) const {
 bool Renderer::layerThumb(int layerId, int size, std::vector<uint8_t>& out) {
     const auto t = textures_.find(layerId);
     if (t == textures_.end() || t->second.w <= 0 || t->second.h <= 0 || size < 4 || !progTex_) return false;
-    GLint prevFbo = 0;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
-    GLint prevVp[4];
-    glGetIntegerv(GL_VIEWPORT, prevVp);
+    GlStateGuard guard;
     GLuint tex = 0, fbo = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -683,8 +728,7 @@ bool Renderer::layerThumb(int layerId, int size, std::vector<uint8_t>& out) {
         glReadPixels(0, 0, size, size, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
         glBindVertexArray(0);
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
-    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &fbo);
     glDeleteTextures(1, &tex);
     return ok;
@@ -696,8 +740,7 @@ bool Renderer::readLayerPixels(int layerId, std::vector<uint8_t>& out, int& w, i
     w = t->second.w;
     h = t->second.h;
     out.assign(static_cast<size_t>(w) * h * 4, 0);
-    GLint prev = 0;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
+    GlStateGuard guard;
     GLuint fbo = 0;
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -707,7 +750,7 @@ bool Renderer::readLayerPixels(int layerId, std::vector<uint8_t>& out, int& w, i
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prev));
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &fbo);
     return ok;
 }
@@ -795,32 +838,75 @@ void Renderer::drawSelection() {
     }
 }
 
+void Renderer::detachPaintTarget() {
+    if (!layerFbo_) return;
+    // Текстура, прикреплённая к непривязанному FBO, при glDeleteTextures не отцепляется: имя освобождается,
+    // а объект живёт дальше. На части драйверов (Mali/PowerVR) это путает имена - отцепляем явно.
+    glBindFramebuffer(GL_FRAMEBUFFER, layerFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, curFbo_);
+}
+
+void Renderer::deleteLayerTexture(int layerId) {
+    auto old = textures_.find(layerId);
+    if (old == textures_.end()) return;
+    if (paintActive_ && paintLayer_ == layerId) {
+        LOGW("layer %d replaced during a stroke: stroke dropped", layerId);
+        paintActive_ = false;
+    }
+    if (!paintActive_) detachPaintTarget();
+    glDeleteTextures(1, &old->second.id);
+    textureBytes_ -= old->second.bytes;
+    textures_.erase(old);
+}
+
 void Renderer::clearTextures() {
+    paintActive_ = false;
+    detachPaintTarget();
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
     textureBytes_ = 0;
+}
+
+void Renderer::textureStats(int out[4]) const {
+    out[0] = static_cast<int>(textureBytes_ / (1024 * 1024));
+    out[1] = static_cast<int>(kTextureBudgetBytes / (1024 * 1024));
+    out[2] = budgetReduced_;
+    out[3] = budgetSkipped_;
 }
 
 void Renderer::uploadPending() {
     size_t uploaded = 0;
     PendingUpload up;
     while (uploaded < kUploadBytesPerFrame && uploadQueue::pop(up)) {
-        const size_t bytes = static_cast<size_t>(up.width) * up.height * 4 * 4 / 3;  // с mip
+        // Бюджет считается с учётом заменяемой текстуры (раньше старая удалялась ДО проверки, а новая пропускалась -
+        // при смене маркера символ/рот просто пропадал). Если не помещается - текстура уменьшается вдвое, пока не
+        // поместится: слой остаётся видимым (чуть мягче), а не исчезает.
         auto old = textures_.find(up.layerId);
-        if (old != textures_.end()) {  // повторная загрузка слоя
-            glDeleteTextures(1, &old->second.id);
-            textureBytes_ -= old->second.bytes;
-            textures_.erase(old);
+        const size_t oldBytes = old != textures_.end() ? old->second.bytes : 0;
+        size_t bytes = textureBytesWithMips(up.width, up.height);
+        bool reduced = false;
+        while (textureBytes_ - oldBytes + bytes > kTextureBudgetBytes && up.width >= 128 && up.height >= 128) {
+            halveRgba(up.rgba, up.width, up.height);
+            bytes = textureBytesWithMips(up.width, up.height);
+            reduced = true;
         }
-        if (textureBytes_ + bytes > kTextureBudgetBytes) {
-            LOGW("texture budget exceeded, layer %d skipped (%zu MB in use)", up.layerId,
-                 textureBytes_ / (1024 * 1024));
+        if (textureBytes_ - oldBytes + bytes > kTextureBudgetBytes) {
+            ++budgetSkipped_;   // прежняя текстура слоя (если была) остаётся на месте
+            LOGW("texture budget exceeded, layer %d kept old texture (%zu MB in use)", up.layerId, textureBytes_ / (1024 * 1024));
             continue;
         }
+        if (reduced) {
+            ++budgetReduced_;
+            LOGW("texture budget: layer %d uploaded at %dx%d (%zu MB in use)", up.layerId, up.width, up.height, textureBytes_ / (1024 * 1024));
+        }
+        deleteLayerTexture(up.layerId);   // повторная загрузка слоя
         Tex t;
         t.bytes = bytes;
         glGenTextures(1, &t.id);
+        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, t.id);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(up.width, up.height))));
         glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, up.width, up.height);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE,
@@ -893,8 +979,13 @@ void Renderer::releaseTargets() {
     backdropFbo_ = backdropTex_ = 0;
 }
 
+// Подложка всегда размера текущей цели. Раньше размер не проверялся: после снимка символа (цель другого размера)
+// режимы наложения брали texelFetch из подложки чужого размера - на слое появлялась уменьшенная перевёрнутая копия холста.
 void Renderer::ensureBackdrop() {
-    if (backdropTex_) return;
+    if (backdropTex_ && backdropW_ == width_ && backdropH_ == height_) return;
+    if (backdropFbo_) { glDeleteFramebuffers(1, &backdropFbo_); backdropFbo_ = 0; }
+    if (backdropTex_) { glDeleteTextures(1, &backdropTex_); backdropTex_ = 0; }
+    backdropW_ = width_; backdropH_ = height_;
     glGenTextures(1, &backdropTex_);
     glBindTexture(GL_TEXTURE_2D, backdropTex_);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width_, height_);
@@ -1154,6 +1245,11 @@ bool Renderer::drawFrame() {
     glDisable(GL_SCISSOR_TEST);   // рамка выделения может выходить за холст
     if (!exportMode_) drawSelection();
     glBindVertexArray(0);
+    // текстуры слоёв и подложки не остаются привязанными к блокам между кадрами
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
     checkGl("drawFrame");
     return !uploadQueue::empty();
 }
@@ -1191,6 +1287,15 @@ int Renderer::readPixel(int x, int y) const {
 }
 
 void Renderer::release() {
+    if (captureFbo_) glDeleteFramebuffers(1, &captureFbo_);
+    if (captureTex_) glDeleteTextures(1, &captureTex_);
+    captureFbo_ = captureTex_ = 0;
+    for (const Fbo& f : stashPool_) { glDeleteFramebuffers(1, &f.fbo); glDeleteTextures(1, &f.tex); }
+    stashPool_.clear();
+    if (stashBackdropFbo_) glDeleteFramebuffers(1, &stashBackdropFbo_);
+    if (stashBackdropTex_) glDeleteTextures(1, &stashBackdropTex_);
+    stashBackdropFbo_ = stashBackdropTex_ = 0;
+    detachPaintTarget();
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
     textureBytes_ = 0;

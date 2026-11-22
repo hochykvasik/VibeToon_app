@@ -65,4 +65,31 @@ object SymbolMath {
 
     fun withMarker(list: List<FrameMarker>, m: FrameMarker): List<FrameMarker> = (list.filter { it.frame != m.frame } + m).sortedBy { it.frame }
     fun withoutMarker(list: List<FrameMarker>, frame: Int): List<FrameMarker> = list.filter { it.frame != frame }
+
+    // ---- качество и надёжность отрисовки экземпляров (Sprint 6.9.1) ----
+
+    /** Длинная сторона миниатюры маркера, px: панель показывает её около 130 dp (≈ 390 px на xxhdpi), 96 px было мыльно. */
+    const val THUMB_SIDE = 320
+
+    /**
+     * Размер картинки вложенной сцены символа: полный размер холста (экземпляр занимает весь холст, иначе текстура
+     * растягивается и мылится), уменьшение только если холст больше предела GPU [maxSide]. Пропорции сохраняются.
+     */
+    fun renderSize(canvasW: Int, canvasH: Int, maxSide: Int): Pair<Int, Int> {
+        val cw = canvasW.coerceAtLeast(1); val ch = canvasH.coerceAtLeast(1)
+        val k = minOf(1.0, maxSide.coerceAtLeast(16).toDouble() / maxOf(cw, ch))
+        return maxOf(1, Math.round(cw * k).toInt()) to maxOf(1, Math.round(ch * k).toInt())
+    }
+
+    /** Размер миниатюры с длинной стороной не больше [side] (никогда не больше исходника). */
+    fun thumbSize(w: Int, h: Int, side: Int = THUMB_SIDE): Pair<Int, Int> {
+        val k = minOf(1.0, side.toDouble() / maxOf(w, h, 1))
+        return maxOf(1, Math.round(w * k).toInt()) to maxOf(1, Math.round(h * k).toInt())
+    }
+
+    /** Пауза перед повтором неудавшейся отрисовки экземпляра: 400, 800, 1600 ... до 5000 мс. */
+    fun retryDelayMs(tries: Int): Long = minOf(5000L, 400L shl (tries - 1).coerceIn(0, 4))
+
+    /** Ключ кэша картинок: определение, внутренний кадр и ревизия содержимого (растёт при любой правке символа). */
+    fun cacheKey(defId: Int, local: Int, revision: Int): String = "$defId:$local:$revision"
 }
