@@ -1176,4 +1176,5 @@
     <string name="ui_no_matching_group_effect_keys_on_thi">No matching group effect keys on this frame</string>
     <string name="ui_key_1">Key −1</string>
     <string name="ui_key_1_2">Key +1</string>
+    <string name="ui_compatible_video_export">Compatible video export</string>
 </resources>

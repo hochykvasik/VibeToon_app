@@ -19,6 +19,7 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Видео готово" to R.string.ui_video_ready,
     "Файл готов" to R.string.ui_file_ready,
     "Поделиться" to R.string.ui_share,
+    "Совместимый экспорт видео" to R.string.ui_compatible_video_export,
     "Закрыть" to R.string.ui_close,
     "Не получилось" to R.string.ui_failed,
     "Новый текст" to R.string.ui_new_text,

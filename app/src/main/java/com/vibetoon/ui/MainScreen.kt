@@ -116,7 +116,14 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
     // Автосохранение при сворачивании приложения
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) vm.flushSave() }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> vm.onAppPaused()
+                Lifecycle.Event.ON_RESUME -> vm.onAppResumed()
+                Lifecycle.Event.ON_STOP -> vm.flushSave()
+                else -> Unit
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
@@ -285,7 +292,7 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
     val longPressMillis = config.longPressTimeoutMillis
     Box(modifier) {
         AndroidView(
-            factory = { ctx -> VtGLSurfaceView(ctx).also { RenderHost.view = it } },
+            factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextRecreated = { vm.onGlContextRecreated() }; RenderHost.view = it } },
             onRelease = { it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
             modifier = Modifier.matchParentSize()
         )

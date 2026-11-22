@@ -1176,4 +1176,5 @@
     <string name="ui_no_matching_group_effect_keys_on_thi">Нет совпадающих ключей эффектов группы на этом кадре</string>
     <string name="ui_key_1">Ключ −1</string>
     <string name="ui_key_1_2">Ключ +1</string>
+    <string name="ui_compatible_video_export">Совместимый экспорт видео</string>
 </resources>

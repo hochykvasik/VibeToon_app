@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.Choreographer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.sync.withLock
 import com.vibetoon.data.AudioEngine
 import com.vibetoon.data.ParseSummary
 import com.vibetoon.data.FontEntry
@@ -640,6 +641,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             saveJob?.cancel()
             saveNow()
+        }
+    }
+
+    /** Пауза приложения: остановить воспроизведение/экспорт, завершить штрих и сохранить. */
+    fun onAppPaused() {
+        pause()
+        cancelExport()
+        if (stroker != null || vecLayer >= 0) paintUp()
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(250)
+            saveJob?.cancel()
+            saveNow()
+        }
+    }
+
+    /** Возврат в приложение: перерисовать кадр; текстуры после пересоздания контекста восстанавливает [onGlContextRecreated]. */
+    fun onAppResumed() {
+        RenderHost.view?.requestRender()
+    }
+
+    /** GL-контекст пересоздан: текстуры потеряны, загружаем их заново из файлов проекта. */
+    fun onGlContextRecreated() {
+        val pid = projectId ?: return
+        viewModelScope.launch {
+            runCatching { restoreMediaTextures(pid) }
+            symShown.clear(); cellShown.clear(); textFxKeys.clear()
+            updateCells(_frame.value); updateTextFx(_frame.value); updateSymbols(_frame.value)
+            RenderHost.view?.requestRender()
         }
     }
 
@@ -2291,7 +2320,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun symbolDims(): Pair<Int, Int> {
-        val k = minOf(1f, 1024f / maxOf(canvasW, canvasH))
+        val k = minOf(1f, 4096f / maxOf(canvasW, canvasH))
         return maxOf(1, (canvasW * k).toInt()) to maxOf(1, (canvasH * k).toInt())
     }
 
@@ -2322,12 +2351,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } finally {
                     symBusy -= inst.id
                 }
-                // сбой не должен оставлять экземпляр пустым навсегда: до 3 повторов с паузой, потом сообщение
+                // Сбой сохраняет прежнюю текстуру: symShown не ставится, повтор будет при следующем updateSymbols.
                 val tries = if (ok) 0 else (symTries[inst.id] ?: 0) + 1
-                if (ok || tries >= 3) { symShown[inst.id] = key; symTries.remove(inst.id) } else symTries[inst.id] = tries
-                if (!ok && tries >= 3) _state.value = UiState.Message("Не удалось нарисовать символ «${def.name}»: откройте и закройте его (кнопка «На главную сцену»)")
+                if (ok) { symShown[inst.id] = key; symTries.remove(inst.id) } else symTries[inst.id] = tries
+                if (!ok && tries >= 3) _state.value = UiState.Message("Не удалось нарисовать символ «${def.name}»: прежняя картинка сохранена, повтор при следующем кадре")
                 if (!ok && tries < 3) kotlinx.coroutines.delay(400)
-                if (_editingSymbol.value == null) updateSymbols(_frame.value)
+                if (ok || tries < 3) { if (_editingSymbol.value == null) updateSymbols(_frame.value) }
             }
         }
     }
@@ -2342,6 +2371,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private val symbolMutex = kotlinx.coroutines.sync.Mutex()
+
     /** Вложенные экземпляры символа [defId] на его внутреннем кадре [local]: их текстуры рисуются рекурсивно (глубина до MAX_SYMBOL_DEPTH). */
     private suspend fun drawNestedSymbols(defId: Int, local: Int, depth: Int) {
         if (depth >= MAX_SYMBOL_DEPTH) return
@@ -2349,18 +2380,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         for (n in media.filter { it.kind == MediaKind.SYMBOL && it.id in mem }) {
             val nd = media.firstOrNull { it.id == n.symRef && it.symDur > 0 } ?: continue
             val ticket = RenderNative.textureUploadTicket(n.id)
-            val bmp = symbolBitmap(nd.id, symbolKey(n, nd, local), depth + 1) ?: continue
+            val bmp = symbolBitmapLocked(nd.id, symbolKey(n, nd, local), depth + 1) ?: continue
             RenderNative.uploadBitmapIfCurrent(n.id, bmp, ticket); bmp.recycle()
         }
     }
 
-    /** Картинка вложенной сцены [defId] на внутреннем кадре [local] (прозрачный фон). */
-    private suspend fun symbolBitmap(defId: Int, local: Int, depth: Int): android.graphics.Bitmap? {
+    /** Картинка вложенной сцены [defId] на внутреннем кадре [local] (прозрачный фон). Сериализовано: вложенные снимки не гоняются. */
+    private suspend fun symbolBitmap(defId: Int, local: Int, depth: Int): android.graphics.Bitmap? =
+        symbolMutex.withLock { symbolBitmapLocked(defId, local, depth) }
+
+    private suspend fun symbolBitmapLocked(defId: Int, local: Int, depth: Int): android.graphics.Bitmap? {
         drawNestedSymbols(defId, local, depth)
         val fps = _animation.value.settings.fps
-        val (w, h) = symbolDims()
+        var (w, h) = symbolDims()
         val scene = withContext(Dispatchers.Default) { buildSceneAt(fps, null, defId)(local) }
-        val bytes = captureNow(scene, true, w, h) ?: return null
+        var bytes = captureNow(scene, true, w, h)
+        // OOM/лимит GPU: аккуратно уменьшаемся вдвое, прежняя текстура остаётся до успеха.
+        while (bytes == null && (w > 1 || h > 1)) {
+            w = maxOf(1, w / 2); h = maxOf(1, h / 2)
+            bytes = captureNow(scene, true, w, h)
+        }
+        if (bytes == null) return null
         return withContext(Dispatchers.Default) { captureBitmap(bytes, w, h) }
     }
 
@@ -2558,7 +2598,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val rect = com.vibetoon.domain.project.ThumbnailBounds.padded(pixels, b.width, b.height)
             ?: return android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
         val cropped = android.graphics.Bitmap.createBitmap(b, rect.x, rect.y, rect.width, rect.height)
-        val k = 160f / maxOf(cropped.width, cropped.height)
+        val k = 320f / maxOf(cropped.width, cropped.height)
         val result = android.graphics.Bitmap.createScaledBitmap(cropped, maxOf(1, (cropped.width * k).toInt()), maxOf(1, (cropped.height * k).toInt()), true)
         if (cropped !== b && cropped !== result) cropped.recycle()
         return if (result === b) b.copy(android.graphics.Bitmap.Config.ARGB_8888, false) else result
@@ -8025,7 +8065,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Размер видео и число кадров для диалога. */
     fun exportInfo(shortSide: Int, fps: Int): Triple<Int, Int, Int> {
-        val (w, h) = ExportMath.size(canvasW, canvasH, shortSide)
+        val (w, h) = ExportMath.videoSize(canvasW, canvasH, shortSide)
         val st = _animation.value.settings
         return Triple(w, h, ExportMath.frameCount(st.durationFrames, st.fps, fps))
     }
@@ -8133,8 +8173,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val sceneAt = buildSceneAt(fps, symCache = prerenderSymbols())
+                val compatible = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("compatible_video_export", false)
                 view.exportVideo(
-                    ExportSpec(w, h, fps, frames, file), bg, sceneAt,
+                    ExportSpec(w, h, fps, frames, file, compatible), bg, sceneAt,
                     onProgress = { _export.value = ExportUi.Running(it, frames) }, cancel = cancel
                 ) { result ->
                     viewModelScope.launch {

@@ -24,7 +24,8 @@ class VtRenderer(
     private val takeScene: () -> SceneData?,
     private val frameParams: () -> FrameParams,
     private val requestRender: () -> Unit,
-    private val onReady: () -> Unit
+    private val onReady: () -> Unit,
+    private val onContextRecreated: () -> Unit = {}
 ) : GLSurfaceView.Renderer {
     private var handle = 0L
     @Volatile private var disposed = false
@@ -47,6 +48,7 @@ class VtRenderer(
         // Текстуры потеряны вместе с контекстом; сцену отправим заново (TODO: перезагрузка слоёв).
         lastScene?.let { applyScene(it) }
         onReady()
+        onContextRecreated()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -133,6 +135,13 @@ class VtRenderer(
                 RenderNative.setSelection(handle, null)
             }
 
+            override fun readFrame(index: Int, width: Int, height: Int): ByteArray? {
+                applyScene(sceneAt(index))
+                RenderNative.setBackground(handle, background)
+                RenderNative.setSelection(handle, null)
+                return RenderNative.captureFrame(handle, width, height, false)
+            }
+
             override fun drawFrame(index: Int) {
                 applyScene(sceneAt(index))
                 // пока в очереди есть загрузки текстур, кадр рисуется повторно (лимит от зависания)
@@ -159,7 +168,8 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     private val pendingScene = AtomicReference<SceneData?>(null)
     private val params = AtomicReference(FrameParams())
     private val rendererReady = kotlinx.coroutines.CompletableDeferred<Unit>()
-    private val vtRenderer = VtRenderer({ pendingScene.getAndSet(null) }, { params.get() }, { requestRender() }, { rendererReady.complete(Unit) })
+    var onContextRecreated: (() -> Unit)? = null
+    private val vtRenderer = VtRenderer({ pendingScene.getAndSet(null) }, { params.get() }, { requestRender() }, { rendererReady.complete(Unit) }, { onContextRecreated?.invoke() })
 
     /** View инициализирована не сразу: загрузка проекта ждёт реального создания GL-контекста. */
     suspend fun awaitRendererReady() = rendererReady.await()

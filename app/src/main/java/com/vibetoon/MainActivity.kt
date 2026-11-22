@@ -58,6 +58,16 @@ class MainActivity : ComponentActivity() {
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
     }
 
+    override fun onPause() {
+        super.onPause()
+        com.vibetoon.render.RenderHost.view?.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        com.vibetoon.render.RenderHost.view?.onResume()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemBars()

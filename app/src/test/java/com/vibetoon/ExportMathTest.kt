@@ -31,6 +31,14 @@ class ExportMathTest {
         assertTrue(w % 2 == 0 && h % 2 == 0)
     }
 
+    @Test fun videoSizeIsMultipleOf16() {
+        val (w, h) = ExportMath.videoSize(1920, 1080, 1080)
+        assertEquals(1920, w); assertEquals(1072, h)
+        assertTrue(w % 16 == 0 && h % 16 == 0)
+        val (pw, ph) = ExportMath.videoSize(880, 1280, 720)
+        assertEquals(720, pw); assertTrue(ph % 16 == 0)
+    }
+
     @Test fun frameCountFollowsDuration() {
         assertEquals(120, ExportMath.frameCount(120, 24, 24))
         assertEquals(150, ExportMath.frameCount(120, 24, 30))

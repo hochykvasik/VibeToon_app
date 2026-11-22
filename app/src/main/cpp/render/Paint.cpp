@@ -4,6 +4,7 @@
 
 #include "common/Log.h"
 #include "render/GlUtil.h"
+#include "render/GlState.h"
 #include "render/GradientMath.h"
 #include "render/Renderer.h"
 
@@ -128,28 +129,7 @@ GLuint makeFbo(GLuint tex) {
 }
 
 // Сохраняет и возвращает привязки GL, которые меняет рисование.
-struct GlSave {
-    GLint fbo = 0, vp[4] = {0, 0, 0, 0}, vao = 0, prog = 0;
-    GLboolean scissor = GL_FALSE, blend = GL_FALSE;
-    GlSave() {
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
-        glGetIntegerv(GL_VIEWPORT, vp);
-        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
-        glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
-        scissor = glIsEnabled(GL_SCISSOR_TEST);
-        blend = glIsEnabled(GL_BLEND);
-    }
-    ~GlSave() {
-        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(fbo));
-        glViewport(vp[0], vp[1], vp[2], vp[3]);
-        glBindVertexArray(static_cast<GLuint>(vao));
-        glUseProgram(static_cast<GLuint>(prog));
-        if (scissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
-        if (blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
-        glBlendEquation(GL_FUNC_ADD);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    }
-};
+using GlSave = GlState;
 
 }  // namespace
 

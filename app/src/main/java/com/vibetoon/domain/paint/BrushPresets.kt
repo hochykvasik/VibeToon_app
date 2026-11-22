@@ -21,8 +21,8 @@ object BrushPresets {
         BrushPreset(
             "pencil", "Карандаш",
             BrushParams(
-                size = 12f, spacing = 0.12f, minSizePercent = 0.35f, flow = 0.55f, hardness = 0.7f, mode = StrokeMode.ACCUMULATE,
-                grain = GrainKind.PENCIL, grainMode = GrainMode.MOVING, rotation = DabRotation.RANDOM, grainScale = 1f, grainContrast = 1.4f, presetId = "pencil"
+                size = 12f, spacing = 0.12f, minSizePercent = 0.35f, flow = 0.55f, hardness = 0.7f, mode = StrokeMode.CAP_OPACITY,
+                grain = GrainKind.PENCIL, grainMode = GrainMode.CANVAS, rotation = DabRotation.NONE, grainScale = 1f, grainContrast = 1.4f, presetId = "pencil"
             )
         ),
         BrushPreset(

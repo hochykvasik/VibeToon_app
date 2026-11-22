@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <utility>
 #include <new>
 
 #include "common/Log.h"
 #include "render/GlUtil.h"
+#include "render/GlState.h"
 #include "render/CanvasClipPolicy.h"
 #include "render/EffectRenderPolicy.h"
 #include "render/MeshPosition.h"
@@ -473,32 +476,59 @@ void Renderer::beginExport(int width, int height) {
 }
 
 bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out) {
-    if (w < 1 || h < 1 || w > 4096 || h > 4096 || exportMode_) return false;
+    GLint maxTexture = 0, maxRenderbuffer = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
+    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbuffer);
+    const int limit = std::min(8192, std::min(maxTexture, maxRenderbuffer));
+    if (w < 1 || h < 1 || w > limit || h > limit || exportMode_) return false;
+    GlState glState;
+    // Never resize/reuse the editor's blend backdrop or group/effect targets.
+    // A capture may have exactly the viewport size, so size checks alone aren't isolation.
+    auto editorPool = std::move(fboPool_);
+    const GLuint editorBackdropTex = backdropTex_, editorBackdropFbo = backdropFbo_;
+    const GLuint editorCurrent = curFbo_, editorScreen = screenFbo_;
+    const int editorCreated = fboCreated_;
+    fboPool_.clear(); backdropTex_ = backdropFbo_ = 0; fboCreated_ = 0;
     GLuint tex = 0, fbo = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    if (ok) {
-        beginExport(w, h);
-        screenFbo_ = fbo;
-        transparentCapture_ = transparent;
-        int guard = 0;
-        while (drawFrame() && guard++ < 500) { /* ждём все текстуры из очереди */ }
-        out.assign(static_cast<size_t>(w) * h * 4, 0);
+    bool ok = false;
+    try {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+        glGenFramebuffers(1, &fbo);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
-        transparentCapture_ = false;
-        screenFbo_ = 0;
-        endExport();
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if (ok) {
+            beginExport(w, h);
+            screenFbo_ = fbo;
+            transparentCapture_ = transparent;
+            int guard = 0;
+            while (drawFrame() && guard++ < 500) {}
+            out.assign(static_cast<size_t>(w) * h * 4, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
+            ok = checkGl("captureFrame");
+        }
+    } catch (const std::exception& e) {
+        LOGW("capture allocation failed: %s", e.what());
+        ok = false;
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    transparentCapture_ = false;
+    screenFbo_ = editorScreen;
+    endExport();
+    releaseTargets();
+    fboPool_ = std::move(editorPool);
+    backdropTex_ = editorBackdropTex; backdropFbo_ = editorBackdropFbo;
+    curFbo_ = editorCurrent; fboCreated_ = editorCreated;
     glDeleteFramebuffers(1, &fbo);
     glDeleteTextures(1, &tex);
+    if (!ok) out.clear();
     return ok;
 }
 

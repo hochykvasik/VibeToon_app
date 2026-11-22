@@ -52,6 +52,8 @@ class AppSettings(context: Context) {
     var gridCells by mutableIntStateOf(com.vibetoon.domain.render.CanvasGrid.density(p.getInt("grid_cells", 16)))
     fun saveGrid() { p.edit().putBoolean("show_grid", showGrid).putInt("grid_cells", gridCells).apply() }
     var resetFrameAfterPause by mutableStateOf(p.getBoolean("reset_frame_after_pause", false))
+    var compatibleVideoExport by mutableStateOf(p.getBoolean("compatible_video_export", false))
+    fun saveExport() { p.edit().putBoolean("compatible_video_export", compatibleVideoExport).apply() }
     var checkerThumbnails by mutableStateOf(p.getBoolean("checker_thumbnails", false))
     // До появления настройки звук при скраббинге был включён всегда.
     var audioWhileScrubbing by mutableStateOf(p.getBoolean("audio_while_scrubbing", true))

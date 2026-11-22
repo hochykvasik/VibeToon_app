@@ -3,7 +3,7 @@ name: Android debug build
 on:
   push:
     branches:
-      - arena/c18f871e-vibetoon
+      - arena/e0fe5b26-vibetoon-app
   workflow_dispatch:
 
 permissions:
