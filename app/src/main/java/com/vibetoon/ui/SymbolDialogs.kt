@@ -143,7 +143,7 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 val img = thumbs["$defId:${m.frame}"]
-                                Box(Modifier.size(72.dp).background(Color(0xFFEFEFEF)), contentAlignment = Alignment.Center) {
+                                Box(Modifier.size(72.dp).background(Color(0xFFEFEFEF)).thumbnailChecker(com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true), contentAlignment = Alignment.Center) {
                                     if (img != null) Image(img, m.name, Modifier.size(72.dp)) else Text("…", fontSize = 12.sp)
                                 }
                                 Text(m.name, fontSize = 12.sp, maxLines = 1)

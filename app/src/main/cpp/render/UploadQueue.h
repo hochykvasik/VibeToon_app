@@ -2,6 +2,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 namespace vt {
@@ -13,6 +14,23 @@ struct PendingUpload {
 };
 
 namespace uploadQueue {
+// Блокирует постановку новых загрузок, только если очередь изначально пуста.
+// Не защищает от устаревших загрузок, которые начались до и закончатся после guard.
+class EmptyGuard {
+public:
+    EmptyGuard();
+    bool acquired() const { return acquired_; }
+    // Резервирует запись до выделения GL-текстуры, не меняя её поколение.
+    bool prepareLayer(int layerId);
+    // Вызывается только после успешной замены и prepareLayer, под блокировкой.
+    void invalidateLayer(int layerId);
+private:
+    std::unique_lock<std::mutex> lock_;
+    bool acquired_;
+};
+// Билет берётся ДО декодирования. Замена слоя и смена проекта делают старые билеты недействительными.
+uint64_t ticket(int layerId);
+bool pushIfCurrent(PendingUpload&& item, uint64_t ticket);
 void push(PendingUpload&& item);
 bool pop(PendingUpload& out);   // false, если очередь пуста
 bool empty();

@@ -49,7 +49,11 @@ class SceneData(
     /** Эффекты: слои, число эффектов на слой и по 10 float на эффект (тип, p0..p7, время). */
     val fxIds: IntArray = IntArray(0),
     val fxCounts: IntArray = IntArray(0),
-    val fxData: FloatArray = FloatArray(0)
+    val fxData: FloatArray = FloatArray(0),
+    /** Current visible descendant bounds in group-local coordinates, before deformation. */
+    val groupLocalBounds: Map<Int, GroupDeformationMesh.Bounds> = emptyMap(),
+    /** Group local space -> canvas, for fixed-frame interaction. */
+    val groupWorlds: Map<Int, Affine2D> = emptyMap()
 ) {
     companion object {
         const val PARAM_STRIDE = 8
@@ -76,6 +80,15 @@ data class LayerTransform(
 }
 
 object SceneBuilder {
+    /** Explicit opt-in, in fixed coordinates local to the group (not the current screen AABB).
+     * This API is not yet persisted or invoked by the editor/export UI. */
+    data class GroupDeformation(
+        val bounds: GroupDeformationMesh.Bounds,
+        val warp: FloatArray? = null,
+        val perspective: FloatArray? = null,
+        val cells: Int = 24
+    )
+
     const val OP_LAYER = 0
     const val OP_BEGIN_GROUP = 1
     const val OP_END_GROUP = 2
@@ -159,8 +172,16 @@ object SceneBuilder {
         /** Transform Layer (null-объект): не рисуется, только передаёт трансформацию дочерним слоям. */
         nullIds: Set<Int> = emptySet(),
         /** Глубина слоя (параллакс камеры): id -> число; не заданные - 0. */
-        depths: Map<Int, Float> = emptyMap()
+        depths: Map<Int, Float> = emptyMap(),
+        /** Экспериментальный вызов для уже подготовленных общих сеток; приложение пока не передаёт их. */
+        preparedGroupMeshes: Map<Int, GroupDeformationMesh.Result> = emptyMap(),
+        /** Explicit group inputs; bounds live in group-local coordinates and must remain fixed. */
+        groupDeformations: Map<Int, GroupDeformation> = emptyMap(),
+        denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
     ): SceneData {
+        require(preparedGroupMeshes.keys.none { it in meshes || it in warps || it in persp || it in skins }) {
+            "Group mesh conflicts with a leaf deformer"
+        }
         // Камера: dx, dy - смещение центра кадра, scaleX - приближение, rotation - поворот вида
         val cam = transforms[cameraId]
         val camView = if (cam == null) Affine2D.IDENTITY else {
@@ -184,6 +205,14 @@ object SceneBuilder {
         val textureIds = ArrayList<Int>()
         val quads = HashMap<Int, FloatArray>()
         val parentWorlds = HashMap<Int, Affine2D>()
+        val groupLocalBounds = HashMap<Int, GroupDeformationMesh.Bounds>()
+        val groupWorlds = HashMap<Int, Affine2D>()
+        val generatedGroupMeshes = HashMap<Int, GroupDeformationMesh.Result>()
+        val generatedDenseMeshes = HashMap<Int, GroupDeformationMesh.Result>()
+        val visitedGroups = HashSet<Int>()
+        data class ActiveGroup(val deformation: GroupDeformation, val inverseWorld: Affine2D)
+        var activeGroup: ActiveGroup? = null
+        var safeGroupPath = true
 
         fun add(op: Int, id: Int, blend: Int, flags: Int, m: Affine2D, opacity: Float) {
             ops += listOf(op, id, blend, flags)
@@ -281,12 +310,45 @@ object SceneBuilder {
                         val pw = linkDelta(n.id) * parentWorld
                         val world = pw * local(t, n.pivotX, n.pivotY)
                         parentWorlds[n.id] = pw
+                        groupWorlds[n.id] = world
+                        val previous = activeGroup
+                        val previousPath = safeGroupPath
+                        safeGroupPath = previousPath && n.blend in setOf("pass", "norm") && n.opacity == 1f && t.opacity == 1f &&
+                            n.id !in warps && n.id !in persp && n.id !in meshes && n.id !in skins && n.id !in fx && n.id !in turbs
+                        if (previous != null || n.id in groupDeformations) {
+                            require(safeGroupPath) { "Group deformation requires pass-through groups without effects" }
+                        }
+                        groupDeformations[n.id]?.let { deformation ->
+                            require(previous == null) { "Nested group deformers are not supported" }
+                            require(deformation.warp != null || deformation.perspective != null) { "Empty group deformation" }
+                            activeGroup = ActiveGroup(deformation, requireNotNull(world.inverse()) { "Singular group transform" })
+                            visitedGroups += n.id
+                        }
                         add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
                         val childQuads = ArrayList<FloatArray>()
                         walk(n.children, world, childQuads)
+                        activeGroup = previous
+                        safeGroupPath = previousPath
                         add(OP_END_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
                         if (childQuads.isNotEmpty()) {
                             quads[n.id] = bounds(childQuads)
+                            val inverse = world.inverse()
+                            if (inverse != null) {
+                                val localQuads = childQuads.map { q ->
+                                    FloatArray(8).also { result ->
+                                        for (i in 0..3) {
+                                            result[i * 2] = inverse.applyX(q[i * 2], q[i * 2 + 1])
+                                            result[i * 2 + 1] = inverse.applyY(q[i * 2], q[i * 2 + 1])
+                                        }
+                                    }
+                                }
+                                if (localQuads.all { q -> q.all(Float::isFinite) }) {
+                                    val b = bounds(localQuads)
+                                    val w = b[2] - b[0]; val h = b[5] - b[1]
+                                    if (w.isFinite() && h.isFinite() && w > 0f && h > 0f)
+                                        groupLocalBounds[n.id] = GroupDeformationMesh.Bounds(b[0], b[1], w, h)
+                                }
+                            }
                             out += childQuads
                         }
                     }
@@ -318,6 +380,23 @@ object SceneBuilder {
                         val m = world * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) *
                             Affine2D.scale(n.w.toFloat(), n.h.toFloat())
                         if (skinned) skinRest[n.id] = m
+                        activeGroup?.let { group ->
+                            require(n.id !in meshes && n.id !in warps && n.id !in persp && n.id !in skins &&
+                                n.id !in preparedGroupMeshes && n.id !in denseWarps && n.id !in turbs && n.id !in fx && !n.clipped) {
+                                "Group deformation conflicts with a descendant deformer, effect or clipping"
+                            }
+                            val d = group.deformation
+                            val local = group.inverseWorld * m
+                            generatedGroupMeshes[n.id] = requireNotNull(GroupDeformationMesh.build(d.bounds, local, d.warp, d.perspective, d.cells)) {
+                                "Invalid group deformation, transform, or child outside fixed bounds"
+                            }
+                        }
+                        denseWarps[n.id]?.let { grid ->
+                            require(activeGroup == null && n.id !in meshes && n.id !in skins && n.id !in preparedGroupMeshes &&
+                                n.id !in fx && n.id !in turbs && !n.clipped) { "Unsupported dense warp combination" }
+                            val cubic = requireNotNull(warps[n.id]) { "Dense warp requires base warp" }
+                            generatedDenseMeshes[n.id] = requireNotNull(DenseWarpMesh.build(grid, cubic)) { "Invalid dense warp" }
+                        }
                         add(
                             OP_LAYER, n.id, blendCode(n.blend),
                             (if (clipped) FLAG_CLIPPED else 0) or (if (n.id in bboxHitIds) FLAG_HIT_BBOX else 0),
@@ -348,12 +427,16 @@ object SceneBuilder {
         }
         walkByDepth(psd, rootWorld0)
         walkByDepth(media, Affine2D.IDENTITY)
-        val mIds = meshes.keys.toIntArray()
+        require(visitedGroups == groupDeformations.keys) { "Group deformer targets a missing or hidden group" }
+        val allGroupMeshes = preparedGroupMeshes + generatedGroupMeshes + generatedDenseMeshes
+        val nativeWarps = warps - generatedDenseMeshes.keys
+        val mIds = (meshes.keys + allGroupMeshes.keys).toIntArray()
         val mCounts = IntArray(mIds.size * 2)
         val mVerts = ArrayList<Float>()
         val mTris = ArrayList<Int>()
         mIds.forEachIndexed { i, id ->
-            val (m, off0) = meshes.getValue(id)
+            val groupMesh = allGroupMeshes[id]
+            val (m, off0) = if (groupMesh != null) groupMesh.mesh to groupMesh.offsets else meshes.getValue(id)
             var off = off0
             val rest = skinRest[id]
             val inv = rest?.inverse()
@@ -384,12 +467,13 @@ object SceneBuilder {
                 }
             }
             // плавная деформация: ребра делятся, смещение середин считается по правилу Loop (без заломов между точками)
-            val (rm, ro) = MeshMath.smooth(m, off, if (m.count <= 300) 2 else 1)
+            // Подготовленная общая сетка уже отсемплирована и не должна усредняться Loop-сглаживанием.
+            val (rm, ro) = if (groupMesh != null) m to off else MeshMath.smooth(m, off, if (m.count <= 300) 2 else 1)
             mCounts[i * 2] = rm.count
             mCounts[i * 2 + 1] = rm.tris.size / 3
             for (k in 0 until rm.count) {
                 // NaN/Inf и «улетевшие» смещения рисуют артефакты на весь экран: обрезаем
-                fun safe(x: Float) = if (x.isFinite()) x.coerceIn(-3f, 3f) else 0f
+                fun safe(x: Float) = if (x.isFinite()) (if (groupMesh != null) x else x.coerceIn(-3f, 3f)) else 0f
                 mVerts.add(rm.u(k)); mVerts.add(rm.v(k)); mVerts.add(safe(ro[k * 2])); mVerts.add(safe(ro[k * 2 + 1]))
             }
             for (t in rm.tris) mTris.add(t)
@@ -397,11 +481,12 @@ object SceneBuilder {
         return SceneData(
             canvasWidth, canvasHeight, ops.toIntArray(), params.toFloatArray(), textureIds.toIntArray(),
             quads, parentWorlds, bones.keys.associateWith { delta(it) },
-            warps.keys.toIntArray(), warps.values.flatMap { it.asList() }.toFloatArray(),
+            nativeWarps.keys.toIntArray(), nativeWarps.values.flatMap { it.asList() }.toFloatArray(),
             mIds, mCounts, mVerts.toFloatArray(), mTris.toIntArray(),
             persp.keys.toIntArray(), persp.values.flatMap { it.asList() }.toFloatArray(),
             turbs.keys.toIntArray(), turbs.values.flatMap { it.asList() }.toFloatArray(),
-            fx.keys.toIntArray(), fx.values.map { it.size }.toIntArray(), fx.values.flatMap { l -> l.flatMap { it.asList() } }.toFloatArray()
+            fx.keys.toIntArray(), fx.values.map { it.size }.toIntArray(), fx.values.flatMap { l -> l.flatMap { it.asList() } }.toFloatArray(),
+            groupLocalBounds, groupWorlds
         )
     }
 }

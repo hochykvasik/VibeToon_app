@@ -63,15 +63,58 @@ class ProjectRepository(context: Context) {
         return meta
     }
 
+    /** Готовый урок создаётся на IO без GL; сохранённый пользовательский проект не перезаписывается. */
+    fun createStarter(id: String): ProjectMeta {
+        load(id).getOrNull()?.let { return it.meta }
+        val data = com.vibetoon.domain.project.StarterProject.data(id, System.currentTimeMillis())
+        com.vibetoon.domain.project.StarterProject.shapes.forEachIndexed { i, shape ->
+            val bmp = android.graphics.Bitmap.createBitmap(512, 512, android.graphics.Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = android.graphics.Canvas(bmp)
+                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    color = shape.color
+                    style = android.graphics.Paint.Style.FILL
+                }
+                for (polygon in com.vibetoon.domain.paint.ShapeMath.polygons(shape.kind)) {
+                    val path = android.graphics.Path()
+                    for (n in polygon.indices step 2) {
+                        if (n == 0) path.moveTo(polygon[n] * 512, polygon[n + 1] * 512)
+                        else path.lineTo(polygon[n] * 512, polygon[n + 1] * 512)
+                    }
+                    path.close()
+                    canvas.drawPath(path, paint)
+                }
+                mediaFile(id, "m${data.media[i].id}.png").outputStream().use {
+                    check(bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+                }
+            } finally { bmp.recycle() }
+        }
+        save(data)
+        return data.meta
+    }
+
     fun save(data: ProjectData) {
         dir(data.meta.id).mkdirs()
         val tmp = File(dir(data.meta.id), "project.json.tmp")
-        tmp.writeText(ProjectJson.encode(data))
-        val target = jsonFile(data.meta.id)
-        if (!tmp.renameTo(target)) {   // запасной путь, если renameTo не заменил файл
-            target.delete()
-            tmp.renameTo(target)
+        tmp.outputStream().use { stream ->
+            stream.write(ProjectJson.encode(data).toByteArray(Charsets.UTF_8))
+            stream.fd.sync()
         }
+        // На Android rename в одном каталоге атомарно заменяет цель. При ошибке не удаляем старый JSON.
+        check(tmp.renameTo(jsonFile(data.meta.id))) { "Не удалось сохранить проект" }
+    }
+
+    /** Подготовленный API для copy-on-write: вызывающий сериализует доступ к проекту. */
+    fun saveWithRasterVersion(data: ProjectData, layerId: Int, writePng: (File) -> Unit, verifyPng: (File) -> Boolean): ProjectData {
+        require(data.media.count { it.id == layerId } == 1)
+        val layer = data.media.single { it.id == layerId }
+        require(layer.kind == com.vibetoon.domain.project.MediaKind.IMAGE && layer.cells.isEmpty())
+        var committed: ProjectData? = null
+        com.vibetoon.domain.project.VersionedRasterFiles.publish(dir(data.meta.id), writePng, verifyPng) { path ->
+            data.copy(media = data.media.map { if (it.id == layerId) it.copy(file = path) else it }).also { committed = it }
+                .let(ProjectJson::encode)
+        }
+        return checkNotNull(committed)
     }
 
     fun rename(id: String, name: String) {
@@ -113,16 +156,16 @@ class ProjectRepository(context: Context) {
     fun clearCache(): Long {
         var freed = 0L
         for (d in root.listFiles { f -> f.isDirectory }.orEmpty()) {
-            d.walkTopDown().filter { it.isFile && (it.name.endsWith(".wave") || it.name.endsWith(".tmp")) }.forEach { freed += it.length(); it.delete() }
+            d.walkTopDown().filter { it.isFile && (it.name.endsWith(".wave") || (it.name.endsWith(".tmp") && it.name != "project.json.tmp" && !it.name.startsWith("project.") && !it.name.startsWith("raster_"))) }.forEach { freed += it.length(); it.delete() }
         }
         return freed
     }
 
-    /** Файлы assets/ без единой ссылки из project.json (осиротевшие: остались после удаления слоя, замены рисунка и т.п.). */
+    /** PNG не удаляем: на них может ссылаться активная история или незавершённая запись. */
     fun orphans(id: String): List<File> {
         val json = jsonFile(id).takeIf { it.exists() }?.readText() ?: return emptyList()
         val assets = File(dir(id), "assets")
-        return assets.walkTopDown().filter { it.isFile && it.name != "source.psd" && !it.name.endsWith(".wave") && !json.contains(it.name) }.toList()
+        return assets.walkTopDown().filter { it.isFile && it.name != "source.psd" && !it.name.endsWith(".png", ignoreCase = true) && !it.name.endsWith(".wave") && !json.contains(it.name) }.toList()
     }
 
     /** Удаляет осиротевшие ассеты всех проектов; возвращает (число файлов, байты). */

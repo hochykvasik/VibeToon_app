@@ -148,8 +148,7 @@ Java_com_vibetoon_nativebridge_RenderNative_setBackground(JNIEnv*, jobject, jlon
 // Передаёт Bitmap (RGBA_8888, premultiplied alpha, как выдаёт BitmapFactory) в очередь загрузки
 // текстур: пиксели копируются построчно с учётом stride, дальше путь тот же, что у слоёв PSD.
 // Возвращает false, если формат не RGBA_8888 или Bitmap нельзя заблокировать.
-JNIEXPORT jboolean JNICALL
-Java_com_vibetoon_nativebridge_RenderNative_uploadBitmap(JNIEnv* env, jobject, jint layerId, jobject bitmap) {
+static jboolean uploadBitmap(JNIEnv* env, jint layerId, jobject bitmap, bool checked, uint64_t ticket) {
     AndroidBitmapInfo info;
     if (!bitmap || AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS) return JNI_FALSE;
     if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || info.width == 0 || info.height == 0) return JNI_FALSE;
@@ -167,8 +166,22 @@ Java_com_vibetoon_nativebridge_RenderNative_uploadBitmap(JNIEnv* env, jobject, j
                     static_cast<size_t>(info.width) * 4);
     }
     AndroidBitmap_unlockPixels(env, bitmap);
+    if (checked) return vt::uploadQueue::pushIfCurrent(std::move(up), ticket) ? JNI_TRUE : JNI_FALSE;
     vt::uploadQueue::push(std::move(up));
     return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_uploadBitmap(JNIEnv* env, jobject, jint layerId, jobject bitmap) {
+    return uploadBitmap(env, layerId, bitmap, false, 0);
+}
+JNIEXPORT jlong JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_textureUploadTicket(JNIEnv*, jobject, jint layerId) {
+    return static_cast<jlong>(vt::uploadQueue::ticket(layerId));
+}
+JNIEXPORT jboolean JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_uploadBitmapIfCurrent(JNIEnv* env, jobject, jint layerId, jobject bitmap, jlong ticket) {
+    return uploadBitmap(env, layerId, bitmap, true, static_cast<uint64_t>(ticket));
 }
 
 // Отбрасывает ещё не загруженные в GPU текстуры предыдущего проекта
@@ -303,6 +316,13 @@ Java_com_vibetoon_nativebridge_RenderNative_paintDabs(JNIEnv* env, jobject, jlon
     env->ReleaseFloatArrayElements(dabs, d, JNI_ABORT);
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_paintGradient(JNIEnv* env, jobject, jlong h, jint layerId, jfloatArray geometry) {
+    if (!geometry || env->GetArrayLength(geometry) != 10) return JNI_FALSE;
+    float g[10]; env->GetFloatArrayRegion(geometry, 0, 10, g);
+    return R(h)->paintGradient(layerId, g) ? JNI_TRUE : JNI_FALSE;
+}
+
 // Асинхронный конец штриха (чтение в PBO): true - чтение поставлено в очередь
 JNIEXPORT jboolean JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_paintEndAsync(JNIEnv*, jobject, jlong h, jint layerId) {
@@ -341,6 +361,20 @@ Java_com_vibetoon_nativebridge_RenderNative_paintRestore(JNIEnv* env, jobject, j
     const bool ok = R(h)->paintRestore(layerId, x, y, w, hh, reinterpret_cast<const uint8_t*>(d));
     env->ReleaseByteArrayElements(data, d, JNI_ABORT);
     return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_replaceTextureChecked(JNIEnv* env, jobject, jlong handle, jint id,
+        jint expectedW, jint expectedH, jint width, jint height, jbyteArray data) {
+    if (!handle || !data || width <= 0 || height <= 0 || width > 4096 || height > 4096 ||
+        static_cast<int64_t>(width) * height > 4194304 ||
+        env->GetArrayLength(data) != static_cast<int64_t>(width) * height * 4) return -1;
+    jbyte* pixels = env->GetByteArrayElements(data, nullptr);
+    if (!pixels) return -5;
+    const int result = R(handle)->replaceTextureChecked(id, expectedW, expectedH, width, height,
+                                                         reinterpret_cast<const uint8_t*>(pixels));
+    env->ReleaseByteArrayElements(data, pixels, JNI_ABORT);
+    return result;
 }
 
 JNIEXPORT void JNICALL

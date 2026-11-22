@@ -36,6 +36,9 @@ object RenderNative {
      * Bitmap после вызова можно освободить: пиксели скопированы.
      */
     external fun uploadBitmap(layerId: Int, bitmap: android.graphics.Bitmap): Boolean
+    /** Получить до начала декодирования, применить только если версия слоя/проекта не изменилась. */
+    external fun textureUploadTicket(layerId: Int): Long
+    external fun uploadBitmapIfCurrent(layerId: Int, bitmap: android.graphics.Bitmap, ticket: Long): Boolean
     /** Сбрасывает очередь ещё не загруженных текстур (при открытии другого проекта). */
     external fun clearPendingUploads()
     /** Удаляет все GPU-текстуры слоёв (смена проекта). Только из GL-потока. */
@@ -64,6 +67,7 @@ object RenderNative {
     ): ByteArray?
     /** [count] штампов по 4 float: x, y, радиус (пиксели слоя), непрозрачность штампа. */
     external fun paintDabs(renderer: Long, dabs: FloatArray, count: Int)
+    external fun paintGradient(renderer: Long, layerId: Int, geometry: FloatArray): Boolean
     /** Конец штриха: 16 байт (x, y, w, h int32 LE) + пиксели "до" + пиксели "после" (RGBA premultiplied); null - отмена или пустой штрих. */
     external fun paintEnd(renderer: Long, commit: Boolean): ByteArray?
     /** Асинхронный конец штриха: чтение "до"/"после" в PBO без остановки GPU. true - поставлено в очередь. */
@@ -72,6 +76,8 @@ object RenderNative {
     external fun paintPoll(renderer: Long): ByteArray?
     /** Undo/Redo: прямая перезапись прямоугольника слоя. */
     external fun paintRestore(renderer: Long, layerId: Int, x: Int, y: Int, w: Int, h: Int, data: ByteArray): Boolean
+    /** Только GL-поток: 0 — успех, отрицательное значение — безопасный отказ без замены. */
+    external fun replaceTextureChecked(renderer: Long, layerId: Int, expectedW: Int, expectedH: Int, width: Int, height: Int, rgba: ByteArray): Int
     /** Экспорт: холст на весь кадр w x h; вызывать с текущей EGL-поверхностью кодека. */
     external fun beginExport(renderer: Long, width: Int, height: Int)
     external fun endExport(renderer: Long)

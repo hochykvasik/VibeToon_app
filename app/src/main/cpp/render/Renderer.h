@@ -82,6 +82,8 @@ public:
     bool paintBegin(int layerId, int mode, float opacity, bool alphaLock, float r, float g, float b, const BrushPreset& preset, const uint8_t* grain);
     // count штампов по 5 float: x, y (пиксели слоя), радиус (пиксели), непрозрачность штампа 0..1, поворот (радианы).
     void paintDabs(const float* dabs, int count);
+    // Gradient in screen-space affine layer coordinates; writes into the active paint transaction.
+    bool paintGradient(int layerId, const float* geometry);
     // Конец штриха. commit = true: в out кладутся x, y, w, h (int32 LE) и два буфера RGBA premultiplied (до, после) для Undo;
     // false - возвращает слой к состоянию до штриха. Результат true, если штрих что-то изменил.
     bool paintEnd(bool commit, std::vector<uint8_t>& out);
@@ -92,6 +94,9 @@ public:
     int paintPoll(std::vector<uint8_t>& out);
     // Прямая перезапись прямоугольника слоя (Undo/Redo): без смешивания, glTexSubImage2D.
     bool paintRestore(int layerId, int x, int y, int w, int h, const uint8_t* rgba);
+    // GL-поток; 0 успех, отрицательные коды: неверные данные, слой/размер изменился,
+    // очередь загрузок не пуста, лимит памяти/размера, ошибка CPU или GL.
+    int replaceTextureChecked(int layerId, int expectedW, int expectedH, int w, int h, const uint8_t* rgba);
     // Рисует кадр. Возвращает true, если нужен ещё кадр (остались загрузки в очереди).
     bool drawFrame();
     // Экспорт: холст на весь кадр width x height (без полей, камеры и рамки выделения).

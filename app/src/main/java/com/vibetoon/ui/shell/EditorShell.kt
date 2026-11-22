@@ -8,7 +8,11 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Close
 import android.app.Activity
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -103,6 +107,7 @@ import com.vibetoon.ui.AddActions
 import com.vibetoon.ui.BoneTool
 import com.vibetoon.ui.MeshTool
 import com.vibetoon.ui.EditorCanvas
+import com.vibetoon.ui.thumbnailChecker
 import com.vibetoon.ui.MainViewModel
 import com.vibetoon.ui.StatusLine
 import com.vibetoon.ui.inspector.InspectorPanel
@@ -200,7 +205,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
 
     CompositionLocalProvider(LocalStub provides stub) {
         Scaffold(
-            snackbarHost = { SnackbarHost(snack) },
+            snackbarHost = { SnackbarHost(snack) { data -> androidx.compose.material3.Snackbar { Text(data.visuals.message) } } },
             contentWindowInsets = WindowInsets(0),
             containerColor = MaterialTheme.colorScheme.background
         ) { pad ->
@@ -427,6 +432,36 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
 
 // ---------------------------------------------------------------- верхняя панель
 
+/** Рамка находится в том же Popup и layout, что и пункт меню: скролл/поворот не меняет её систему координат. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun TestPsdMenuItem(highlight: Boolean, onClick: () -> Unit) {
+    val requester = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    androidx.compose.runtime.DisposableEffect(highlight) {
+        onDispose { if (highlight) Coach.popupTargetVisible = false }
+    }
+    androidx.compose.runtime.LaunchedEffect(highlight) {
+        if (highlight) {
+            kotlinx.coroutines.delay(150) // дождаться измерения и открытия Popup
+            requester.bringIntoView()
+        }
+    }
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "popup-coach")
+    val alpha by transition.animateFloat(0.55f, 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(900), androidx.compose.animation.core.RepeatMode.Reverse), label = "popup-coach-alpha")
+    DropdownMenuItem(
+        text = { Text("Тестовый PSD") }, onClick = onClick,
+        modifier = Modifier.bringIntoViewRequester(requester).onGloballyPositioned { coordinates ->
+            if (highlight) {
+                val r = coordinates.boundsInWindow()
+                Coach.popupTargetVisible = r.width > 0f && r.height > 0f
+            }
+        }.then(if (highlight) Modifier.border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = alpha), RoundedCornerShape(6.dp)) else Modifier)
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TopBar(
     vm: MainViewModel, wide: Boolean, onBack: () -> Unit, add: AddActions, onExport: () -> Unit,
@@ -440,6 +475,10 @@ private fun TopBar(
     val playing by vm.playing.collectAsStateWithLifecycle()
     val fxOn by vm.fx.collectAsStateWithLifecycle()
     var actions by remember { mutableStateOf(false) }
+    val coachTarget = Coach.session?.steps?.getOrNull(Coach.index)?.target
+    androidx.compose.runtime.LaunchedEffect(coachTarget) {
+        if (coachTarget == "Тестовый PSD") actions = true
+    }
     var more by remember { mutableStateOf(false) }
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
@@ -464,7 +503,7 @@ private fun TopBar(
                     DropdownMenuItem(text = { Text("Камера (Pan & Zoom)") }, onClick = { actions = false; vm.addCameraLayer() })
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("Сбросить вид холста") }, onClick = { actions = false; vm.resetCamera() })
-                    DropdownMenuItem(text = { Text("Тестовый PSD") }, onClick = { actions = false; vm.parseTestPsd() })
+                    TestPsdMenuItem(highlight = coachTarget == "Тестовый PSD") { actions = false; vm.parseTestPsd() }
                 }
             }
             Text(
@@ -472,6 +511,11 @@ private fun TopBar(
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
             )
             if (modes) ModeChips(vm, mesh, onMesh)
+            if (com.vibetoon.ui.theme.LocalAppSettings.current?.refocusButton == true) {
+                Box(Modifier.size(40.dp).combinedClickable(onClick = {}, onDoubleClick = vm::resetCamera), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.CropFree, com.vibetoon.ui.i18n.L("Дважды нажмите, чтобы сбросить вид холста"), modifier = Modifier.size(22.dp))
+                }
+            }
             BarIcon(Icons.Default.AutoAwesome, "FX: вкл — правки пишутся в ключи, выкл — в базовую форму", active = fxOn) { vm.toggleFx() }
             BarIcon(Icons.Default.Undo, "Отменить", enabled = canUndo && !playing) { vm.undo() }
             BarIcon(Icons.Default.Redo, "Повторить", enabled = canRedo && !playing) { vm.redo() }
@@ -557,7 +601,7 @@ private fun BrushMenu(vm: MainViewModel) {
                             contentAlignment = Alignment.Center
                         ) {
                             val prev = vm.brushPreviews[pr.id]
-                            if (prev != null) androidx.compose.foundation.Image(prev, pr.title, modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.FillBounds)
+                            if (prev != null) androidx.compose.foundation.Image(prev, com.vibetoon.ui.i18n.L(pr.title), modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.FillBounds)
                         }
                         Text(pr.title, fontSize = 13.sp, maxLines = 2, modifier = Modifier.padding(start = 10.dp))
                     }
@@ -574,6 +618,7 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
     val sp by vm.smudgeParams.collectAsStateWithLifecycle()
     val mode by vm.selMode.collectAsStateWithLifecycle()
     val has by vm.hasSel.collectAsStateWithLifecycle()
+    val pendingLasso by vm.pendingLasso.collectAsStateWithLifecycle()
     val pen by vm.penCount.collectAsStateWithLifecycle()
     val fillOn by vm.vecFill.collectAsStateWithLifecycle()
     Row(
@@ -591,10 +636,20 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
             RasterTool.SELECT -> {
                 for ((m, t) in listOf(SelMode.RECT to "Прямоугольник", SelMode.OVAL to "Овал", SelMode.LASSO to "Лассо", SelMode.WAND to "Палочка"))
                     androidx.compose.material3.FilterChip(selected = mode == m, onClick = { vm.setSelMode(m) }, label = { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) })
+                if (pendingLasso) OutlinedButton(onClick = vm::cancelPendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Отменить контур", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (mode == SelMode.WAND) com.vibetoon.ui.inspector.ScrubBox("Порог", fp.threshold.toFloat(), 0f, 128f, { v -> vm.setFillParams { it.copy(threshold = v.toInt()) } }, perPx = 0.4f)
                 if (has) {
+                    Text("Два пальца: поворот и масштаб выделения", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                    val partName = com.vibetoon.ui.i18n.L("часть")
+                    OutlinedButton(onClick = { vm.mirrorSelectedPixels(true) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Отразить X", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.mirrorSelectedPixels(false) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Отразить Y", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.rotateSelectedPixels(false) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Повернуть −90°", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.rotateSelectedPixels(true) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Повернуть +90°", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.scaleSelectedPixels(false) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Размер ½", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.scaleSelectedPixels(true) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Размер ×2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                     OutlinedButton(onClick = vm::clearSelectionContent, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Очистить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
-                    OutlinedButton(onClick = vm::selectionToNewLayer, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("В новый слой", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.selectionToNewLayer(partName) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Вырезать в новый слой", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.copySelectionToNewLayer(partName) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Копировать в новый слой", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                     OutlinedButton(onClick = vm::invertSelection, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Инверсия", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                     OutlinedButton(onClick = vm::clearSelection, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Снять", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 }
@@ -610,6 +665,7 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
                 if (pen >= 2) OutlinedButton(onClick = { vm.penFinish(false) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Готово", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen >= 3) OutlinedButton(onClick = { vm.penFinish(true) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Замкнуть", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen >= 1) OutlinedButton(onClick = vm::penUndoPoint, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Убрать точку", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                if (pen == 0) OutlinedButton(onClick = vm::restyleSelectedVector, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Цвет и толщина кисти", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen == 0) OutlinedButton(onClick = vm::deleteVectorNode, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Удалить узел", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen == 0) OutlinedButton(onClick = vm::deleteVectorShape, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Удалить примитив", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen >= 1) OutlinedButton(onClick = vm::penCancel, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Отмена", fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -634,6 +690,26 @@ private fun PaintToolRow(vm: MainViewModel, onColor: () -> Unit) {
         Text(if (isEraser) "Ластик" else "Кисть", fontSize = 12.sp, maxLines = 1, softWrap = false)
         OutlinedButton(onClick = vm::addPaintLayer, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
             Text("Новый слой", fontSize = 12.sp, maxLines = 1, softWrap = false)
+        }
+        if (!isEraser) {
+            val gradient by vm.gradientMode.collectAsStateWithLifecycle()
+            val alpha by vm.gradientAlpha.collectAsStateWithLifecycle()
+            androidx.compose.material3.FilterChip(selected = gradient, onClick = vm::toggleGradient, label = { Text("Градиент", fontSize = 12.sp) })
+            if (gradient) androidx.compose.material3.FilterChip(selected = alpha, onClick = vm::toggleGradientAlpha, label = { Text("По альфе рисунка", fontSize = 12.sp) })
+        }
+        val ruler by vm.rulerMode.collectAsStateWithLifecycle()
+        var rulerMenu by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick = { rulerMenu = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+                com.vibetoon.ui.DropText("Линейка")
+            }
+            androidx.compose.material3.DropdownMenu(expanded = rulerMenu, onDismissRequest = { rulerMenu = false }) {
+                for ((mode, title) in listOf(
+                    com.vibetoon.domain.paint.RulerPath.Mode.OFF to "Выкл",
+                    com.vibetoon.domain.paint.RulerPath.Mode.LINE to "Обычная линейка",
+                    com.vibetoon.domain.paint.RulerPath.Mode.COMPASS to "Циркуль"
+                )) androidx.compose.material3.DropdownMenuItem(text = { Text((if (ruler == mode) "✓ " else "") + com.vibetoon.ui.i18n.L(title)) }, onClick = { rulerMenu = false; vm.setRulerMode(mode) })
+            }
         }
         var shapeMenu by remember { mutableStateOf(false) }
         Box {
@@ -705,14 +781,29 @@ private fun LiquifyToolRow(vm: MainViewModel) {
 private fun PerspToolRow(vm: MainViewModel) {
     val fx by vm.fx.collectAsStateWithLifecycle()
     val overlay by vm.perspOverlay.collectAsStateWithLifecycle()
+    val selected by vm.selected.collectAsStateWithLifecycle()
+    val rows by vm.rows.collectAsStateWithLifecycle()
+    val isGroup = rows.any { it.layer.id == selected && it.layer.kind != com.vibetoon.nativebridge.LayerKind.LAYER }
     Row(
-        Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            if (overlay.isEmpty()) "Перспектива: выберите слой" else if (fx) "Перспектива · FX вкл: углы пишутся в ключи" else "Перспектива · FX выкл: базовая форма",
+            if (overlay.isEmpty() && isGroup) "Перспектива для групп: в разработке" else if (overlay.isEmpty()) "Перспектива: выберите слой" else if (fx) "Перспектива · FX вкл: углы пишутся в ключи" else "Перспектива · FX выкл: базовая форма",
             fontSize = 12.sp, maxLines = 1, softWrap = false
         )
+        if (isGroup && overlay.isEmpty()) OutlinedButton(onClick = vm::enableGroupPerspective,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+            Text("Включить для группы", fontSize = 12.sp, maxLines = 1, softWrap = false)
+        }
+        if (isGroup) OutlinedButton(onClick = vm::prepareGroupDeformationAnchor,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+            Text("Подготовить область", fontSize = 12.sp, maxLines = 1, softWrap = false)
+        }
+        if (isGroup) OutlinedButton(onClick = vm::clearGroupDeformationAnchor,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+            Text("Удалить область", fontSize = 12.sp, maxLines = 1, softWrap = false)
+        }
         OutlinedButton(
             onClick = vm::resetPersp, enabled = overlay.isNotEmpty(),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)
@@ -786,18 +877,49 @@ private fun MeshToolRow(vm: MainViewModel) {
 private fun WarpToolRow(vm: MainViewModel) {
     val fx by vm.fx.collectAsStateWithLifecycle()
     val overlay by vm.warpOverlay.collectAsStateWithLifecycle()
+    val selected by vm.selected.collectAsStateWithLifecycle()
+    val rows by vm.rows.collectAsStateWithLifecycle()
+    val isGroup = rows.any { it.layer.id == selected && it.layer.kind != com.vibetoon.nativebridge.LayerKind.LAYER }
     Row(
-        Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            if (overlay.points.isEmpty()) "Warp: выберите слой" else if (fx) "Warp · FX вкл: точки пишутся в ключи" else "Warp · FX выкл: базовая форма",
+            if (overlay.points.isEmpty() && isGroup) "Warp для групп: в разработке" else if (overlay.points.isEmpty()) "Warp: выберите слой" else if (fx) "Warp · FX вкл: точки пишутся в ключи" else "Warp · FX выкл: базовая форма",
             fontSize = 12.sp, maxLines = 1, softWrap = false
         )
+        if (isGroup && overlay.points.isEmpty()) OutlinedButton(onClick = vm::enableGroupWarp,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+            Text("Включить для группы", fontSize = 12.sp, maxLines = 1, softWrap = false)
+        }
+        if (isGroup) OutlinedButton(onClick = vm::prepareGroupDeformationAnchor,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+            Text("Подготовить область", fontSize = 12.sp, maxLines = 1, softWrap = false)
+        }
+        if (isGroup) OutlinedButton(onClick = vm::clearGroupDeformationAnchor,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+            Text("Удалить область", fontSize = 12.sp, maxLines = 1, softWrap = false)
+        }
         OutlinedButton(
             onClick = vm::resetWarp, enabled = overlay.points.isNotEmpty(),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)
         ) { Text("Сбросить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+        if (overlay.points.isNotEmpty()) {
+            Text("Раздел X", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            OutlinedButton(onClick = { vm.changeWarpGrid(true, -1) }, enabled = overlay.width > 2,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("−") }
+            Text("${overlay.width - 1}", fontSize = 12.sp)
+            OutlinedButton(onClick = { vm.changeWarpGrid(true, 1) }, enabled = overlay.width < 33,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("+") }
+            Text("Раздел Y", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            OutlinedButton(onClick = { vm.changeWarpGrid(false, -1) }, enabled = overlay.height > 2,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("−") }
+            Text("${overlay.height - 1}", fontSize = 12.sp)
+            OutlinedButton(onClick = { vm.changeWarpGrid(false, 1) }, enabled = overlay.height < 33,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("+") }
+        }
+        if (overlay.width > 4 || overlay.height > 4)
+            Text("Плотный Warp: статический, FX выкл", fontSize = 12.sp, maxLines = 1, softWrap = false)
     }
 }
 
@@ -936,6 +1058,7 @@ private fun RightPanel(vm: MainViewModel, add: AddActions, color: Long, onColor:
             val canUndo by vm.canUndo.collectAsStateWithLifecycle()
             val canRedo by vm.canRedo.collectAsStateWithLifecycle()
             val playing by vm.playing.collectAsStateWithLifecycle()
+            val deleteDrawing = com.vibetoon.ui.theme.LocalAppSettings.current?.quickDeleteDrawing == true
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically
@@ -948,7 +1071,7 @@ private fun RightPanel(vm: MainViewModel, add: AddActions, color: Long, onColor:
                 IconButton(onClick = { tab = 0 }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Layers, "Слои", tint = if (tab == 0) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current) }
                 IconButton(onClick = { vm.undo() }, enabled = canUndo && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Undo, "Отменить") }
                 IconButton(onClick = { vm.redo() }, enabled = canRedo && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Redo, "Повторить") }
-                IconButton(onClick = vm::deleteSelected, enabled = selection.isNotEmpty(), modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Удалить") }
+                IconButton(onClick = { vm.quickDelete(deleteDrawing) }, enabled = selection.isNotEmpty() && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Удалить") }
                 IconButton(onClick = { vm.selectLayer(null) }, enabled = selection.isNotEmpty(), modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Deselect, "Снять выделение") }
             }
         }
@@ -1032,7 +1155,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                     com.vibetoon.ui.DropText("Привязать к кости (${selection.size})", 11.sp)
                 }
                 DropdownMenu(expanded = boneMenu, onDismissRequest = { boneMenu = false }) {
-                    for (b in bonesList) DropdownMenuItem(text = { Text("Кость: ${b.name}") }, onClick = { boneMenu = false; vm.setParent(b.id) })
+                    for (b in bonesList) DropdownMenuItem(text = { Text("Кость: ${com.vibetoon.ui.i18n.boneDisplayName(b.name)}") }, onClick = { boneMenu = false; vm.setParent(b.id) })
                 }
             }
             TextButton(onClick = { vm.setParent(null) }) { Text("Отвязать", fontSize = 11.sp) }
@@ -1109,7 +1232,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                                 while (vm.thumbs[l.id] == null && tries < 40) { vm.requestThumb(l.id); kotlinx.coroutines.delay(800); tries++ }
                             }
                             if (thumb != null) androidx.compose.foundation.Image(
-                                thumb, type, modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                thumb, type, modifier = Modifier.fillMaxSize().thumbnailChecker(com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true), contentScale = androidx.compose.ui.layout.ContentScale.Fit
                             ) else Icon(
                                 when (type) {
                                     "Текст" -> Icons.Default.TextFields; "Картинка" -> Icons.Default.Image; "Видео" -> Icons.Default.Videocam
@@ -1239,16 +1362,48 @@ private fun LayerPropsPanel(vm: MainViewModel, id: Int, isGroup: Boolean, all: M
     }
 }
 
-/** Инспектор кости: название, длина, родитель, число привязанных слоёв и «Независимый поворот». */
+/** Инспектор кости; общий скролл Properties ограничивает высоту всего содержимого. */
 @Composable
 private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.Bone) {
     val links by vm.links.collectAsStateWithLifecycle()
+    val bones by vm.bones.collectAsStateWithLifecycle()
+    val rows by vm.rows.collectAsStateWithLifecycle()
+    val props by vm.layerPropsState.collectAsStateWithLifecycle()
+    val audio by vm.audioTracks.collectAsStateWithLifecycle()
     val parent = links[bone.id]
+    val parentBone = bones.firstOrNull { it.id == parent }
+    val parentName = if (parent == null) com.vibetoon.ui.i18n.L("нет (корневая)")
+        else if (parentBone != null) com.vibetoon.ui.i18n.boneDisplayName(parentBone.name)
+        else com.vibetoon.ui.i18n.layerDisplayName(vm.layerNameOrNull(parent) ?: "#$parent", props[parent]?.name != null)
+    val bound = remember(bone.id, links, rows, props, audio) { vm.boundLayers(bone.id, links) }
+    val checker = com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Кость: ${bone.name}", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+        Text("Кость: ${com.vibetoon.ui.i18n.boneDisplayName(bone.name)}", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
         Text("Длина: ${bone.length.toInt()} px", fontSize = 12.sp)
-        Text("Родитель: ${if (parent != null) vm.layerName(parent) else "нет (корневая)"}", fontSize = 12.sp)
-        Text("Привязано слоёв: ${vm.boundCount(bone.id)}", fontSize = 12.sp)
+        Text("Родитель: $parentName", fontSize = 12.sp)
+        Text("Привязано слоёв: ${bound.size}", fontSize = 12.sp)
+        if (bound.isNotEmpty()) androidx.compose.foundation.lazy.LazyColumn(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 150.dp)
+        ) {
+            items(count = bound.size, key = { bound[it].id }) { index ->
+            val layer = bound[index]
+            Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(26.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+                    .thumbnailChecker(checker), contentAlignment = Alignment.Center) {
+                    val thumb = vm.thumbs[layer.id]
+                    if (!layer.isGroup) androidx.compose.runtime.LaunchedEffect(layer.id, thumb) {
+                        var tries = 0
+                        while (vm.thumbs[layer.id] == null && tries < 40) { vm.requestThumb(layer.id); kotlinx.coroutines.delay(800); tries++ }
+                    }
+                    if (thumb != null) androidx.compose.foundation.Image(thumb, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit)
+                    else Icon(if (layer.isGroup) Icons.Default.Folder else Icons.Default.Layers, null, modifier = Modifier.size(16.dp))
+                }
+                // Переводим только известные подписи по умолчанию, переименованные слои не трогаем.
+                androidx.compose.material3.Text(com.vibetoon.ui.i18n.layerDisplayName(layer.name, props[layer.id]?.name != null), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Независимый поворот", fontSize = 14.sp)

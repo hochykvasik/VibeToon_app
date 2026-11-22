@@ -4,6 +4,7 @@
 
 #include "common/Log.h"
 #include "render/GlUtil.h"
+#include "render/GradientMath.h"
 #include "render/Renderer.h"
 
 namespace vt {
@@ -79,6 +80,26 @@ void main() {
     a *= vOpacity;
     if (a <= 0.0) discard;
     outColor = uErase == 1 ? vec4(a) : vec4(uColor * a, a);
+}
+)";
+
+// The screen-space projection keeps the A→B angle correct for rotated/nonuniformly scaled layers.
+const char* kGradientVert = R"(#version 300 es
+layout(location=0) in vec2 aPos;
+out vec2 uv;
+void main() { uv = aPos; gl_Position = vec4(aPos * 2.0 - 1.0, 0.0, 1.0); }
+)";
+const char* kGradientFrag = R"(#version 300 es
+precision highp float;
+in vec2 uv;
+uniform vec2 origin, axisX, axisY, startPoint, endPoint;
+uniform vec3 color;
+out vec4 outColor;
+void main() {
+    vec2 p = origin + uv.x * axisX + uv.y * axisY;
+    vec2 d = endPoint - startPoint;
+    float alpha = 1.0 - clamp(dot(p - startPoint, d) / dot(d, d), 0.0, 1.0);
+    outColor = vec4(color * alpha, alpha);
 }
 )";
 
@@ -350,6 +371,33 @@ void Renderer::paintDabs(const float* dabs, int count) {
     pbx1_ = std::max(pbx1_, x1); pby1_ = std::max(pby1_, y1);
     paintBake(x0, y0, x1 - x0, y1 - y0);
     checkGl("paintDabs");
+}
+
+bool Renderer::paintGradient(int layerId, const float* g) {
+    if (!paintActive_ || layerId != paintLayer_ || !g || paintMode_ == 2) return false;
+    for (int i = 0; i < 10; ++i) if (!std::isfinite(g[i])) return false;
+    if (!validGradientGesture(g[6], g[7], g[8], g[9])) return false;
+    GlSave save;
+    const GLuint program = buildProgram(kGradientVert, kGradientFrag);
+    if (!program) return false;
+    glBindFramebuffer(GL_FRAMEBUFFER, strokeFbo_);
+    glViewport(0, 0, paintW_, paintH_);
+    glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
+    glUseProgram(program);
+    glUniform2f(glGetUniformLocation(program, "origin"), g[0], g[1]);
+    glUniform2f(glGetUniformLocation(program, "axisX"), g[2], g[3]);
+    glUniform2f(glGetUniformLocation(program, "axisY"), g[4], g[5]);
+    glUniform2f(glGetUniformLocation(program, "startPoint"), g[6], g[7]);
+    glUniform2f(glGetUniformLocation(program, "endPoint"), g[8], g[9]);
+    glUniform3f(glGetUniformLocation(program, "color"), paintColor_[0], paintColor_[1], paintColor_[2]);
+    glBindVertexArray(vao_); glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDeleteProgram(program);
+    if (!checkGl("paintGradient")) return false;
+    pbx0_ = 0; pby0_ = 0; pbx1_ = paintW_; pby1_ = paintH_;
+    glBlendEquation(GL_FUNC_ADD);
+    paintBake(0, 0, paintW_, paintH_);
+    if (!checkGl("paintGradientBake")) { std::vector<uint8_t> discarded; paintEnd(false, discarded); return false; }
+    return true;
 }
 
 bool Renderer::paintEnd(bool commit, std::vector<uint8_t>& out) {

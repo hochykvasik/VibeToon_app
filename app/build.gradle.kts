@@ -39,6 +39,17 @@ android {
         }
     }
 
+    // Публичный тестовый ключ только для debug. Никогда не использовать для релизов.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug-signing/vibetoon-debug.p12")
+            storeType = "PKCS12"
+            storePassword = "android"
+            keyAlias = "vibetoon-debug"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true

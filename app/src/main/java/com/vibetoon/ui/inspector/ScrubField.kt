@@ -100,7 +100,7 @@ fun ScrubBox(label: String, value: Float, min: Float, max: Float, onValue: (Floa
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ChevronLeft, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-        Text("$label ${value.toInt()}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+        Text("${com.vibetoon.ui.i18n.L(label)} ${value.toInt()}", fontSize = 12.sp, maxLines = 1, softWrap = false)
         androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ChevronRight, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
     }
 }

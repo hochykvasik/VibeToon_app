@@ -6,6 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExportMathTest {
+    @Test fun exportPresetsAreExplicitPerFormat() {
+        assertEquals(listOf(1080, 720, 480), ExportMath.QUALITIES)
+        assertEquals(listOf(480, 360), ExportMath.GIF_QUALITIES)
+        assertEquals(listOf(24, 30, 60), ExportMath.FPS_OPTIONS)
+        assertEquals(ExportMath.FPS_OPTIONS, ExportMath.SEQUENCE_FPS_OPTIONS)
+        assertEquals(listOf(12, 24, 30), ExportMath.GIF_FPS_OPTIONS)
+    }
+
     @Test fun landscapeKeepsAspectAndEven() {
         assertEquals(1920 to 1080, ExportMath.size(1920, 1080, 1080))
         assertEquals(1280 to 720, ExportMath.size(1920, 1080, 720))

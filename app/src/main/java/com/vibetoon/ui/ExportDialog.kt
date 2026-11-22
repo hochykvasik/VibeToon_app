@@ -56,20 +56,35 @@ private enum class ExportMode(val title: String, val ready: Boolean) {
 fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
     val state by vm.export.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
+    val shareTitle = com.vibetoon.ui.i18n.L("Поделиться")
     when (val s = state) {
         ExportUi.Idle -> if (visible) {
             var mode by remember { mutableStateOf(ExportMode.VIDEO) }
-            var quality by remember { mutableIntStateOf(ExportMath.QUALITIES[1]) }
+            var videoQuality by remember { mutableIntStateOf(ExportMath.QUALITIES[1]) }
+            var gifQuality by remember { mutableIntStateOf(ExportMath.GIF_QUALITIES[0]) }
+            var sequenceQuality by remember { mutableIntStateOf(ExportMath.QUALITIES[1]) }
             var fps by remember { mutableIntStateOf(30) }
             var qMenu by remember { mutableStateOf(false) }
             var fMenu by remember { mutableStateOf(false) }
             var gifFps by remember { mutableIntStateOf(24) }
+            var sequenceFps by remember { mutableIntStateOf(24) }
             var gifAlpha by remember { mutableStateOf(false) }
+            var sequenceAlpha by remember { mutableStateOf(false) }
             var jpeg by remember { mutableStateOf(false) }
             val backupLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
                 if (uri != null) { vm.exportProjectBackup(uri, ctx); onHide() }
             }
-            val (w, h, frames) = vm.exportInfo(quality, if (mode == ExportMode.GIF) gifFps else fps)
+            val quality = when (mode) {
+                ExportMode.GIF -> gifQuality
+                ExportMode.SEQUENCE -> sequenceQuality
+                else -> videoQuality
+            }
+            val exportFps = when (mode) {
+                ExportMode.GIF -> gifFps
+                ExportMode.SEQUENCE -> sequenceFps
+                else -> fps
+            }
+            val (w, h, frames) = vm.exportInfo(quality, exportFps)
             AlertDialog(
                 onDismissRequest = onHide,
                 shape = RoundedCornerShape(24.dp),
@@ -91,11 +106,11 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                         } else if (mode == ExportMode.SEQUENCE) {
                             Text("Каждый кадр - PNG с прозрачным фоном, всё в одном ZIP. Это замена видео MOV с альфой: Android не умеет ProRes 4444.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(top = 8.dp))
                             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                for (f in listOf(12, 24, 30)) androidx.compose.material3.FilterChip(selected = gifFps == f, onClick = { gifFps = f }, label = { Text("$f fps", maxLines = 1, softWrap = false) })
-                                for (q in listOf(1080, 720, 480)) androidx.compose.material3.FilterChip(selected = quality == q, onClick = { quality = q }, label = { Text("${q}p", maxLines = 1, softWrap = false) })
+                                for (f in ExportMath.SEQUENCE_FPS_OPTIONS) androidx.compose.material3.FilterChip(selected = sequenceFps == f, onClick = { sequenceFps = f }, label = { Text("$f fps", maxLines = 1, softWrap = false) })
+                                for (q in ExportMath.QUALITIES) androidx.compose.material3.FilterChip(selected = sequenceQuality == q, onClick = { sequenceQuality = q }, label = { Text("${q}p", maxLines = 1, softWrap = false) })
                             }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                androidx.compose.material3.Switch(checked = gifAlpha, onCheckedChange = { gifAlpha = it })
+                                androidx.compose.material3.Switch(checked = sequenceAlpha, onCheckedChange = { sequenceAlpha = it })
                                 Text("Прозрачный фон", fontSize = 13.sp)
                             }
                             Text("${w}×$h, $frames кадров", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
@@ -108,8 +123,8 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                         } else if (mode == ExportMode.GIF) {
                             Text("Размер и частота кадров GIF", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(top = 8.dp))
                             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                for (f in listOf(12, 24, 30)) androidx.compose.material3.FilterChip(selected = gifFps == f, onClick = { gifFps = f }, label = { Text("$f fps", maxLines = 1, softWrap = false) })
-                                for (q in listOf(480, 360)) androidx.compose.material3.FilterChip(selected = quality == q, onClick = { quality = q }, label = { Text("${q}p", maxLines = 1, softWrap = false) })
+                                for (f in ExportMath.GIF_FPS_OPTIONS) androidx.compose.material3.FilterChip(selected = gifFps == f, onClick = { gifFps = f }, label = { Text("$f fps", maxLines = 1, softWrap = false) })
+                                for (q in ExportMath.GIF_QUALITIES) androidx.compose.material3.FilterChip(selected = gifQuality == q, onClick = { gifQuality = q }, label = { Text("${q}p", maxLines = 1, softWrap = false) })
                             }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 androidx.compose.material3.Switch(checked = gifAlpha, onCheckedChange = { gifAlpha = it })
@@ -122,13 +137,13 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                             Box(Modifier.weight(1f)) {
                                 OutlinedButton(onClick = { qMenu = true }, modifier = Modifier.fillMaxWidth()) { com.vibetoon.ui.DropText("${quality}p", 14.sp) }
                                 DropdownMenu(expanded = qMenu, onDismissRequest = { qMenu = false }) {
-                                    ExportMath.QUALITIES.forEach { q -> DropdownMenuItem(text = { Text("${q}p") }, onClick = { quality = q; qMenu = false }) }
+                                    ExportMath.QUALITIES.forEach { q -> DropdownMenuItem(text = { Text("${q}p") }, onClick = { videoQuality = q; qMenu = false }) }
                                 }
                             }
                             Box(Modifier.weight(1f)) {
                                 OutlinedButton(onClick = { fMenu = true }, modifier = Modifier.fillMaxWidth()) { com.vibetoon.ui.DropText("$fps fps", 14.sp) }
                                 DropdownMenu(expanded = fMenu, onDismissRequest = { fMenu = false }) {
-                                    ExportMath.FPS_OPTIONS.filter { it >= 30 }.forEach { f -> DropdownMenuItem(text = { Text("$f") }, onClick = { fps = f; fMenu = false }) }
+                                    ExportMath.FPS_OPTIONS.forEach { f -> DropdownMenuItem(text = { Text("$f") }, onClick = { fps = f; fMenu = false }) }
                                 }
                             }
                         }
@@ -139,7 +154,7 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                     Button({
                         when (mode) {
                             ExportMode.GIF -> vm.exportGif(quality, gifFps, gifAlpha)
-                            ExportMode.SEQUENCE -> vm.exportPngZip(quality, gifFps, gifAlpha)
+                            ExportMode.SEQUENCE -> vm.exportPngZip(quality, sequenceFps, sequenceAlpha)
                             ExportMode.AUDIO -> vm.exportAudioOnly()
                             ExportMode.PSD -> vm.exportPsd()
                             ExportMode.PROJECT -> backupLauncher.launch("${vm.projectName.value}.tsproj")
@@ -167,26 +182,31 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
         is ExportUi.Done -> AlertDialog(
             onDismissRequest = { vm.dismissExport(); onHide() },
             title = { Text(if (s.file.extension == "mp4") "Видео готово" else "Файл готов") },   // zip и wav - тоже «Файл готов"
-            text = { Text("${s.file.name}\n${s.file.length() / 1024} КБ. Сохранено в папку проекта" + if (s.file.extension in setOf("png", "jpg", "gif", "mp4")) " и в галерею." else ".") },
-            confirmButton = { TextButton({ share(ctx, s.file) }) { Text("Поделиться") } },
+            text = {
+                val message = if (s.gallerySaved) "${s.file.length() / 1024} КБ. Сохранено в папку проекта и в галерею."
+                    else if (s.file.extension.lowercase() in setOf("png", "jpg", "gif", "mp4")) "${s.file.length() / 1024} КБ. Сохранено в папку проекта; копию в галерею создать не удалось."
+                    else "${s.file.length() / 1024} КБ. Сохранено в папку проекта."
+                Text(s.file.name + "\n" + com.vibetoon.ui.i18n.L(message))
+            },
+            confirmButton = { TextButton({ share(ctx, s.file, shareTitle) }) { Text("Поделиться") } },
             dismissButton = { TextButton({ vm.dismissExport(); onHide() }) { Text("Закрыть") } }
         )
 
         is ExportUi.Failed -> AlertDialog(
             onDismissRequest = { vm.dismissExport(); onHide() },
             title = { Text("Не получилось") },
-            text = { Text(s.message) },
+            text = { Text(com.vibetoon.ui.i18n.localizeDiagnostic(s.message)) },
             confirmButton = { TextButton({ vm.dismissExport(); onHide() }) { Text("Закрыть") } }
         )
     }
 }
 
-private fun share(ctx: android.content.Context, file: File) {
+private fun share(ctx: android.content.Context, file: File, title: String) {
     val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
     val send = Intent(Intent.ACTION_SEND).apply {
         type = when (file.extension) { "png" -> "image/png"; "jpg" -> "image/jpeg"; "gif" -> "image/gif"; "zip" -> "application/zip"; "psd" -> "image/vnd.adobe.photoshop"; "wav" -> "audio/wav"; else -> "video/mp4" }
         putExtra(Intent.EXTRA_STREAM, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    ctx.startActivity(Intent.createChooser(send, "Поделиться").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    ctx.startActivity(Intent.createChooser(send, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }

@@ -216,9 +216,14 @@ object RasterMath {
      * Перенос содержимого выделения на (dx, dy) пикселей: пиксели под маской вырезаются и ставятся на новое место поверх остального.
      * Возвращает один прямоугольник (охват старого и нового положения) с «до» и «после» для Undo.
      */
+    /** Нельзя уничтожать пиксели на краю: вызывающий код должен отдельно перенести фрагмент. */
+    fun moveFits(b: IRect, w: Int, h: Int, dx: Int, dy: Int): Boolean =
+        b.x.toLong() + dx >= 0 && b.y.toLong() + dy >= 0 &&
+            b.x.toLong() + b.w + dx <= w && b.y.toLong() + b.h + dy <= h
+
     fun moveResult(px: ByteArray, off: Int, w: Int, h: Int, mask: ByteArray, dx: Int, dy: Int): FillResult? {
         val b = bounds(mask, w, h) ?: return null
-        if (dx == 0 && dy == 0) return null
+        if ((dx == 0 && dy == 0) || !moveFits(b, w, h, dx, dy)) return null
         val x0 = max(0, min(b.x, b.x + dx)); val y0 = max(0, min(b.y, b.y + dy))
         val x1 = min(w - 1, max(b.x + b.w - 1, b.x + b.w - 1 + dx)); val y1 = min(h - 1, max(b.y + b.h - 1, b.y + b.h - 1 + dy))
         val rw = x1 - x0 + 1; val rh = y1 - y0 + 1

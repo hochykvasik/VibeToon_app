@@ -185,6 +185,12 @@ data class Clip(
     }
 }
 
+/** Закреплённая рамка в локальных координатах группы, не экранная рамка и не деформер. */
+data class GroupDeformationAnchor(val x: Float, val y: Float, val width: Float, val height: Float) {
+    fun valid(): Boolean = x.isFinite() && y.isFinite() && width.isFinite() && height.isFinite() &&
+        width > 0f && height > 0f && (x + width).isFinite() && (y + height).isFinite()
+}
+
 /** Всё, что сохраняется в project.json. */
 data class ProjectData(
     val meta: ProjectMeta,
@@ -221,7 +227,12 @@ data class ProjectData(
     /** Пины Puppet Mesh по слоям; смещения пинов лежат в base и tracks под id PuppetMath.pinId. */
     val pins: Map<Int, List<com.vibetoon.domain.anim.Pin>> = emptyMap(),
     /** Свойства слоёв из панели слоёв: Opacity, Blend Mode, Alpha Lock, Clipping Mask (перекрывают PSD). */
-    val layerProps: Map<Int, com.vibetoon.domain.model.LayerProps> = emptyMap()
+    val layerProps: Map<Int, com.vibetoon.domain.model.LayerProps> = emptyMap(),
+    /** Зарезервированные локальные рамки групп. Пока не включают деформацию. */
+    val groupDeformationAnchors: Map<Int, GroupDeformationAnchor> = emptyMap(),
+    /** Only non-default 2..4-point grids; v1/v2 always mean 4x4. */
+    val warpGridSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap(),
+    val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
 ) {
     fun animation() = Animation(ProjectSettings(meta.fps, meta.durationFrames), tracks)
 }

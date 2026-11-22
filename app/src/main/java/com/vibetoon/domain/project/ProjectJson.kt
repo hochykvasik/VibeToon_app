@@ -13,14 +13,16 @@ import com.vibetoon.domain.render.LayerTransform
  * Неизвестные и отсутствующие поля не ломают чтение; версия новее известной - ошибка.
  */
 object ProjectJson {
-    const val VERSION = 1
+    const val VERSION = 4
+    private const val LEGACY_VERSION = 1
     const val FORMAT = "vibetoon-project"
 
     fun encode(d: ProjectData): String {
         val m = d.meta
         val root = LinkedHashMap<String, Any?>()
         root["format"] = FORMAT
-        root["version"] = VERSION
+        // Старые сборки обязаны отказаться от открытия, а не молча удалить новый формат.
+        root["version"] = if (d.denseWarps.isNotEmpty()) 4 else if (d.warpGridSizes.isNotEmpty()) 3 else if (d.groupDeformationAnchors.isNotEmpty()) 2 else LEGACY_VERSION
         root["id"] = m.id
         root["name"] = m.name
         root["width"] = m.width
@@ -47,11 +49,27 @@ object ProjectJson {
         if (d.regroup.isNotEmpty()) root["regroup"] = d.regroup.map { listOf(it.first, it.second) }
         if (d.warps.isNotEmpty()) root["warps"] = d.warps.sorted()
         if (d.persps.isNotEmpty()) root["persps"] = d.persps.sorted()
+        if (d.warpGridSizes.isNotEmpty()) {
+            require(d.warpGridSizes.all { (id, size) -> id in d.warps && id >= 0 && size.valid() && size != com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT })
+            root["warpGridSizes"] = d.warpGridSizes.toSortedMap().mapKeys { it.key.toString() }.mapValues { (_, size) -> listOf(size.width, size.height) }
+        }
+        if (d.denseWarps.isNotEmpty()) {
+            require(d.denseWarps.all { (id, g) -> id >= 0 && id in d.warps && id !in d.groupDeformationAnchors && g.valid() })
+            root["denseWarps"] = d.denseWarps.toSortedMap().mapKeys { it.key.toString() }.mapValues { (_, g) ->
+                linkedMapOf("w" to g.width, "h" to g.height, "p" to g.offsets.map { it.toDouble() })
+            }
+        }
+        if (d.groupDeformationAnchors.isNotEmpty()) {
+            require(d.groupDeformationAnchors.all { (id, anchor) -> id >= 0 && anchor.valid() }) { "Invalid group deformation anchor" }
+            root["groupDeformationAnchors"] = d.groupDeformationAnchors.toSortedMap().mapKeys { it.key.toString() }.mapValues { (_, a) ->
+                listOf(a.x.toDouble(), a.y.toDouble(), a.width.toDouble(), a.height.toDouble())
+            }
+        }
         if (d.pins.isNotEmpty()) root["pins"] = d.pins.entries.associate { (id, l) ->
             id.toString() to l.map { p -> linkedMapOf<String, Any?>("u" to p.u.toDouble(), "v" to p.v.toDouble(), "s" to p.stiff, "r" to p.radius.toDouble()) }
         }
         if (d.fx.isNotEmpty()) root["fx"] = d.fx.entries.associate { (id, l) ->
-            id.toString() to l.map { e -> linkedMapOf<String, Any?>("t" to e.type, "p" to e.p.map { it.toDouble() }) }
+            id.toString() to l.map { e -> linkedMapOf<String, Any?>("t" to e.type, "p" to e.p.map { it.toDouble() }).also { if (e.slot >= 0) it["slot"] = e.slot } }
         }
         if (d.turbs.isNotEmpty()) root["turbs"] = d.turbs.entries.associate { (id, t) ->
             id.toString() to linkedMapOf<String, Any?>("i" to t.intensity.toDouble(), "s" to t.size.toDouble(), "c" to t.complexity, "b" to t.boil)
@@ -154,7 +172,52 @@ object ProjectJson {
                 val b = (l.getOrNull(1) as? Number)?.toInt() ?: return@mapNotNull null
                 a to b
             }
+            val groupAnchors = HashMap<Int, GroupDeformationAnchor>()
+            if (root.containsKey("groupDeformationAnchors")) {
+                if (version < 2) throw JsonException("Области деформации требуют формат версии 2")
+                val entries = root.obj("groupDeformationAnchors") ?: throw JsonException("Некорректные области групп")
+                for ((key, value) in entries) {
+                    val id = key.toIntOrNull()?.takeIf { it >= 0 } ?: throw JsonException("Некорректный id группы")
+                    val values = value as? List<*> ?: throw JsonException("Некорректная область группы")
+                    if (values.size != 4) throw JsonException("Некорректная область группы")
+                    val numbers = values.map { (it as? Number)?.toFloat() ?: throw JsonException("Некорректная координата области") }
+                    val anchor = GroupDeformationAnchor(numbers[0], numbers[1], numbers[2], numbers[3])
+                    if (!anchor.valid() || groupAnchors.put(id, anchor) != null) throw JsonException("Некорректная область группы")
+                }
+            }
             val warps = (root["warps"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.toSet()
+            val warpSizes = HashMap<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size>()
+            if (root.containsKey("warpGridSizes")) {
+                if (version < 3) throw JsonException("Размер сетки Warp требует формат версии 3")
+                val entries = root.obj("warpGridSizes") ?: throw JsonException("Некорректные размеры сетки Warp")
+                for ((key, value) in entries) {
+                    val id = key.toIntOrNull()?.takeIf { it >= 0 && it in warps } ?: throw JsonException("Некорректный id Warp")
+                    val v = value as? List<*> ?: throw JsonException("Некорректный размер Warp")
+                    if (v.size != 2 || v.any { it !is Number || it.toDouble() != it.toInt().toDouble() }) throw JsonException("Некорректный размер Warp")
+                    val size = com.vibetoon.domain.anim.CubicWarpGrid.Size((v[0] as Number).toInt(), (v[1] as Number).toInt())
+                    if (!size.valid() || size == com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT || warpSizes.put(id, size) != null) throw JsonException("Некорректный размер Warp")
+                }
+            }
+            val dense = HashMap<Int, com.vibetoon.domain.anim.DenseWarpGrid>()
+            if (root.containsKey("denseWarps")) {
+                if (version < 4) throw JsonException("Плотный Warp требует формат версии 4")
+                val entries = root.obj("denseWarps") ?: throw JsonException("Некорректная сетка Warp")
+                for ((key, value) in entries) {
+                    val id = key.toIntOrNull()?.takeIf { it >= 0 && it in warps && it !in groupAnchors } ?: throw JsonException("Некорректный id Warp")
+                    val m = value as? Map<*, *> ?: throw JsonException("Некорректная сетка Warp")
+                    fun dimension(k: String): Int {
+                        val n = m[k] as? Number ?: throw JsonException("Некорректный размер Warp")
+                        if (n.toDouble() != n.toInt().toDouble()) throw JsonException("Некорректный размер Warp")
+                        return n.toInt()
+                    }
+                    val w = dimension("w"); val h = dimension("h")
+                    if (w !in 2..33 || h !in 2..33) throw JsonException("Некорректный размер Warp")
+                    val points = m["p"] as? List<*> ?: throw JsonException("Нет точек Warp")
+                    if (points.size != w * h * 2) throw JsonException("Некорректное число точек Warp")
+                    val grid = com.vibetoon.domain.anim.DenseWarpGrid(w, h, points.map { (it as? Number)?.toFloat() ?: throw JsonException("Некорректная точка Warp") })
+                    if (!grid.valid() || dense.put(id, grid) != null) throw JsonException("Некорректная сетка Warp")
+                }
+            }
             val meshes = HashMap<Int, com.vibetoon.domain.anim.Mesh>()
             root.obj("meshes")?.forEach { (key, v) ->
                 val i = key.toIntOrNull() ?: return@forEach
@@ -193,9 +256,9 @@ object ProjectJson {
                     val t = (o["t"] as? Number)?.toInt() ?: return@mapNotNull null
                     if (com.vibetoon.domain.anim.EffectMath.def(t) == null) return@mapNotNull null
                     val p = (o["p"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toFloat() }
-                    com.vibetoon.domain.anim.Effect(t, List(8) { k -> com.vibetoon.domain.anim.EffectMath.clamp(t, k, p.getOrElse(k) { 0f }) })
+                    com.vibetoon.domain.anim.Effect(t, List(8) { k -> com.vibetoon.domain.anim.EffectMath.clamp(t, k, p.getOrElse(k) { 0f }) }, (o["slot"] as? Number)?.toInt() ?: -1)
                 }.take(com.vibetoon.domain.anim.EffectMath.MAX_PER_LAYER)
-                if (list.isNotEmpty()) fx[i] = list
+                if (list.isNotEmpty()) fx[i] = com.vibetoon.domain.anim.EffectTracks.assignSlots(list)
             }
             val pins = HashMap<Int, List<com.vibetoon.domain.anim.Pin>>()
             root.obj("pins")?.forEach { (key, v) ->
@@ -220,7 +283,7 @@ object ProjectJson {
                 ).normalized()
             }
             Result.success(ProjectData(meta, psd, base, tracks, media, deleted, clips, markers, links, bones, regroup, warps, meshes,
-                (root["persps"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.toSet(), skins, turbs, fx, pins, lprops))
+                (root["persps"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.toSet(), skins, turbs, fx, pins, lprops, groupAnchors, warpSizes, dense))
         }
     } catch (e: JsonException) {
         Result.failure(IllegalStateException("Повреждённый файл проекта: ${e.message}"))

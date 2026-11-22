@@ -29,8 +29,8 @@ class AudioEngine {
 
     private val files = HashMap<Int, File>()
     private val pcm = ConcurrentHashMap<File, Pcm>()
-    private val decoding = ConcurrentHashMap.newKeySet<File>()
     private val executor = Executors.newSingleThreadExecutor()
+    private val preparation = com.vibetoon.domain.project.PreparationRegistry<File>(executor)
     private val sessions = HashMap<Int, Session>()
     private val peaks = ConcurrentHashMap<File, FloatArray>()
     /** Вызывается из фонового потока, когда файл декодирован и пики громкости готовы. */
@@ -47,30 +47,29 @@ class AudioEngine {
         for (f in map.values) ensureDecoded(f)
     }
 
-    private fun ensureDecoded(f: File) {
-        if (pcm.containsKey(f) || !decoding.add(f)) return
-        executor.execute {
-            try {
-                // волна из кэша .wave появляется сразу, пока файл ещё декодируется для воспроизведения
-                val cacheFile = File(f.path + ".wave")
-                if (!peaks.containsKey(f)) {
-                    runCatching { if (cacheFile.exists()) com.vibetoon.domain.project.WaveCache.decode(cacheFile.readBytes(), f.length(), f.lastModified()) else null }
-                        .getOrNull()?.let { peaks[f] = it; onDecoded?.invoke() }
-                }
-                val d = decode(f)
-                if (!peaks.containsKey(f)) {
-                    val pk = com.vibetoon.domain.project.WaveformMath.peaks(d.data, d.channels, d.sampleRate)
-                    peaks[f] = pk
-                    runCatching { cacheFile.writeBytes(com.vibetoon.domain.project.WaveCache.encode(pk, f.length(), f.lastModified())) }
-                }
-                pcm[f] = d
-                onDecoded?.invoke()
-                Log.i(TAG, "decoded ${f.name}: ${pcm[f]!!.frames} frames @ ${pcm[f]!!.sampleRate} Hz")
-            } catch (t: Throwable) {
-                Log.w(TAG, "decode failed for ${f.name}: ${t.message}")
-            } finally {
-                decoding.remove(f)
+    /** Завершается только после публикации PCM для scrub/play, а не после чтения кэша волны. */
+    suspend fun awaitScrubReady(file: File): Result<Unit> = ensureDecoded(file).await()
+
+    private fun ensureDecoded(f: File) = preparation.request(f, { pcm.containsKey(f) }) {
+        try {
+            val cacheFile = File(f.path + ".wave")
+            if (!peaks.containsKey(f)) {
+                runCatching { if (cacheFile.exists()) com.vibetoon.domain.project.WaveCache.decode(cacheFile.readBytes(), f.length(), f.lastModified()) else null }
+                    .getOrNull()?.let { peaks[f] = it; onDecoded?.invoke() }
             }
+            val d = decode(f)
+            check(d.frames > 0) { "Аудио не содержит доступных сэмплов" }
+            if (!peaks.containsKey(f)) {
+                val pk = com.vibetoon.domain.project.WaveformMath.peaks(d.data, d.channels, d.sampleRate)
+                peaks[f] = pk
+                runCatching { cacheFile.writeBytes(com.vibetoon.domain.project.WaveCache.encode(pk, f.length(), f.lastModified())) }
+            }
+            pcm[f] = d
+            onDecoded?.invoke()
+            Log.i(TAG, "decoded ${f.name}: ${d.frames} frames @ ${d.sampleRate} Hz")
+        } catch (t: Throwable) {
+            Log.w(TAG, "decode failed for ${f.name}: ${t.message}")
+            throw t
         }
     }
 
@@ -79,6 +78,7 @@ class AudioEngine {
     @Volatile var volumes: Map<Int, List<com.vibetoon.domain.project.VolKey>> = emptyMap()
 
     fun play(frame: Int, fps: Int, clipOf: (Int) -> Clip) {
+        cancelScrub()
         stopAll()
         for ((id, f) in files) {
             val p = pcm[f]
@@ -99,7 +99,7 @@ class AudioEngine {
             if (clip.freeze || frame < clip.start || frame >= clip.end) continue
             src += ScrubSrc(p, clip, volumes[id].orEmpty())
         }
-        if (src.isEmpty()) return
+        if (src.isEmpty()) { cancelScrub(); return }
         val s = scrubber ?: Scrubber().also { scrubber = it; it.start() }
         s.post(ScrubRequest(src, frame, fps))
     }
@@ -108,14 +108,28 @@ class AudioEngine {
     private class ScrubRequest(val src: List<ScrubSrc>, val frame: Int, val fps: Int)
     @Volatile private var scrubber: Scrubber? = null
 
-    /** Один постоянный поток и один AudioTrack для скраббинга: новый фрагмент заменяет прежний без создания потоков и щелчков (fade на краях). */
+    /** Очистка и отмена ожидающих фрагментов, в том числе при запуске Play. */
+    fun cancelScrub() { scrubber?.cancel() }
+
+    /** Постоянный поток: очередь хранит только последнюю позицию. */
     private inner class Scrubber : Thread("vt-scrub") {
         private val lock = Object()
-        private var pending: ScrubRequest? = null
+        private var pending: Pair<Long, ScrubRequest>? = null
+        private var generation = 0L
+        private var track: AudioTrack? = null
         @Volatile private var alive = true
 
-        fun post(r: ScrubRequest) = synchronized(lock) { pending = r; lock.notifyAll() }
-        fun quit() { alive = false; synchronized(lock) { lock.notifyAll() } }
+        fun post(r: ScrubRequest) = synchronized(lock) {
+            generation++
+            pending = generation to r
+            lock.notifyAll()
+        }
+        fun cancel() = synchronized(lock) {
+            generation++
+            pending = null
+            track?.let { t -> runCatching { t.pause(); t.flush() } }
+        }
+        fun quit() { cancel(); alive = false; synchronized(lock) { lock.notifyAll() } }
 
         override fun run() {
             val minBuf = AudioTrack.getMinBufferSize(OUT_SR, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
@@ -123,7 +137,7 @@ class AudioEngine {
                 AudioTrack.Builder()
                     .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
                     .setAudioFormat(AudioFormat.Builder().setSampleRate(OUT_SR).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build())
-                    .setBufferSizeInBytes(max(minBuf, OUT_SR * 4 / 4))
+                    .setBufferSizeInBytes(max(minBuf, OUT_SR * SCRUB_MS / 1000 * 4))
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .build()
             } catch (e: Throwable) {
@@ -131,19 +145,31 @@ class AudioEngine {
                 return
             }
             try {
-                t.play()
+                synchronized(lock) { track = t }
+                // На Android до 12 стартовый порог потокового AudioTrack равен размеру буфера.
+                // Одних 90 мс недостаточно при большом minBuffer: дополняем фрагмент тишиной.
+                val bufferSamples = t.bufferSizeInFrames * 2
+                if (android.os.Build.VERSION.SDK_INT >= 31) t.setStartThresholdInFrames(1)
                 while (alive) {
-                    val r = synchronized(lock) {
+                    val request = synchronized(lock) {
                         while (alive && pending == null) lock.wait()
                         pending.also { pending = null }
                     } ?: break
-                    val data = renderScrub(r)
-                    runCatching { t.pause(); t.flush(); t.play() }
-                    t.write(data, 0, data.size)
+                    val data = renderScrub(request.second)
+                    val padded = com.vibetoon.domain.project.ScrubAudio.padForStart(data, bufferSamples / 2)
+                    synchronized(lock) {
+                        if (!alive || request.first != generation) return@synchronized
+                        runCatching {
+                            t.pause(); t.flush()
+                            val written = t.write(padded, 0, padded.size, AudioTrack.WRITE_NON_BLOCKING)
+                            if (written > 0) t.play() else Log.w(TAG, "scrub write failed: $written")
+                        }.onFailure { Log.w(TAG, "scrub playback failed", it) }
+                    }
                 }
             } catch (e: Throwable) {
                 Log.w(TAG, "scrub error: ${e.message}")
             } finally {
+                synchronized(lock) { track = null }
                 runCatching { t.stop() }
                 runCatching { t.release() }
             }
@@ -186,34 +212,12 @@ class AudioEngine {
 
     fun mixSampleRate() = OUT_SR
 
-    private fun renderScrub(r: ScrubRequest): ShortArray {
-        val n = OUT_SR * SCRUB_MS / 1000
-        val fadeN = max(1, OUT_SR * FADE_MS / 1000)
-        val out = ShortArray(n * 2)
-        for (k in 0 until n) {
-            var l = 0; var rr = 0
-            for (s in r.src) {
-                val p = s.p; val clip = s.clip; val ch = p.channels
-                val rel = k.toDouble() * r.fps / OUT_SR + (r.frame - clip.start)
-                val srcFrame = if (!clip.reverse) clip.offset + rel * clip.speed else clip.offset + clip.length * clip.speed - rel * clip.speed
-                val pos = srcFrame / r.fps * p.sampleRate
-                val i0 = Math.floor(pos).toInt()
-                if (pos < 0 || i0 + 1 >= p.frames) continue
-                val frac = (pos - i0).toFloat()
-                fun at(c: Int): Int { val a = p.data[i0 * ch + c].toInt(); val b = p.data[(i0 + 1) * ch + c].toInt(); return (a + (b - a) * frac).toInt() }
-                val gv = if (s.vol.isEmpty()) 1f else com.vibetoon.domain.project.VolumeMath.at(s.vol, r.frame + k.toDouble() * r.fps / OUT_SR)
-                val left = (at(0) * gv).toInt()
-                l += left
-                rr += if (ch > 1) (at(1) * gv).toInt() else left
-            }
-            val g = min(1f, min((k + 1f) / fadeN, (n - k).toFloat() / fadeN))
-            out[k * 2] = (l * g).toInt().coerceIn(-32768, 32767).toShort()
-            out[k * 2 + 1] = (rr * g).toInt().coerceIn(-32768, 32767).toShort()
-        }
-        return out
-    }
+    private fun renderScrub(r: ScrubRequest): ShortArray = com.vibetoon.domain.project.ScrubAudio.render(
+        r.src.map { s -> com.vibetoon.domain.project.ScrubAudio.Source(s.p.data, s.p.sampleRate, s.p.channels, s.clip, s.vol) },
+        r.frame, r.fps, OUT_SR, SCRUB_MS, FADE_MS
+    )
 
-    fun pause() = stopAll()
+    fun pause() { cancelScrub(); stopAll() }
 
     private fun stopAll() {
         for (s in sessions.values) s.halt()

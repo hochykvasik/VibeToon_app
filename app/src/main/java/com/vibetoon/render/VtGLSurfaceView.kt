@@ -23,16 +23,22 @@ data class FrameParams(
 class VtRenderer(
     private val takeScene: () -> SceneData?,
     private val frameParams: () -> FrameParams,
-    private val requestRender: () -> Unit
+    private val requestRender: () -> Unit,
+    private val onReady: () -> Unit
 ) : GLSurfaceView.Renderer {
     private var handle = 0L
+    @Volatile private var disposed = false
+    fun deactivate() { disposed = true }
     private var lastScene: SceneData? = null
     private var sampleReq: Triple<Int, Int, (Int) -> Unit>? = null
+    private val afterFrameChecks = ArrayList<Pair<Int, (IntArray?) -> Unit>>()
+    fun checkTextureAfterFrame(id: Int, callback: (IntArray?) -> Unit) { afterFrameChecks.add(id to callback) }
 
     /** Пипетка: цвет пикселя после ближайшего кадра (в GL-потоке). */
     fun sampleColor(x: Int, y: Int, cb: (Int) -> Unit) { sampleReq = Triple(x, y, cb) }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        if (disposed) return
         // Контекст мог быть потерян: старый рендерер освобождаем и создаём заново.
         if (handle != 0L) RenderNative.destroy(handle)
         handle = RenderNative.create()
@@ -40,13 +46,16 @@ class VtRenderer(
         Log.i(TAG_GL, "initGL maxTexture=$maxTex")
         // Текстуры потеряны вместе с контекстом; сцену отправим заново (TODO: перезагрузка слоёв).
         lastScene?.let { applyScene(it) }
+        onReady()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+        if (disposed || handle == 0L) return
         RenderNative.setViewport(handle, width, height)
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        if (disposed || handle == 0L) return
         takeScene()?.let { lastScene = it; applyScene(it) }
         val p = frameParams()
         RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY)
@@ -54,6 +63,8 @@ class VtRenderer(
         RenderNative.setBackground(handle, p.background)
         val more = RenderNative.drawFrame(handle)
         sampleReq?.let { (x, y, cb) -> sampleReq = null; cb(RenderNative.readPixel(handle, x, y)) }
+        val checks = afterFrameChecks.toList(); afterFrameChecks.clear()
+        checks.forEach { (id, callback) -> callback(layerSize(id)) }
         if (more) requestRender() // в очереди остались загрузки
     }
 
@@ -89,11 +100,15 @@ class VtRenderer(
                      grainScale: Float, grainContrast: Float, roundness: Float, curve: Int, grain: ByteArray?, dabs: FloatArray, count: Int, w: Int, h: Int): ByteArray? =
         if (handle == 0L) null else RenderNative.brushPreview(handle, mode, r, g, b, shape, hardness, grainKind, grainMode, grainScale, grainContrast, roundness, curve, grain, dabs, count, w, h)
     fun paintDabs(dabs: FloatArray, count: Int) { if (handle != 0L) RenderNative.paintDabs(handle, dabs, count) }
+    fun paintGradient(layerId: Int, geometry: FloatArray): Boolean = handle != 0L && RenderNative.paintGradient(handle, layerId, geometry)
     fun paintEnd(commit: Boolean): ByteArray? = if (handle == 0L) null else RenderNative.paintEnd(handle, commit)
     fun paintEndAsync(layerId: Int): Boolean = handle != 0L && RenderNative.paintEndAsync(handle, layerId)
     fun paintPoll(): ByteArray? = if (handle == 0L) null else RenderNative.paintPoll(handle)
     fun paintRestore(layerId: Int, x: Int, y: Int, w: Int, h: Int, data: ByteArray): Boolean =
         handle != 0L && RenderNative.paintRestore(handle, layerId, x, y, w, h, data)
+
+    fun replaceTextureChecked(layerId: Int, expectedW: Int, expectedH: Int, width: Int, height: Int, data: ByteArray): Int =
+        if (handle == 0L) -2 else RenderNative.replaceTextureChecked(handle, layerId, expectedW, expectedH, width, height, data)
 
     private fun applyScene(s: SceneData) {
         RenderNative.setCanvas(handle, s.canvasWidth, s.canvasHeight)
@@ -143,7 +158,22 @@ class VtRenderer(
 class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     private val pendingScene = AtomicReference<SceneData?>(null)
     private val params = AtomicReference(FrameParams())
-    private val vtRenderer = VtRenderer({ pendingScene.getAndSet(null) }, { params.get() }, { requestRender() })
+    private val rendererReady = kotlinx.coroutines.CompletableDeferred<Unit>()
+    private val vtRenderer = VtRenderer({ pendingScene.getAndSet(null) }, { params.get() }, { requestRender() }, { rendererReady.complete(Unit) })
+
+    /** View инициализирована не сразу: загрузка проекта ждёт реального создания GL-контекста. */
+    suspend fun awaitRendererReady() = rendererReady.await()
+
+    /** Барьер на GL-потоке: старые текстуры удалены до постановки новых в глобальную очередь. */
+    suspend fun clearTexturesAndWait() {
+        val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+        queueEvent {
+            try { vtRenderer.clearTextures(); done.complete(Unit) }
+            catch (t: Throwable) { done.completeExceptionally(t) }
+        }
+        requestRender()
+        done.await()
+    }
 
     init {
         setEGLContextClientVersion(3)
@@ -206,6 +236,26 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
         queueEvent { callback(vtRenderer.layerSize(layerId)) }
     }
 
+    /** После кадра очередь загрузки уже обработана; не путать постановку bitmap с успешным созданием GL-текстуры. */
+    fun layerSizeAfterFrame(layerId: Int, callback: (IntArray?) -> Unit) {
+        queueEvent { vtRenderer.checkTextureAfterFrame(layerId, callback); requestRender() }
+        requestRender()
+    }
+
+    /** Результат замены приходит из GL-потока; вызывающий сериализует редактирование слоя. */
+    fun replaceTextureChecked(layerId: Int, expectedW: Int, expectedH: Int, width: Int, height: Int, data: ByteArray, callback: (com.vibetoon.domain.raster.TextureReplaceResult) -> Unit): com.vibetoon.domain.raster.QueuedGlRequest {
+        val request = com.vibetoon.domain.raster.QueuedGlRequest()
+        queueEvent {
+            if (request.tryStart()) {
+                val code = vtRenderer.replaceTextureChecked(layerId, expectedW, expectedH, width, height, data)
+                request.finish()
+                callback(com.vibetoon.domain.raster.TextureReplaceResult.fromCode(code)); requestRender()
+            }
+        }
+        requestRender()
+        return request
+    }
+
     /** Начало штриха; [callback] получает успех ИЗ GL-потока. */
     fun paintBegin(
         layerId: Int, mode: Int, opacity: Float, alphaLock: Boolean, r: Float, g: Float, b: Float, shape: Int, hardness: Float,
@@ -244,6 +294,18 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
         }
     }
 
+    /** One GL queue operation: failed gradients are cancelled, never committed without history. */
+    fun paintGradientEnd(layerId: Int, geometry: FloatArray, callback: (ByteArray?) -> Unit) {
+        queueEvent {
+            if (!vtRenderer.paintGradient(layerId, geometry)) {
+                vtRenderer.paintEnd(false); callback(null); requestRender(); return@queueEvent
+            }
+            if (!vtRenderer.paintEndAsync(layerId)) { callback(vtRenderer.paintEnd(true)); requestRender(); return@queueEvent }
+            pollPaint(callback)
+            requestRender()
+        }
+    }
+
     private fun pollPaint(callback: (ByteArray?) -> Unit) {
         val r = vtRenderer.paintPoll()
         when {
@@ -256,6 +318,19 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     /** Undo/Redo: перезапись прямоугольника слоя; [callback] из GL-потока. */
     fun paintRestore(layerId: Int, x: Int, y: Int, w: Int, h: Int, data: ByteArray, callback: (Boolean) -> Unit = {}) {
         queueEvent { callback(vtRenderer.paintRestore(layerId, x, y, w, h, data)); requestRender() }
+    }
+
+    /** Запрос нельзя объявлять отменённым после начала выполнения на GL. */
+    fun paintRestoreChecked(layerId: Int, x: Int, y: Int, w: Int, h: Int, data: ByteArray, callback: (Boolean) -> Unit): com.vibetoon.domain.raster.QueuedGlRequest {
+        val request = com.vibetoon.domain.raster.QueuedGlRequest()
+        queueEvent {
+            if (request.tryStart()) {
+                val ok = try { vtRenderer.paintRestore(layerId, x, y, w, h, data) } catch (_: Throwable) { false }
+                request.finish(); callback(ok); requestRender()
+            }
+        }
+        requestRender()
+        return request
     }
 
     /** Снимок кадра холста w x h (RGBA premultiplied, строка 0 - низ); [callback] из GL-потока. */
@@ -282,6 +357,7 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
 
     /** Освобождает нативные GL-объекты в GL-потоке. */
     fun releaseNative() {
+        vtRenderer.deactivate()
         queueEvent { vtRenderer.release() }
     }
 }

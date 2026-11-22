@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <new>
 
 #include "common/Log.h"
 #include "render/GlUtil.h"
+#include "render/CanvasClipPolicy.h"
+#include "render/EffectRenderPolicy.h"
+#include "render/MeshPosition.h"
 #include "render/UploadQueue.h"
 
 namespace vt {
@@ -561,7 +565,8 @@ void Renderer::setMeshes(const int* ids, const int* counts, int n, const float* 
         g.verts.reserve(static_cast<size_t>(vc) * 4);
         for (int k = 0; k < vc; ++k) {
             const float* p = verts + vo + static_cast<size_t>(k) * 4;
-            g.verts.insert(g.verts.end(), {p[0] + p[2], p[1] + p[3], p[0], p[1]});
+            const auto pos = meshPosition(p[0], p[1], p[2], p[3]);
+            g.verts.insert(g.verts.end(), {pos.x, pos.y, pos.u, pos.v});
         }
         g.idx.reserve(static_cast<size_t>(tc) * 3);
         for (int t = 0; t < tc * 3; ++t) {
@@ -805,24 +810,87 @@ void Renderer::clearTextures() {
     textureBytes_ = 0;
 }
 
+// Отдельная проверяемая замена; не изменяет прежнюю текстуру при отказе.
+// Вызывающий обязан сериализовать правки слоя и публикацию геометрии.
+int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, int w, int h, const uint8_t* rgba) {
+    if (!rgba || w <= 0 || h <= 0 || w > 4096 || h > 4096 ||
+        static_cast<uint64_t>(w) * h > 4194304u) return -1;
+    auto old = textures_.find(layerId);
+    if (old == textures_.end() || old->second.w != expectedW || old->second.h != expectedH) return -2;
+    uploadQueue::EmptyGuard queueGuard;
+    if (!queueGuard.acquired()) return -3;
+    if (!queueGuard.prepareLayer(layerId)) return -5;
+    // Консервативная оценка всех mip-уровней, включая пик одновременного существования обеих текстур.
+    const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 8;
+    if (bytes > kTextureBudgetBytes || textureBytes_ > kTextureBudgetBytes - bytes) return -4;
+    GLint maxTex = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
+    if (w > maxTex || h > maxTex) return -4;
+    Tex t;
+    t.w = w; t.h = h; t.bytes = bytes;
+    try {
+        t.alpha.resize(static_cast<size_t>(w) * h);
+    } catch (const std::bad_alloc&) { return -5; }
+    for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = rgba[i * 4 + 3];
+    GLint binding = 0, alignment = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+    checkGl("before replaceTextureChecked");
+    glGenTextures(1, &t.id);
+    glBindTexture(GL_TEXTURE_2D, t.id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(w, h))));
+    glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, w, h);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    const bool ok = t.id && checkGl("replaceTextureChecked");
+    glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+    if (!ok) {
+        if (t.id) glDeleteTextures(1, &t.id);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(binding));
+        return -6;
+    }
+    queueGuard.invalidateLayer(layerId);
+    const GLuint oldId = old->second.id;
+    textureBytes_ -= old->second.bytes;
+    old->second = std::move(t);
+    textureBytes_ += bytes;
+    glDeleteTextures(1, &oldId);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(binding) == oldId ? old->second.id : static_cast<GLuint>(binding));
+    return 0;
+}
+
 void Renderer::uploadPending() {
     size_t uploaded = 0;
     PendingUpload up;
     while (uploaded < kUploadBytesPerFrame && uploadQueue::pop(up)) {
         const size_t bytes = static_cast<size_t>(up.width) * up.height * 4 * 4 / 3;  // с mip
         auto old = textures_.find(up.layerId);
-        if (old != textures_.end()) {  // повторная загрузка слоя
-            glDeleteTextures(1, &old->second.id);
-            textureBytes_ -= old->second.bytes;
-            textures_.erase(old);
-        }
-        if (textureBytes_ + bytes > kTextureBudgetBytes) {
-            LOGW("texture budget exceeded, layer %d skipped (%zu MB in use)", up.layerId,
+        // Старую текстуру держим до успешного создания новой: бюджет учитывает пик обеих.
+        if (up.width <= 0 || up.height <= 0 || bytes > kTextureBudgetBytes ||
+            textureBytes_ > kTextureBudgetBytes - bytes) {
+            LOGW("texture budget exceeded, layer %d unchanged (%zu MB in use)", up.layerId,
                  textureBytes_ / (1024 * 1024));
+            continue;
+        }
+        GLint maxTex = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
+        if (up.width > maxTex || up.height > maxTex) {
+            LOGW("texture dimensions exceed GL limit, layer %d unchanged", up.layerId);
             continue;
         }
         Tex t;
         t.bytes = bytes;
+        t.w = up.width;
+        t.h = up.height;
+        t.alpha.resize(static_cast<size_t>(up.width) * up.height);
+        for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = up.rgba[i * 4 + 3];
+        // Отделяем ошибку новой загрузки от оставшихся ошибок предыдущего кадра.
+        checkGl("before uploadPending");
         glGenTextures(1, &t.id);
         glBindTexture(GL_TEXTURE_2D, t.id);
         const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(up.width, up.height))));
@@ -834,10 +902,16 @@ void Renderer::uploadPending() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        t.w = up.width;
-        t.h = up.height;
-        t.alpha.resize(static_cast<size_t>(up.width) * up.height);
-        for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = up.rgba[i * 4 + 3];
+        if (!t.id || !checkGl("uploadPending texture")) {
+            if (t.id) glDeleteTextures(1, &t.id);
+            LOGW("texture allocation failed, layer %d unchanged", up.layerId);
+            continue;
+        }
+        if (old != textures_.end()) {
+            glDeleteTextures(1, &old->second.id);
+            textureBytes_ -= old->second.bytes;
+            textures_.erase(old);
+        }
         textures_[up.layerId] = std::move(t);
         textureBytes_ += bytes;
         uploaded += up.rgba.size();
@@ -1018,7 +1092,7 @@ void Renderer::runEffect(GLuint srcTex, const float* e) {
 // в конце результат накладывается на родителя с прозрачностью и режимом слоя.
 void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode) {
     const auto fx = effects_.find(it.layerId);
-    if (clipMode || fx == effects_.end() || !progFx_ || textures_.find(it.layerId) == textures_.end()) {
+    if (!applyLayerEffect(clipMode, fx != effects_.end(), progFx_ != 0, textures_.find(it.layerId) != textures_.end())) {
         drawLayerPlain(it, opacity, blend, clipMode);
         return;
     }
@@ -1079,9 +1153,9 @@ bool Renderer::drawFrame() {
     glUniform4f(uSolidColor_, bg_[0], bg_[1], bg_[2], bg_[3]);
     if (!transparentCapture_) glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // Всё, что вылезает за границы холста (слои с координатами вне PSD), обрезается, как в Photoshop.
+    // В редакторе содержимое монтажного стола видно на сером фоне; экспорт и capture обрезаны кадром.
     // Scissor действует и на очистку/композитинг FBO, поэтому внутри него группы считаются верно.
-    {
+    if (clipSceneToCanvas(exportMode_)) {
         float sc, ox, oy;
         viewTransform(sc, ox, oy);
         const int x0 = static_cast<int>(std::floor(ox));

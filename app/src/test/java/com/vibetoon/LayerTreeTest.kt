@@ -41,4 +41,26 @@ class LayerTreeTest {
     }
 
     @Test fun closedGroupsStartCollapsed() = assertEquals(setOf(5), LayerTree.defaultCollapsed(layers))
+
+    @Test fun effectiveVisibilityChecksEveryAncestorAndUserHiddenState() {
+        val byId = layers.associateBy { it.id }
+        // Свёрнутая в панели группа сама по себе не скрывает содержимое.
+        assertEquals(true, LayerTree.isEffectivelyVisible(4, byId))
+        assertEquals(false, LayerTree.isEffectivelyVisible(4, byId, setOf(4)))
+        assertEquals(false, LayerTree.isEffectivelyVisible(4, byId, setOf(5)))
+        assertEquals(false, LayerTree.isEffectivelyVisible(4, byId, setOf(6)))
+        assertEquals(true, LayerTree.isEffectivelyVisible(2, byId, setOf(5)))
+        val hiddenGroup = layers.map { if (it.id == 6) it.copy(isVisible = false) else it }.associateBy { it.id }
+        assertEquals(false, LayerTree.isEffectivelyVisible(4, hiddenGroup))
+        val hiddenLayer = layers.map { if (it.id == 4) it.copy(isVisible = false) else it }.associateBy { it.id }
+        assertEquals(false, LayerTree.isEffectivelyVisible(4, hiddenLayer))
+    }
+
+    @Test fun malformedHierarchyFailsClosed() {
+        val byId = layers.associateBy { it.id }
+        assertEquals(false, LayerTree.isEffectivelyVisible(99, byId))
+        assertEquals(false, LayerTree.isEffectivelyVisible(4, byId - 5))
+        assertEquals(false, LayerTree.isEffectivelyVisible(4, byId + (6 to byId.getValue(6).copy(parentId = 5))))
+        assertEquals(false, LayerTree.isEffectivelyVisible(4, byId + (5 to byId.getValue(5).copy(parentId = 2))))
+    }
 }

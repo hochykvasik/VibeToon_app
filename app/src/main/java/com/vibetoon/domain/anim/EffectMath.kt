@@ -18,7 +18,7 @@ class FxDef(
 )
 
 /** Эффект на слое: тип и до 8 значений параметров. */
-data class Effect(val type: Int, val p: List<Float>)
+data class Effect(val type: Int, val p: List<Float>, val slot: Int = -1)
 
 object EffectMath {
     const val CHROMA = 0; const val BLUR = 1; const val COLOR = 2; const val PIXELATE = 3; const val GLOW = 4

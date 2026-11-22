@@ -37,7 +37,7 @@ PNG (с прозрачностью)|PNG (with transparency)
 Очистить|Clear
 покрасить|tint
 Яркость|Brightness
-Пипетка|Eyedropper
+Пипетка|Color Picker
 Назад|Back
 Библиотека эффектов|Effect library
 Все|All
@@ -135,7 +135,7 @@ Line Boil, кадров (0 - выкл)|Line Boil, frames (0 = off)
 Выйти из полного экрана|Exit full screen
 ◀ На главную сцену|◀ Back to main scene
 Маркеры|Markers
-Пипетка для текущего цвета|Eyedropper for the current color
+Пипетка для текущего цвета|Color Picker for the current color
 Проекты|Projects
 Библиотека|Library
 Библиотека ассетов|Asset library

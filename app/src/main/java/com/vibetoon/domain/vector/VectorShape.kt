@@ -72,6 +72,26 @@ object VectorMath {
     fun preset(name: String, cx: Float, cy: Float, side: Float, stroke: Long, fill: Long, width: Float) =
         VectorShape(VecKind.PRESET, listOf(cx - side / 2f, cy - side / 2f, cx + side / 2f, cy + side / 2f), stroke, fill, width, name)
 
+    /** Index selections are valid only while the entire layer is unchanged. */
+    fun selectionStillValid(snapshot: List<VectorShape>?, current: List<VectorShape>, shapeIndex: Int, pointIndex: Int): Boolean =
+        snapshot != null && snapshot == current && current.getOrNull(shapeIndex)?.let { pointIndex in 0 until it.pts.size / 2 } == true
+
+    /** A preview is a new list; original shapes remain intact until the caller commits. */
+    fun moveNode(shapes: List<VectorShape>, shapeIndex: Int, pointIndex: Int, x: Float, y: Float): List<VectorShape>? {
+        if (!x.isFinite() || !y.isFinite()) return null
+        val shape = shapes.getOrNull(shapeIndex) ?: return null
+        if (pointIndex !in 0 until shape.pts.size / 2) return null
+        val points = shape.pts.toMutableList()
+        points[pointIndex * 2] = x; points[pointIndex * 2 + 1] = y
+        return shapes.toMutableList().also { it[shapeIndex] = shape.copy(pts = points.toList()) }
+    }
+
+    /** Style edits leave topology and other primitives untouched. */
+    fun restyle(shape: VectorShape, stroke: Long, width: Float): VectorShape? {
+        if (!width.isFinite() || width <= 0f || width > 1500f || stroke !in 0L..0xffffffffL) return null
+        return shape.copy(stroke = stroke, width = width)
+    }
+
     fun withShape(list: List<VectorShape>, s: VectorShape): List<VectorShape> = list + s
     fun withoutLast(list: List<VectorShape>): List<VectorShape> = if (list.isEmpty()) list else list.dropLast(1)
 

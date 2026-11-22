@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -35,6 +36,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private val prefs = app.getSharedPreferences("vt_manager", android.content.Context.MODE_PRIVATE)
+    private val starterMutex = kotlinx.coroutines.sync.Mutex()
+    private val _starterId = MutableStateFlow(prefs.getString("starter_id", null))
+    val starterId: StateFlow<String?> = _starterId.asStateFlow()
+    val needsStarterRecovery: Boolean get() = prefs.contains("starter_id") && !prefs.getBoolean("starter_created", false)
     private val _sizes = MutableStateFlow<Map<String, Long>>(emptyMap())
     /** Размер каждого проекта на диске (байты) для сортировки и подписи на карточке. */
     val sizes: StateFlow<Map<String, Long>> = _sizes.asStateFlow()
@@ -118,13 +123,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Интерактивный урок: создаёт учебный проект (в нём сами появятся три фигуры), открывает его и запускает подсказки. */
+    /** Создание идемпотентно и сериализовано: повторный запуск не перезаписывает правки пользователя. */
+    private suspend fun starterProject(): ProjectMeta = starterMutex.withLock {
+        val id = prefs.getString("starter_id", null) ?: java.util.UUID.randomUUID().toString().take(8).also {
+            prefs.edit().putString("starter_id", it).commit()
+        }
+        val meta = withContext(Dispatchers.IO) { repo.createStarter(id) }
+        prefs.edit().putBoolean("starter_created", true).apply()
+        _starterId.value = meta.id
+        meta
+    }
+
+    fun ensureStarterProject() {
+        viewModelScope.launch {
+            runCatching { starterProject() }.onSuccess { refresh() }
+                .onFailure { _note.tryEmit("Не удалось создать учебный проект") }
+        }
+    }
+
+    /** Открывает существующий учебный проект и запускает подсказки; если он удалён, создаёт новый. */
     fun startLesson(session: com.vibetoon.ui.shell.Coach.Session) {
         viewModelScope.launch {
-            val meta = withContext(Dispatchers.IO) { repo.create(NewProjectSpec("Учебный проект", 1920, 1080, 24, 0xFFFFFFFFL)) }
-            com.vibetoon.ui.shell.Lesson.pending = true
-            com.vibetoon.ui.shell.Coach.start(session)
-            open(meta.id)
+            runCatching { starterProject() }.onSuccess { meta ->
+                com.vibetoon.ui.shell.Coach.start(session)
+                open(meta.id)
+            }.onFailure { _note.tryEmit("Не удалось создать учебный проект") }
         }
     }
 

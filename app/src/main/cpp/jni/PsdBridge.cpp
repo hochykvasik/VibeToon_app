@@ -103,6 +103,7 @@ Java_com_vibetoon_nativebridge_PsdNative_loadTexture(JNIEnv* env, jobject, jlong
         // Backpressure: не копим в очереди больше ~48 МБ RGBA (ждём, пока GL-поток заберёт).
         for (int i = 0; i < 1000 && vt::uploadQueue::bytes() > 48u * 1024u * 1024u; ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        const uint64_t ticket = vt::uploadQueue::ticket(layerId);
         vt::DecodedLayer d;
         if (!s->decode(layerId, scale, maxTex, d)) return -1;
         vt::PendingUpload up;
@@ -111,7 +112,7 @@ Java_com_vibetoon_nativebridge_PsdNative_loadTexture(JNIEnv* env, jobject, jlong
         up.height = d.height;
         up.rgba = std::move(d.rgba);
         const jlong bytes = static_cast<jlong>(up.rgba.size());
-        vt::uploadQueue::push(std::move(up));
+        if (!vt::uploadQueue::pushIfCurrent(std::move(up), ticket)) return -1;
         return bytes;
     } catch (const std::bad_alloc&) {
         throwNew(env, "java/lang/OutOfMemoryError", "native OOM in loadTexture");

@@ -8,6 +8,26 @@ data class TreeRow(val layer: LayerInfo, val depth: Int, val isGroup: Boolean, v
 
 object LayerTree {
     /**
+     * Видимость узла в дереве, включая все родительские группы и пользовательские скрытия.
+     * Отсутствующий узел/родитель и циклическая иерархия считаются невидимыми.
+     * Свёрнутость группы в панели не влияет на видимость на холсте.
+     */
+    fun isEffectivelyVisible(id: Int, layersById: Map<Int, LayerInfo>, hiddenIds: Set<Int> = emptySet()): Boolean {
+        var current = id
+        val visited = HashSet<Int>()
+        var first = true
+        while (current != -1) {
+            if (!visited.add(current)) return false
+            val layer = layersById[current] ?: return false
+            if (!layer.isVisible || current in hiddenIds) return false
+            if (!first && layer.kind != LayerKind.GROUP_OPEN && layer.kind != LayerKind.GROUP_CLOSED) return false
+            first = false
+            current = layer.parentId
+        }
+        return !first
+    }
+
+    /**
      * Строит плоский список строк для показа дерева (сверху вниз, как в Photoshop).
      * Записи PSD идут снизу вверх: у слоя parentId указывает на папку-группу, divider-ы
      * (конец группы) скрываются. Содержимое свёрнутых групп в список не попадает.

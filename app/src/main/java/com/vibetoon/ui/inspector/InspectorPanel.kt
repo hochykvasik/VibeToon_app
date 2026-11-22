@@ -105,6 +105,8 @@ private fun EffectsTab(vm: MainViewModel) {
     val turb by vm.turb.collectAsStateWithLifecycle()
     val boneStrength by vm.boneStrength.collectAsStateWithLifecycle()
     val layerFx by vm.layerEffects.collectAsStateWithLifecycle()
+    val groupFxInfo by vm.groupFxInfo.collectAsStateWithLifecycle()
+    val groupFxBlocked by vm.groupFxBlocked.collectAsStateWithLifecycle()
     val fxLibrary by vm.fxLibrary.collectAsStateWithLifecycle()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         boneStrength?.let { s ->
@@ -120,6 +122,16 @@ private fun EffectsTab(vm: MainViewModel) {
             TurbSlider("Complexity", t.complexity.toFloat(), 1f..6f, t.complexity.toString()) { vm.setTurbParam(2, it) }
             TurbSlider("Line Boil, кадров (0 - выкл)", t.boil.toFloat(), 0f..24f, t.boil.toString()) { vm.setTurbParam(3, it) }
         }
+        if (groupFxInfo.isNotEmpty()) Text(groupFxInfo, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        if (groupFxInfo.isNotEmpty()) androidx.compose.material3.OutlinedButton(
+            onClick = vm::keyGroupEffects, enabled = !groupFxBlocked && layerFx.isNotEmpty(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+        ) { Text("Ключи эффектов на вложенных слоях", fontSize = 12.sp) }
+        if (groupFxInfo.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            androidx.compose.material3.OutlinedButton(onClick = { vm.moveGroupEffectKeys(-1) }, enabled = !groupFxBlocked) { Text("Ключ −1", fontSize = 12.sp) }
+            androidx.compose.material3.OutlinedButton(onClick = { vm.moveGroupEffectKeys(1) }, enabled = !groupFxBlocked) { Text("Ключ +1", fontSize = 12.sp) }
+            androidx.compose.material3.OutlinedButton(onClick = vm::deleteGroupEffectKeys, enabled = !groupFxBlocked) { Text("Удалить ключи", fontSize = 12.sp) }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Эффекты слоя", fontSize = 13.sp, modifier = Modifier.weight(1f))
             androidx.compose.material3.Button(
@@ -127,7 +139,7 @@ private fun EffectsTab(vm: MainViewModel) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
             ) { Text("+ Добавить эффект", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
-        if (layerFx.isEmpty()) Text(
+        if (layerFx.isEmpty() && !groupFxBlocked) Text(
             "Эффектов нет. Нажмите «+ Добавить эффект»: Хромакей, Размытие, Цветокоррекция, Пикселизация, Свечение, Тень и другие. Цепочка применяется сверху вниз.",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
         )
@@ -136,7 +148,7 @@ private fun EffectsTab(vm: MainViewModel) {
             androidx.compose.material3.Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
                 Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${idx + 1}. ${def.title}", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Text("${idx + 1}. ${com.vibetoon.ui.i18n.L(def.title)}", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.weight(1f))
                         androidx.compose.material3.IconButton(onClick = { vm.moveEffect(idx, -1) }, enabled = idx > 0, modifier = Modifier.size(32.dp)) {
                             androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowUp, "Выше")
                         }
@@ -285,6 +297,10 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
     var showParent by remember { mutableStateOf(false) }
     val links by vm.links.collectAsStateWithLifecycle()
     val parent = links[s.id]
+    val bones by vm.bones.collectAsStateWithLifecycle()
+    val parentBone = bones.firstOrNull { it.id == parent }
+    val parentName = if (parentBone != null) com.vibetoon.ui.i18n.boneDisplayName(parentBone.name)
+        else parent?.let { vm.layerName(it) }.orEmpty()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             if (s.count > 1) "Выбрано: ${s.count} (правка применяется ко всем)" else (if (s.isGroup) "Группа: " else "Слой: ") + s.name,
@@ -325,7 +341,7 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
         }
         OutlinedButton(onClick = { showParent = true }, enabled = on, modifier = Modifier.fillMaxWidth().height(40.dp)) {
             Text(
-                if (parent != null && s.count == 1) "Родитель: ${vm.layerName(parent)}" else "Привязать к родителю (Parent)",
+                if (parent != null && s.count == 1) "Родитель: $parentName" else "Привязать к родителю (Parent)",
                 fontSize = 13.sp, maxLines = 1
             )
         }
@@ -345,8 +361,8 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
                         TextButton({ vm.setParent(null); showParent = false }) { Text("Отвязать") }
                     }
                     for ((id, name) in candidates) {
-                        Text(
-                            name,
+                        androidx.compose.material3.Text(
+                            bones.firstOrNull { it.id == id }?.let { com.vibetoon.ui.i18n.boneDisplayName(it.name) } ?: name,
                             fontSize = 14.sp, maxLines = 1,
                             modifier = Modifier.fillMaxWidth()
                                 .clickable { vm.setParent(id); showParent = false }

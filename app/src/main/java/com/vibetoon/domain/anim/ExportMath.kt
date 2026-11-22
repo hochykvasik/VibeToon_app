@@ -4,6 +4,10 @@ package com.vibetoon.domain.anim
 object ExportMath {
     val QUALITIES = listOf(1080, 720, 480)          // короткая сторона кадра
     val FPS_OPTIONS = listOf(24, 30, 60)
+    // GIF намеренно ограничен: 1/100 секунды на кадр и большой объём памяти.
+    val GIF_QUALITIES = listOf(480, 360)
+    val GIF_FPS_OPTIONS = listOf(12, 24, 30)
+    val SEQUENCE_FPS_OPTIONS = FPS_OPTIONS
 
     /** Размер видео: короткая сторона = [shortSide], пропорции холста, обе стороны чётные (требование H.264). */
     fun size(canvasW: Int, canvasH: Int, shortSide: Int): Pair<Int, Int> {

@@ -24,7 +24,6 @@ import com.vibetoon.domain.paint.BrushPreset
 import com.vibetoon.domain.paint.BrushPresets
 import com.vibetoon.domain.paint.GrainMath
 import com.vibetoon.domain.paint.DabStroker
-import com.vibetoon.domain.paint.PaintBudget
 import com.vibetoon.domain.paint.PaintOp
 import com.vibetoon.domain.paint.StrokeMode
 import com.vibetoon.domain.anim.TrackGroups
@@ -109,7 +108,7 @@ class BoneShape(val id: Int, val hx: Float, val hy: Float, val tx: Float, val ty
 
 /** Что рисуется поверх холста: кости и черновик новой кости (x0, y0, x1, y1). */
 /** Контрольные точки Warp на экране: 16 пар (x, y) в пикселях вида. */
-class WarpOverlay(val points: List<Float> = emptyList())
+class WarpOverlay(val points: List<Float> = emptyList(), val width: Int = 4, val height: Int = 4)
 
 /** Mesh на экране: вершины (x, y в пикселях вида), рёбра (пары индексов вершин) и выбранная вершина. */
 /** Пины Puppet Mesh на экране: центры (x, y), радиусы влияния (px экрана), жёсткость, выбранный. */
@@ -164,7 +163,7 @@ data class AudioTrackInfo(val id: Int, val name: String, val lengthFrames: Int)
 sealed interface ExportUi {
     data object Idle : ExportUi
     data class Running(val done: Int, val total: Int) : ExportUi
-    data class Done(val file: File) : ExportUi
+    data class Done(val file: File, val gallerySaved: Boolean = false) : ExportUi
     data class Failed(val message: String) : ExportUi
 }
 
@@ -187,6 +186,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = PsdRepository(app)
     private val _state = MutableStateFlow<UiState>(UiState.Idle)
     val state: StateFlow<UiState> = _state.asStateFlow()
+    private val _audioReadiness = MutableStateFlow<com.vibetoon.domain.project.AudioReadiness>(com.vibetoon.domain.project.AudioReadiness.Idle)
+    val audioReadiness: StateFlow<com.vibetoon.domain.project.AudioReadiness> = _audioReadiness.asStateFlow()
+    private var importJob: Job? = null
+    private var openJob: Job? = null
 
     // Декод слоёв строго по одному (пик памяти = один слой).
     private val executor = Executors.newSingleThreadExecutor()
@@ -225,6 +228,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _waveforms = MutableStateFlow<Map<Int, FloatArray>>(emptyMap())
     /** Пики громкости аудио-слоёв (100 значений в секунду) для волновой формы на таймлайне. */
     val waveforms: StateFlow<Map<Int, FloatArray>> = _waveforms.asStateFlow()
+    private var waveDrawWait: com.vibetoon.domain.project.WaveDrawBarrier? = null
+
+    private var waveAckPosted = false
+
+    /** Вызывается только после построения гистограммы соответствующей аудиодорожки в Canvas. */
+    fun waveformDrawn(id: Int, peaks: FloatArray) {
+        val waiting = waveDrawWait ?: return
+        if (waiting.id != id || _waveforms.value[id] !== peaks || peaks.isEmpty() || waveAckPosted) return
+        waveAckPosted = true
+        android.view.Choreographer.getInstance().postFrameCallback {
+            waveAckPosted = false
+            if (waveDrawWait === waiting) waiting.acknowledge(id, peaks, _waveforms.value[id])
+        }
+    }
+
     private var lastScrubAt = 0L
     private var lastScrubFrame = -1
 
@@ -270,10 +288,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pins: Map<Int, List<Pin>> = emptyMap(),
         val lprops: Map<Int, LayerProps> = emptyMap(),
         /** Штрих кисти, создавший эту запись: Undo возвращает пиксели "до", Redo - "после". */
-        val paintOp: PaintOp? = null
+        val paintOp: PaintOp? = null,
+        /** Полные снимки растрового слоя до/после изменения размеров. */
+        val textureOp: com.vibetoon.domain.raster.ExpandedLayerHistory? = null,
+        val groupAnchors: Map<Int, com.vibetoon.domain.project.GroupDeformationAnchor> = emptyMap(),
+        val warpSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap(),
+        val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
     ) {
-        fun withPaint(op: PaintOp?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, op)
+        fun withPaint(op: PaintOp?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, op, textureOp, groupAnchors, warpSizes, denseWarps)
+        fun withTexture(op: com.vibetoon.domain.raster.ExpandedLayerHistory?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, paintOp, op, groupAnchors, warpSizes, denseWarps)
     }
+    // Пока нет UI для создания рамки и она не активирует деформер.
+    private var groupDeformationAnchors: Map<Int, com.vibetoon.domain.project.GroupDeformationAnchor> = emptyMap()
+    private var warpGridSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap()
+    private var denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
+    private val rasterTransactionGate = com.vibetoon.domain.raster.RasterTransactionGate()
+    // При неизвестном исходе GL нельзя сохранять проект с потенциально рассогласованной текстурой.
+    private var rasterRecoveryRequired = false
+    // Версии не удаляются: JSON и снимки истории могут ещё ссылаться на любую из них.
+    private val versionedRasterIds = HashSet<Int>()
     private val undoStack = ArrayDeque<Snapshot>()
     private val redoStack = ArrayDeque<Snapshot>()
     private val _canUndo = MutableStateFlow(false)
@@ -313,6 +346,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var canvasH = 1
     private var viewW = 1f
     private var viewH = 1f
+    data class GridView(val width: Float, val height: Float, val canvasWidth: Int, val canvasHeight: Int, val camera: Camera)
+    private val _gridView = MutableStateFlow(GridView(1f, 1f, 1, 1, Camera()))
+    val gridView: StateFlow<GridView> = _gridView.asStateFlow()
+    private fun refreshGridView() { _gridView.value = GridView(viewW, viewH, canvasW, canvasH, camera) }
     /** Высота области холста в px (подсказки прячутся, когда холст слишком мал). */
     val canvasHeightPx: Float get() = viewH
 
@@ -365,7 +402,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * false при импорте нового PSD: id слоёв другие, прежняя анимация потеряла бы смысл.
      */
     private fun loadPsd(keepState: Boolean, source: suspend () -> Result<ParseSummary>) {
-        if (_state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         pause()  // Choreographer - только с главного потока
         _state.value = UiState.Loading
         viewModelScope.launch {
@@ -379,10 +416,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Открывает проект: размер холста, fps, фон, сохранённые трансформации и ключи, затем PSD. */
     fun openProject(id: String) {
-        if (projectId == id) return
+        if (projectId == id || _selectionExtractBusy.value || rasterRecoveryRequired) return
         closing = false
-        viewModelScope.launch {
-            resetEditor()
+        openJob?.cancel()
+        openJob = viewModelScope.launch {
+            rasterTransactionGate.run { resetEditor() }
             val data = withContext(Dispatchers.IO) { projects.load(id) }.getOrElse {
                 _state.value = UiState.Error(it.message ?: "Не удалось открыть проект")
                 return@launch
@@ -400,6 +438,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _links.value = data.links
             _bones.value = data.bones
             regroup = data.regroup
+            groupDeformationAnchors = data.groupDeformationAnchors.toMap()
+            warpGridSizes = data.warpGridSizes.toMap()
+            denseWarps = data.denseWarps.toMap()
             warpLayers = data.warps
             meshLayers = data.meshes
             perspLayers = data.persps
@@ -414,15 +455,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             media.clear()
             media.addAll(data.media)
             rebuildLayers()
-            RenderNative.clearPendingUploads()   // текстуры прежнего проекта: id слоёв пересекаются
-            RenderHost.view?.clearTextures()
-            awaitView()
-            RenderHost.view?.setBackground(data.meta.background.toInt())
-            val empty = SceneBuilder.buildTree(emptyList(), canvasW, canvasH)
-            scene = empty
-            RenderHost.view?.setScene(empty)
-            restoreMediaTextures(id)
-            pushScene()
+            // Готовность View не означает готовность GL. Старые текстуры и очередь очищаются
+            // на активном рендерере до загрузки изображений нового проекта.
+            val view = try {
+                kotlinx.coroutines.withTimeout(10_000) {
+                    var active = awaitView()
+                    while (true) {
+                        active.awaitRendererReady()
+                        if (RenderHost.view !== active) { active = awaitView(); continue }
+                        RenderNative.clearPendingUploads()
+                        active.clearTexturesAndWait()
+                        if (RenderHost.view === active) break
+                        active = awaitView()
+                    }
+                    active
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                _state.value = UiState.Error("Не удалось подготовить холст")
+                return@launch
+            } catch (e: IllegalStateException) {
+                _state.value = UiState.Error("Не удалось подготовить холст")
+                return@launch
+            }
+            com.vibetoon.domain.render.ProjectRenderStartup.start(
+                acquireReady = { view },
+                clear = { active ->
+                    active.setCamera(camera)
+                    active.setBackground(data.meta.background.toInt())
+                    val empty = SceneBuilder.buildTree(emptyList(), canvasW, canvasH)
+                    scene = empty
+                    active.setScene(empty)
+                },
+                restore = { restoreMediaTextures(id) },
+                publish = { active ->
+                    if (RenderHost.view === active && projectId == id && !closing) pushScene()
+                }
+            )
+            if (RenderHost.view !== view || projectId != id || closing) return@launch
             val ref = data.psd
             if (ref != null) {
                 psdW = ref.width
@@ -451,22 +520,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** GL-вид создаётся Compose-ом чуть позже открытия проекта: ждём его (до ~5 с). */
-    private suspend fun awaitView() {
-        repeat(100) {
-            if (RenderHost.view != null) return
+    /** Дожидаемся актуального View; вызывающий код ограничивает время ожидания. */
+    private suspend fun awaitView(): com.vibetoon.render.VtGLSurfaceView {
+        while (true) {
+            RenderHost.view?.let { return it }
             delay(50)
         }
     }
 
     private fun resetEditor() {
+        importJob?.cancel(); importJob = null
+        waveDrawWait?.drawn?.cancel(); waveDrawWait = null
+        _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Idle
         pause()
         arapMemo.clear()
         clearSelection(); penCancel(); _rasterTool.value = null
         _loop.value = true; _magnet.value = false; vecLayer = -1; vecPts.clear(); vecGen.clear()
+        markerThumbJobs.values.toList().forEach { it.cancel() }; markerThumbJobs.clear()
+        _markerThumbs.value = emptyMap()
         thumbGen++; thumbs.clear(); thumbPending.clear()   // миниатюры прошлого проекта не должны всплывать у новых слоёв
-        stroker = null; _paintCursor.value = null; _paintTool.value = null
-        paintSizes.clear(); paintDirty.clear()
+        stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null
+        paintSizes.clear(); paintDirty.clear(); versionedRasterIds.clear(); mediaIds.reset()
         saveJob?.cancel()
         camera = Camera()
         RenderHost.view?.setCamera(camera)
@@ -493,6 +567,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _links.value = emptyMap()
         _bones.value = emptyList()
         regroup = emptyList()
+        groupDeformationAnchors = emptyMap()
+        warpGridSizes = emptyMap()
+        denseWarps = emptyMap()
         warpLayers = emptySet()
         meshLayers = emptyMap()
         perspLayers = emptySet()
@@ -536,14 +613,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun saveNow() {
-        val m = meta ?: return
-        projectId ?: return
-        flushPaintSaves()
-        val data = ProjectData(m.copy(updatedAt = System.currentTimeMillis()), psdRef, HashMap(base), _animation.value.tracks, media.toList(), deletedPsd, _clips.value, _markers.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps)
-        meta = data.meta
-        withContext(Dispatchers.IO) { projects.save(data) }
-        Log.i("VT/Project", "saved ${data.meta.id}: ${data.base.size} base, ${data.tracks.size} tracks")
+    private suspend fun saveNow(): Boolean = rasterTransactionGate.run {
+        if (rasterRecoveryRequired) return@run false
+        val m = meta ?: return@run false
+        projectId ?: return@run false
+        try {
+            com.vibetoon.domain.project.PaintSaveBarrier.save(
+                paint = { flushPaintSaves() },
+                metadata = {
+                    val data = ProjectData(m.copy(updatedAt = System.currentTimeMillis()), psdRef, HashMap(base), _animation.value.tracks, media.toList(), deletedPsd, _clips.value, _markers.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupDeformationAnchors.toMap(), warpGridSizes.toMap(), denseWarps.toMap())
+                    withContext(Dispatchers.IO) { projects.save(data) }
+                    meta = data.meta
+                    Log.i("VT/Project", "saved ${data.meta.id}: ${data.base.size} base, ${data.tracks.size} tracks")
+                }
+            ).also { ok -> if (!ok) _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён") }
+        } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+        catch (t: Exception) {
+            Log.e("VT/Project", "save failed", t)
+            _state.value = UiState.Error("Не удалось сохранить проект; повторите сохранение")
+            false
+        }
     }
 
     /** Сохранение при сворачивании приложения. */
@@ -556,8 +645,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Выход из проекта: сохранение и миниатюра (вид без рамки и в исходном масштабе), затем [done]. */
     fun closeProject(done: () -> Unit) {
-        if (closing) return
+        if (closing || _selectionExtractBusy.value || rasterRecoveryRequired) return
         closing = true
+        importJob?.cancel(); importJob = null
+        openJob?.cancel(); openJob = null
+        _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Idle
         viewModelScope.launch {
             pause()
             saveJob?.cancel()
@@ -567,7 +659,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 selectLayer(null)
                 delay(250)   // дать GL нарисовать кадр без рамки выделения
                 ThumbnailCapture.capture(RenderHost.view, canvasW, canvasH, projects.thumbnailFile(id))
-                saveNow()
+                if (!saveNow()) { closing = false; return@launch }
             }
             resetEditor()
             done()
@@ -591,7 +683,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 clearHistory()
                 base.keys.removeAll { it < MEDIA_ID_BASE }
                 val anim = _animation.value
-                _animation.value = anim.copy(tracks = anim.tracks.filterKeys { it >= MEDIA_ID_BASE })
+                val mediaIds = media.mapTo(HashSet()) { it.id }
+                _animation.value = anim.copy(tracks = anim.tracks.filterKeys { id ->
+                    id >= MEDIA_ID_BASE || (id < 0 && mediaIds.any { com.vibetoon.domain.anim.EffectTracks.belongs(id, it) })
+                })
+                fxLayers = fxLayers.filterKeys { it >= MEDIA_ID_BASE }
                 _frame.value = 0
             }
             _psdName.value = summary.name
@@ -618,8 +714,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val f = projects.mediaFile(pid, "liq_$id.png")
                     if (!f.exists()) continue
                     if (!keepState) { f.delete(); continue }
+                    val ticket = RenderNative.textureUploadTicket(id)
                     runCatching { importer.decodeImage(f) }.onSuccess { d ->
-                        RenderNative.uploadBitmap(id, d.bitmap)
+                        RenderNative.uploadBitmapIfCurrent(id, d.bitmap, ticket)
                         d.bitmap.recycle()
                     }
                 }
@@ -687,12 +784,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun importMedia(kind: MediaKind, uri: Uri) {
         val pid = projectId ?: return
-        if (_state.value == UiState.Loading || _state.value is UiState.Rendering) return
-        val id = maxOf(MEDIA_ID_BASE - 1, media.maxOfOrNull { it.id } ?: 0) + 1
+        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        val id = nextMediaId()
         _state.value = UiState.Loading
-        viewModelScope.launch {
+        _audioReadiness.value = if (kind == MediaKind.AUDIO) com.vibetoon.domain.project.AudioReadiness.Preparing("Аудио") else com.vibetoon.domain.project.AudioReadiness.Idle
+        importJob = viewModelScope.launch {
+            var imported: MediaItem? = null
+            var inserted = false
             try {
                 val item = withContext(decodeDispatcher) { importMediaBlocking(pid, id, kind, uri) }
+                imported = item
+                if (item.kind == MediaKind.AUDIO) {
+                    _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Preparing(item.name)
+                    val prepared = kotlinx.coroutines.withTimeoutOrNull(120_000) { audioEngine.awaitScrubReady(projects.fileOf(pid, item.file)) }
+                        ?: throw IllegalStateException("Время подготовки аудио истекло")
+                    prepared.getOrElse { throw IllegalStateException("Не удалось подготовить аудио", it) }
+                    if (projectId != pid || closing) return@launch
+                }
                 checkpoint("add", force = true)   // один снимок откатывает и слой, и продление проекта
                 // длинный звук: проект продлевается до его конца (не дольше предела хронометража)
                 var note = ""
@@ -706,15 +814,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         note = if (need > d) ". Проект продлён до максимума, конец звука не поместился" else ". Проект продлён до конца звука"
                     }
                 }
+                if (item.kind == MediaKind.AUDIO) {
+                    check(audioEngine.peaksFor(projects.fileOf(pid, item.file))?.isNotEmpty() == true) { "Не удалось подготовить волну аудио" }
+                    waveDrawWait = com.vibetoon.domain.project.WaveDrawBarrier(item.id)
+                }
                 media += item
+                inserted = true
                 rebuildLayers()
                 pushScene()
                 if (item.isVisual) selectLayer(item.id)
                 markDirty()
+                if (item.kind == MediaKind.AUDIO) {
+                    val drawn = kotlinx.coroutines.withTimeoutOrNull(20_000) { checkNotNull(waveDrawWait).drawn.await(); true } ?: false
+                    waveDrawWait = null
+                    if (!drawn) throw IllegalStateException("Волна не появилась на таймлайне: откройте дорожку; импортированный файл сохранён")
+                }
+                if (item.kind == MediaKind.AUDIO) _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Ready(item.name)
                 _state.value = UiState.Message("Добавлено: ${item.name}$note")
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                throw t
             } catch (t: Throwable) {
+                if (kind == MediaKind.AUDIO) {
+                    _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Failed(imported?.name ?: "Аудио")
+                    imported?.let { item ->
+                        if (!inserted) withContext(Dispatchers.IO) { projects.fileOf(pid, item.file).delete() }
+                    }
+                }
+                waveDrawWait = null
                 Log.e("VT/Media", "import failed", t)
-                _state.value = UiState.Error(t.message ?: "Не удалось добавить файл")
+                if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось добавить файл")
             }
         }
     }
@@ -725,17 +853,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             name,
             when (kind) { MediaKind.IMAGE -> "png"; MediaKind.VIDEO -> "mp4"; MediaKind.AUDIO -> "mp3"; MediaKind.TEXT -> error("Текст добавляется через addText"); MediaKind.CAMERA -> error("Камера добавляется через addCameraLayer"); MediaKind.NULLOBJ -> error("Transform Layer создаётся через addNullLayer"); MediaKind.GROUP -> error("Группа создаётся через groupSelected"); MediaKind.SYMBOL -> error("Символ создаётся через createSymbol") }
         )
-        val fileName = "m$id.$ext"
+        // Файл импорта всегда уникален: PCM-кэш и отложенное декодирование не должны
+        // ссылаться на новый файл с повторно использованным id после Undo/отмены.
+        val fileName = "m${id}_${java.util.UUID.randomUUID()}.$ext"
         val dest = projects.mediaFile(pid, fileName)
-        importer.copy(uri, dest)
         try {
+            importer.copy(uri, dest)
             val rel = "assets/$fileName"
             if (kind == MediaKind.AUDIO) {
                 return MediaItem(id, kind, name, rel, durationMs = importer.audioDurationMs(dest))
             }
+            val ticket = RenderNative.textureUploadTicket(id)
             val decoded = if (kind == MediaKind.IMAGE) importer.decodeImage(dest) else importer.decodeVideoFrame(dest)
             val r = ProjectMath.fitInside(decoded.srcWidth, decoded.srcHeight, canvasW, canvasH)
-            val ok = RenderNative.uploadBitmap(id, decoded.bitmap)
+            val ok = RenderNative.uploadBitmapIfCurrent(id, decoded.bitmap, ticket)
             decoded.bitmap.recycle()
             if (!ok) error("Не удалось передать изображение в графику")
             return MediaItem(id, kind, name, rel, decoded.srcWidth, decoded.srcHeight, r[0], r[1], r[2], r[3], decoded.durationMs)
@@ -747,16 +878,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- текст и шрифты
 
-    private fun nextMediaId() = maxOf(MEDIA_ID_BASE - 1, media.maxOfOrNull { it.id } ?: 0) + 1
+    private val mediaIds = com.vibetoon.domain.project.MediaIdAllocator()
+    private fun nextMediaId(): Int = mediaIds.next(buildList {
+        addAll(media.map { it.id }); addAll(base.keys); addAll(override.keys)
+        addAll(_clips.value.keys); addAll(layerProps.keys); addAll(_animation.value.tracks.keys)
+        addAll(_links.value.keys); addAll(_links.value.values); addAll(regroup.flatMap { listOf(it.first, it.second) })
+    })
 
     /** Рисует текст в Bitmap и ставит его в очередь загрузки текстуры; возвращает размер блока на холсте. */
-    private fun renderAndUpload(m: MediaItem, frame: Int = _frame.value): Pair<Float, Float> {
+    private fun renderAndUpload(m: MediaItem, frame: Int = _frame.value, uploadTicket: Long = RenderNative.textureUploadTicket(m.id)): Pair<Float, Float> {
         invalidateThumb(m.id)
         val fps = _animation.value.settings.fps.coerceAtLeast(1)
         val tSec = frame.toFloat() / fps
         textFxKeys[m.id] = m.fx.stateKey(tSec, fps)
         val r = textRenderer.renderFx(m.text, m.textColor.toInt(), m.font, m.textSize, m.gradient, m.gradientAngle, m.fx, tSec, fps, if (m.stroke) m.strokeWidth else 0f, m.strokeColor.toInt(), m.textAlign, m.lineSpacing, m.letterSpacing)
-        val ok = RenderNative.uploadBitmap(m.id, r.bitmap)
+        val ok = RenderNative.uploadBitmapIfCurrent(m.id, r.bitmap, uploadTicket)
         r.bitmap.recycle()
         if (!ok) error("Не удалось передать текст в графику")
         return r.layoutWidth to r.layoutHeight
@@ -798,17 +934,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setDepth(id: Int, depth: Float) = updateLayerProps(id) { it.copy(depth = depth) }
 
     fun addText(text: String) {
-        if (projectId == null) return
+        val pid = projectId ?: return
         val id = nextMediaId()
         val proto = MediaItem(
             id, MediaKind.TEXT, "Текст", "",
             text = text.ifBlank { "Текст" },
             textSize = (canvasH * 0.1f).coerceIn(TextRenderer.MIN_SIZE, TextRenderer.MAX_SIZE)
         )
+        val ticket = RenderNative.textureUploadTicket(id)
         viewModelScope.launch {
             try {
-                val (w, h) = withContext(decodeDispatcher) { renderAndUpload(proto) }
+                val (w, h) = withContext(decodeDispatcher) { renderAndUpload(proto, uploadTicket = ticket) }
                 val item = proto.copy(x = (canvasW - w) / 2f, y = (canvasH - h) / 2f, w = w, h = h)
+                if (projectId != pid || closing) return@launch
                 checkpoint("add", force = true)
                 media += item
                 rebuildLayers()
@@ -900,6 +1038,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cancelEyedropper() { _eyedropper.value = false }
 
+    // Пипетка удержанием не конкурирует со штрихом, выделением, костью или деформером.
+    private var canvasLongPressClaimed = false
+    fun beginCanvasGesture() { canvasLongPressClaimed = false }
+    fun isCanvasLongPressClaimed() = canvasLongPressClaimed
+    fun finishCanvasGesture(): Boolean = canvasLongPressClaimed.also { canvasLongPressClaimed = false }
+    fun canPickOnLongPress(x: Float, y: Float): Boolean = projectId != null && !_playing.value &&
+        _state.value != UiState.Loading && _state.value !is UiState.Rendering &&
+        _audioReadiness.value !is com.vibetoon.domain.project.AudioReadiness.Preparing && !_eyedropper.value && _paintTool.value == null && _rasterTool.value == null && !_boneMode.value &&
+        !_meshMode.value && !_warpTool.value && !_perspTool.value && !_liquifyTool.value &&
+        viewW > 0f && viewH > 0f && x in 0f..viewW && y in 0f..viewH &&
+        toCanvasX(x) in 0f..canvasW.toFloat() && toCanvasY(y) in 0f..canvasH.toFloat()
+
+    fun pickBrushOnLongPress(x: Float, y: Float) {
+        if (!canPickOnLongPress(x, y)) return
+        val view = RenderHost.view ?: return
+        canvasLongPressClaimed = true
+        val pid = projectId
+        view.sampleColor(x.toInt(), y.toInt()) { color ->
+            viewModelScope.launch {
+                if (projectId == pid && RenderHost.view === view && !closing) {
+                    setBrushColor(color)
+                    _pickedColor.tryEmit(color.toLong() and 0xFFFFFFFFL)
+                    _state.value = UiState.Message("Цвет взят")
+                }
+            }
+        }
+    }
+
     private fun sampleAt(x: Float, y: Float) {
         _eyedropper.value = false
         RenderHost.view?.sampleColor(x.toInt(), y.toInt()) { argb ->
@@ -972,9 +1138,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             renderAndUpload(m)
         } else {
             val file = projects.fileOf(pid, m.file)
+            val ticket = RenderNative.textureUploadTicket(m.id)
             val d = if (m.kind == MediaKind.IMAGE) importer.decodeImage(file) else importer.decodeVideoFrame(file)
-            RenderNative.uploadBitmap(m.id, d.bitmap)
-            d.bitmap.recycle()
+            try { RenderNative.uploadBitmapIfCurrent(m.id, d.bitmap, ticket) } finally { d.bitmap.recycle() }
         }
     }
 
@@ -1011,46 +1177,145 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _uniformScale.value = !_uniformScale.value
     }
 
-    fun onViewSize(w: Float, h: Float) { viewW = w; viewH = h; refreshBoneOverlay() }
+    fun onViewSize(w: Float, h: Float) { if (viewW != w || viewH != h) cancelPendingLasso(); viewW = w; viewH = h; refreshGridView(); refreshBoneOverlay(); refreshRasterOverlays() }
 
     /** Два пальца: zoom вокруг центра жеста + сдвиг. */
     fun onTransform(gx: Float, gy: Float, dz: Float, dx: Float, dy: Float) {
+        cancelPendingLasso()
         camera = camera.transformed(gx, gy, viewW / 2f, viewH / 2f, dz, dx, dy)
+        refreshGridView()
         RenderHost.view?.setCamera(camera)
         refreshBoneOverlay()
+        refreshRasterOverlays()
     }
 
     fun resetCamera() {
+        cancelPendingLasso()
         camera = Camera()
+        refreshGridView()
         RenderHost.view?.setCamera(camera)
         refreshBoneOverlay()
+        refreshRasterOverlays()
         Log.i("VT/Edit", "camera reset")
+    }
+
+    /** Следование — только камера редактора и только при Play; проект и экспорт не меняются. */
+    private fun followSelectionDuringPlayback() {
+        if (!_playing.value || !getApplication<Application>()
+                .getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("follow_camera", false)) return
+        val id = _selected.value ?: return
+        val sc = scene ?: return
+        val bone = _bones.value.firstOrNull { it.id == id }
+        val xy = if (bone != null) {
+            val d = if (_boneMode.value && _bindPose.value) Affine2D.IDENTITY else sc.boneDeltas[id] ?: Affine2D.IDENTITY
+            d.applyX(bone.hx, bone.hy) to d.applyY(bone.hx, bone.hy)
+        } else {
+            val q = sc.selectionQuads[id] ?: return
+            if (q.size < 8) return
+            ((q[0] + q[2] + q[4] + q[6]) / 4f) to ((q[1] + q[3] + q[5] + q[7]) / 4f)
+        }
+        val next = camera.follow(xy.first, xy.second, viewW, viewH, canvasW, canvasH)
+        if (next == camera) return
+        camera = next
+        refreshGridView()
+        RenderHost.view?.setCamera(camera)
+        refreshBoneOverlay()
+        refreshRasterOverlays()
+    }
+
+    /** Пока только корневые узлы: не показываем неточный путь для анимированных родителей, камер и ретайминга. */
+    fun motionPathFor(id: Int): com.vibetoon.domain.anim.MotionPath? {
+        if (_links.value[id] != null || cameraIdNow() >= 0) return null
+        val track = _animation.value.tracks[id] ?: return null
+        if (track.keys.size < 2 || track.keys.size > com.vibetoon.domain.anim.MotionPathMath.MAX_KEYS) return null
+        val clip = _clips.value[id]
+        if (clip != null && (clip.speed != 1f || clip.loop || clip.reverse || clip.freeze ||
+                track.keys.any { !clip.visibleAt(it.frame) })) return null
+        val bone = _bones.value.firstOrNull { it.id == id }
+        if (bone != null) {
+            if (_boneMode.value && _bindPose.value) return null
+            return com.vibetoon.domain.anim.MotionPathMath.build(track, bone.hx, bone.hy, Affine2D.IDENTITY)
+        }
+        val layer = layers.firstOrNull { it.id == id } ?: return null
+        if (layer.parentId != -1 || layerProps[id]?.visible == false) return null
+        val pivot = pivots[id] ?: return null
+        val parent = if (id < MEDIA_ID_BASE) fit else Affine2D.IDENTITY
+        return com.vibetoon.domain.anim.MotionPathMath.build(track, pivot.first, pivot.second, parent)
     }
 
     // ---------------------------------------------------------------- выделение
 
     fun hasSelection(): Boolean = _selected.value != null
 
+    private val tapSequence = java.util.concurrent.atomic.AtomicInteger()
+    private val _marquee = MutableStateFlow<FloatArray?>(null)
+    val marquee: StateFlow<FloatArray?> = _marquee.asStateFlow()
+
+    fun canMarquee(selectOnCanvas: Boolean): Boolean = selectOnCanvas && projectId != null && !_playing.value &&
+        _state.value != UiState.Loading && _state.value !is UiState.Rendering &&
+        _audioReadiness.value !is com.vibetoon.domain.project.AudioReadiness.Preparing && !_eyedropper.value &&
+        _paintTool.value == null && _rasterTool.value == null && !_boneMode.value && !_meshMode.value &&
+        !_warpTool.value && !_perspTool.value && !_liquifyTool.value
+
+    fun updateMarquee(x0: Float, y0: Float, x: Float, y: Float) { _marquee.value = floatArrayOf(x0, y0, x, y) }
+    fun cancelMarquee() { _marquee.value = null }
+    fun finishMarquee(selectOnCanvas: Boolean) {
+        val r = _marquee.value ?: return
+        _marquee.value = null
+        tapSequence.incrementAndGet()
+        if (!canMarquee(selectOnCanvas)) return
+        val sc = scene ?: return
+        val byId = layers.associateBy { it.id }
+        val hidden = hiddenIds() + _clips.value.filterValues { !it.visibleAt(_frame.value) }.keys
+        fun lockedByAncestor(id: Int): Boolean {
+            var node = byId[id]
+            val visited = HashSet<Int>()
+            while (node != null && visited.add(node.id)) {
+                if (isLockedId(node.id)) return true
+                node = byId[node.parentId]
+            }
+            return false
+        }
+        val picked = layers.asSequence().filter { it.kind == LayerKind.LAYER && it.id < BONE_ID_BASE }
+            .filter { LayerTree.isEffectivelyVisible(it.id, byId, hidden) && !lockedByAncestor(it.id) }
+            .filter { layer ->
+                val q = sc.selectionQuads[layer.id] ?: return@filter false
+                if (q.size < 8) return@filter false
+                val screen = FloatArray(8) { i -> if (i % 2 == 0) toScreenX(q[i]) else toScreenY(q[i]) }
+                com.vibetoon.domain.input.MarqueePolicy.containsCenter(screen, r[0], r[1], r[2], r[3])
+            }.map { it.id }.toCollection(LinkedHashSet())
+        // Пустая рамка не уничтожает прежнее выделение.
+        if (picked.isNotEmpty()) { multiMode = picked.size > 1; applySelection(picked, picked.last()) }
+        _state.value = UiState.Message(if (picked.isEmpty()) "В рамке нет доступных слоёв" else "Выбрано слоёв: ${picked.size}")
+    }
+
     /**
      * Тап: hit-test в C++ (GL-поток) возвращает верхний слой под пальцем. Как в Live2D, сначала
      * выделяется вся группа верхнего уровня; повторные тапы спускаются на уровень глубже
      * (вложенная группа, затем сам слой). Тап в пустоту снимает выделение.
      */
-    fun onTap(x: Float, y: Float) {
+    fun onTap(x: Float, y: Float, selectOnCanvas: Boolean = true) {
         if (swallowTap) { swallowTap = false; return }
         if (_eyedropper.value) { sampleAt(x, y); return }
         if (_boneMode.value) { boneTap(x, y); return }
-        RenderHost.view?.hitTest(x, y) { hit ->
+        if (!com.vibetoon.domain.input.EditorInputPolicy.canSelectCanvasLayer(selectOnCanvas)) return
+        val seq = tapSequence.incrementAndGet()
+        RenderHost.view?.hitTest(x, y) { hit -> viewModelScope.launch {
+            if (tapSequence.get() != seq) return@launch
             val id = if (hit >= GHOST_BASE || (hit >= 0 && (isLockedId(hit) || layerProps[hit]?.visible == false))) -1 else hit   // закрытый и скрытый слои на холсте не выбираются
             val tapNow = SystemClock.uptimeMillis()
             val dbl = id >= 0 && id == lastTapId && tapNow - lastTapAt < 380
             lastTapId = id; lastTapAt = tapNow
-            if (dbl && !multiMode && isSymbolInstance(id)) { enterSymbol(id); return@hitTest }
+            if (dbl && !multiMode && isSymbolInstance(id)) { enterSymbol(id); return@launch }
             if (multiMode) {
                 if (id < 0) selectLayer(null) else toggleSelect(id)   // тап в пустоту выходит из мультивыделения
-            } else selectLayer(resolveSelection(id, _selected.value))
+            } else {
+                val quick = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("quick_selection", false)
+                val target = if (id >= 0 && ancestorsOf(id).any { isLockedId(it) || layerProps[it]?.visible == false }) null else resolveSelection(id, _selected.value, quick)
+                selectLayer(target)
+            }
             Log.i("VT/Edit", "tap ($x,$y) -> layer $id, selected ${_selected.value}")
-        }
+        } }
     }
 
     /** Цепочка от верхнего предка к слою [leaf]; null, если слоя нет. */
@@ -1065,13 +1330,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return chain.asReversed()
     }
 
-    private fun resolveSelection(hitLeaf: Int, current: Int?): Int? {
-        if (hitLeaf < 0) return null
-        val chain = chainTo(hitLeaf)
-        if (chain.isEmpty()) return null
-        val i = if (current == null) -1 else chain.indexOf(current)
-        return if (i < 0) chain.first() else chain[minOf(i + 1, chain.lastIndex)]
-    }
+    private fun resolveSelection(hitLeaf: Int, current: Int?, quick: Boolean = false): Int? =
+        if (hitLeaf < 0) null else com.vibetoon.domain.input.EditorInputPolicy.tapTarget(chainTo(hitLeaf), current, quick)
 
     /** Обычное выделение одного узла (или снятие выделения при null); выходит из мультивыделения. */
     fun selectLayer(id: Int?) {
@@ -1092,6 +1352,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun applySelection(set: Set<Int>, primary: Int?) {
+        if (_selected.value != primary || _selection.value != set) cancelPendingLasso()
         _selection.value = set
         _selected.value = primary
         if (_paintTool.value != null && primary != null) paintTargetId()?.let { requestPaintSize(it) }   // размер текстуры заранее: первый мазок не ждёт
@@ -1165,7 +1426,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_playing.value || !value.isFinite()) return
         val ids = transformTargets().ifEmpty { return }
         if (ids.any { isLockedId(it) }) { lockedNotice(); return }
-        checkpoint("prop$prop")
+        checkpoint("prop$prop:${_frame.value}:${ids.sorted()}")
         val lo = LayerTransform.MIN_SCALE
         val hi = LayerTransform.MAX_SCALE
         val tp = effective(prim)
@@ -1190,6 +1451,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Кнопка f(x): плавность сегмента от ключа выделенного слоя на текущем кадре. */
     // ---- редактор кривых (универсальный: движение слоя, поворот кости, точки Warp/Mesh/Perspective, параметры эффектов)
 
+    private var selectedCurveTargets: List<Pair<Int, Int>>? = null
     private val _curveEditor = MutableStateFlow(false)
     val curveEditor: StateFlow<Boolean> = _curveEditor.asStateFlow()
 
@@ -1205,32 +1467,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     (PuppetMath.isPinId(id) && PuppetMath.layerOf(id) == t) ||
                     (MeshMath.isVertexId(id) && id < PuppetMath.ID_BASE && (id - MeshMath.ID_BASE) / MeshMath.MAX_VERTS == t) ||
                     (PerspectiveMath.isPointId(id) && id >= PerspectiveMath.ID_BASE && id < TurbMath.ID_BASE && (id - PerspectiveMath.ID_BASE) / PerspectiveMath.CORNERS == t) ||
-                    (id >= TurbMath.ID_BASE && id < PuppetMath.ID_BASE && (id - TurbMath.ID_BASE) / TurbMath.PARAMS == t)
+                    (id >= TurbMath.ID_BASE && id < PuppetMath.ID_BASE && (id - TurbMath.ID_BASE) / TurbMath.PARAMS == t) ||
+                    com.vibetoon.domain.anim.EffectTracks.belongs(id, t)
                 if (mine && tr.keyAt(f) != null) out += id
             }
         }
         return out.toList()
     }
 
+    fun openSelectedCurveEditor() {
+        if (_playing.value) return
+        val targets = com.vibetoon.domain.anim.SelectedKeyCurves.targets(_animation.value, _keySel.value)
+        if (targets.isEmpty()) { _state.value = UiState.Message("В выделении нет ключей"); return }
+        selectedCurveTargets = targets
+        _curveEditor.value = true
+    }
+
     fun openCurveEditor(on: Boolean) {
+        selectedCurveTargets = null
         if (on && curveTargets().isEmpty()) { _state.value = UiState.Message("На этом кадре нет ключа у выделенного объекта"); return }
         _curveEditor.value = on
     }
 
     /** Текущая кривая первого ключа или кривая его пресета плавности. */
     fun currentCurve(): com.vibetoon.domain.anim.Curve {
-        val id = curveTargets().firstOrNull() ?: return com.vibetoon.domain.anim.Curve.LINEAR
-        val k = _animation.value.tracks[id]?.keyAt(_frame.value) ?: return com.vibetoon.domain.anim.Curve.LINEAR
+        val target = selectedCurveTargets?.firstOrNull() ?: curveTargets().firstOrNull()?.let { it to _frame.value }
+            ?: return com.vibetoon.domain.anim.Curve.LINEAR
+        val k = _animation.value.tracks[target.first]?.keyAt(target.second) ?: return com.vibetoon.domain.anim.Curve.LINEAR
         return k.curve?.let { com.vibetoon.domain.anim.Curve.parse(it) } ?: com.vibetoon.domain.anim.Curve.of(k.easing)
     }
 
     /** Применяет кривую ко всем ключам редактора на текущем кадре. [commit] - точка отмены (начало жеста). */
     fun setCurve(curve: com.vibetoon.domain.anim.Curve, commit: Boolean) {
         if (_playing.value) return
-        if (commit) checkpoint("curve", force = true) else checkpoint("curve")
+        val chosen = selectedCurveTargets
+        if (commit) checkpoint("curve", force = true) else if (chosen == null) checkpoint("curve")
         var a = _animation.value
         val data = curve.toList()
-        for (id in curveTargets()) a = a.withCurve(id, _frame.value, data)
+        if (chosen != null) a = com.vibetoon.domain.anim.SelectedKeyCurves.apply(a, chosen, data)
+        else for (id in curveTargets()) a = a.withCurve(id, _frame.value, data)
         _animation.value = a
         pushScene()
         markDirty()
@@ -1239,9 +1514,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setEasing(type: EasingType) {
         if (_playing.value) return
         checkpoint("easing", force = true)
-        for (id in transformTargets()) {
+        for (id in curveTargets()) {
             if (_animation.value.hasKey(id, _frame.value)) _animation.value = _animation.value.withEasing(id, _frame.value, type)
         }
+        pushScene()
         refreshInspector()
         markDirty()
         Log.i("VT/Anim", "easing $type at frame ${_frame.value}")
@@ -1255,14 +1531,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Трансформации всех изменённых слоёв на текущем кадре - вход для SceneBuilder. */
     private fun transformsNow(): Map<Int, LayerTransform> {
         val ids = HashSet<Int>().apply {
-            addAll(base.keys); addAll(override.keys); addAll(_animation.value.tracks.keys); addAll(_clips.value.keys); addAll(fxLayers.keys); addAll(hiddenIds()); addAll(ghosts.map { it.id })
+            addAll(base.keys); addAll(override.keys); addAll(_animation.value.tracks.keys.filter { it >= 0 }); addAll(_clips.value.keys); addAll(fxLayers.keys); addAll(hiddenIds()); addAll(ghosts.map { it.id })
         }
         // вне клипа слой невидим: нулевая прозрачность (у группы скрывает и всех потомков)
         val rest = _boneMode.value && _bindPose.value   // Bind Pose: кости не деформируют картинку
         return ids.filter { !(rest && it >= BONE_ID_BASE) }.associateWith { id ->
             ghosts.firstOrNull { it.id == id }?.let { g -> return@associateWith effective(g.owner).let { o -> o.copy(opacity = o.opacity * g.alpha) } }   // призрак кальки идёт за своим слоем
             val t0 = effective(id)
-            val t = fxLayers[id]?.let { l -> t0.copy(rotation = t0.rotation + EffectMath.spinAngle(l, _frame.value, _animation.value.settings.fps)) } ?: t0
+            val t = fxLayers[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.spinAngle(id, l, _animation.value, _frame.value, _animation.value.settings.fps)) } ?: t0
             val c = _clips.value[id]
             if (layerProps[id]?.visible == false || (c != null && !c.visibleAt(_frame.value))) t.copy(opacity = 0f) else t   // глаз выключен: слой не рисуется
         }
@@ -1273,15 +1549,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun boneHeads(): Map<Int, Pair<Float, Float>> = _bones.value.associate { it.id to (it.hx to it.hy) }
     private fun boneTails(): Map<Int, Pair<Float, Float>> = _bones.value.associate { it.id to (it.tx to it.ty) }
 
+    private fun buildEditorScene(warpIds: Set<Int> = warpLayers, perspIds: Set<Int> = perspLayers, useGroups: Boolean = true, dense: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = denseWarps): SceneData {
+        val options = com.vibetoon.domain.render.SceneOptions.capture(media, layerProps)
+        val inputs = com.vibetoon.domain.render.GroupSceneInputs.build(groupDeformationAnchors, warpIds, perspIds,
+            _frame.value, base, _animation.value, _fx.value, warpGridSizes)
+        return SceneBuilder.buildTree(sceneRoots(), canvasW, canvasH, transformsNow(), fit, textIds, _links.value, boneHeads(), inputs.warps,
+            independentBones(), meshesNow(), inputs.perspectives, boneTails(), effectiveSkins(), turbNow(), fxNow(), cameraIdNow(),
+            options.nullIds, options.depths, groupDeformations = if (useGroups) inputs.groups else emptyMap(), denseWarps = dense)
+    }
+
     private fun pushScene() {
-        val sc = SceneBuilder.buildTree(sceneRoots(), canvasW, canvasH, transformsNow(), fit, textIds, _links.value, boneHeads(), warpsNow(), independentBones(), meshesNow(), perspNow(), boneTails(), effectiveSkins(), turbNow(), fxNow(), cameraIdNow(),
-            media.filter { it.kind == MediaKind.NULLOBJ }.mapTo(HashSet()) { it.id },
-            layerProps.filterValues { it.depth != 0f }.mapValues { it.value.depth })
+        refreshGridView()
+        val sc = try { buildEditorScene() } catch (e: IllegalArgumentException) {
+            // Сложные группы временно пропускаются без удаления исходных данных.
+            _state.value = UiState.Message("Деформация пропущена: неподдерживаемое содержимое или область")
+            buildEditorScene(useGroups = false, dense = emptyMap())
+        }
         scene = sc
         RenderHost.view?.setScene(sc)
         warpTarget()?.let { id -> if (id in turbLayers) _turb.value = turbEffective(id) }
+        refreshFxState()
         refreshBoneOverlay()
-        updateSelectionFrame()   // заодно обновляет инспектор
+        updateSelectionFrame()
     }
 
     /**
@@ -1290,8 +1579,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      *  - трек есть, ключа нет -> временная правка кадра (сохранится кнопкой Add Key);
      *  - трека нет -> ручная трансформация base.
      */
+    private fun autoKeyEnabled(): Boolean = getApplication<Application>()
+        .getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("auto_keyframes", false)
+
+    private fun canAutoKeyTransform(id: Int): Boolean {
+        val frame = _frame.value
+        val source = _clips.value[id]?.animFrame(frame) ?: frame.toFloat()
+        return com.vibetoon.domain.anim.AutoKeyEdits.canKeyTransform(frame, source)
+    }
+
     private fun storeEdit(id: Int, t: LayerTransform) {
+        if (t == effective(id)) return
         val anim = _animation.value
+        val auto = autoKeyEnabled()
+        if (auto && canAutoKeyTransform(id)) {
+            _animation.value = com.vibetoon.domain.anim.AutoKeyEdits.transform(anim, id, _frame.value, effective(id), t, fxLayers[id].orEmpty())
+            override.remove(id)
+            return
+        }
+        if (auto && !canAutoKeyTransform(id)) _state.value = UiState.Message("Автоключ трансформации недоступен при ретайминге клипа")
         when {
             anim.hasKey(id, _frame.value) -> _animation.value = anim.withKey(id, _frame.value, t)
             anim.hasTrack(id) -> override[id] = t
@@ -1316,8 +1622,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_playing.value) return
         val ids = transformTargets().ifEmpty { return }
         if (ids.any { isLockedId(it) }) { lockedNotice(); return }
-        checkpoint("gesture")
-        if (!baseEditHinted && ids.any { !_animation.value.hasTrack(it) }) {
+        checkpoint("gesture:${_frame.value}:${ids.sorted()}")
+        if (!autoKeyEnabled() && !baseEditHinted && ids.any { !_animation.value.hasTrack(it) }) {
             baseEditHinted = true
             _state.value = UiState.Message("Слой без анимации: правка действует на все кадры. Чтобы анимировать, поставьте ключ кнопкой ◎ на таймлайне")
         }
@@ -1357,6 +1663,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         checkpoint("reset", force = true)
         for (id in ids) {
             val anim = _animation.value
+            if (autoKeyEnabled()) { storeEdit(id, LayerTransform()); continue }
             when {
                 anim.hasKey(id, _frame.value) -> _animation.value = anim.withKey(id, _frame.value, LayerTransform())
                 override.remove(id) != null -> {}
@@ -1387,6 +1694,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (!anim.hasKey(id, frame)) continue
                 val (next, lastValue) = anim.withoutKey(id, frame)
                 _animation.value = next
+                removeEffectKeys(id, frame)
                 // Последний ключ удалён: слой остаётся на месте как ручная трансформация
                 if (lastValue != null) base[id] = lastValue
                 Log.i("VT/Anim", "key deleted: layer $id frame $frame")
@@ -1395,7 +1703,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Первый ключ создаётся из текущего положения, поэтому слой не прыгает
                 val t = effective(id)
                 override.remove(id)
-                _animation.value = anim.withKey(id, frame, t)
+                _animation.value = com.vibetoon.domain.anim.EffectTracks.snapshot(id, fxLayers[id].orEmpty(), anim.withKey(id, frame, t), frame)
                 Log.i("VT/Anim", "key added: layer $id frame $frame dx=${t.dx} dy=${t.dy} scaleX=${t.scaleX} scaleY=${t.scaleY} rot=${t.rotation}")
             }
         }
@@ -1405,7 +1713,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- Undo / Redo
 
-    private fun snapshot() = Snapshot(HashMap(base), _animation.value, media.toList(), deletedPsd, _clips.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps)
+    private fun snapshot() = Snapshot(HashMap(base), _animation.value, media.toList(), deletedPsd, _clips.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupAnchors = groupDeformationAnchors.toMap(), warpSizes = warpGridSizes.toMap(), denseWarps = denseWarps.toMap())
 
     private fun updateHistoryFlags() {
         _canUndo.value = undoStack.isNotEmpty()
@@ -1436,7 +1744,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun undo() {
+        if (_selectionExtractBusy.value) return
+        cancelPendingLasso()
         if (undoStack.isEmpty() || _playing.value) return
+        val candidate = undoStack.last()
+        if (candidate.textureOp != null) { restoreExpandedHistory(candidate, undo = true); return }
         val s = undoStack.removeLast()
         redoStack.addLast(snapshot().withPaint(s.paintOp))
         restore(s)
@@ -1446,13 +1758,103 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun redo() {
+        if (_selectionExtractBusy.value) return
+        cancelPendingLasso()
         if (redoStack.isEmpty() || _playing.value) return
+        val candidate = redoStack.last()
+        if (candidate.textureOp != null) { restoreExpandedHistory(candidate, undo = false); return }
         val s = redoStack.removeLast()
         undoStack.addLast(snapshot().withPaint(s.paintOp))
         restore(s)
         s.paintOp?.let { applyPaint(it, useBefore = false) }
         updateHistoryFlags()
         Log.i("VT/Edit", "redo (left ${redoStack.size})")
+    }
+
+    /** Вызывать только под rasterTransactionGate в NonCancellable: запущенный GL ещё владеет состоянием. */
+    private suspend fun replaceExpandedTexture(
+        view: com.vibetoon.render.VtGLSurfaceView,
+        expected: com.vibetoon.domain.raster.ExpandedLayerSnapshot.State,
+        desired: com.vibetoon.domain.raster.ExpandedLayerSnapshot.State
+    ): Boolean {
+        val reply = kotlinx.coroutines.CompletableDeferred<com.vibetoon.domain.raster.TextureReplaceResult>()
+        val request = view.replaceTextureChecked(expected.media.id, expected.width, expected.height, desired.width, desired.height, desired.rgba) { reply.complete(it) }
+        val first = kotlinx.coroutines.withTimeoutOrNull(4000) { reply.await() }
+        if (first == null && request.cancelIfQueued()) return false
+        return (first ?: reply.await()) == com.vibetoon.domain.raster.TextureReplaceResult.SUCCESS
+    }
+
+    /** История расширения фиксируется только после подтверждения GL; отказ не меняет стек. */
+    private fun restoreExpandedHistory(target: Snapshot, undo: Boolean) {
+        val op = target.textureOp ?: return
+        val transition = op.transition(if (undo) com.vibetoon.domain.raster.ExpandedLayerHistory.Direction.UNDO else com.vibetoon.domain.raster.ExpandedLayerHistory.Direction.REDO)
+        val view = RenderHost.view ?: return
+        val pid = projectId ?: return
+        val from = transition.expected
+        val to = transition.target
+        if (!com.vibetoon.domain.raster.RasterVersionPolicy.sameLayerIgnoringVersion(media.firstOrNull { it.id == from.media.id }, from.media) || from.media.id != to.media.id) {
+            _state.value = UiState.Message("Слой изменился: восстановление отменено")
+            return
+        }
+        _selectionExtractBusy.value = true
+        viewModelScope.launch {
+            try {
+                // После постановки GL-операции не прерываем публикацию из-за отмены coroutine.
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    rasterTransactionGate.run {
+                        if (projectId != pid || RenderHost.view !== view || !com.vibetoon.domain.raster.RasterVersionPolicy.sameLayerIgnoringVersion(media.firstOrNull { it.id == from.media.id }, from.media)) return@run
+                        val source = if (undo) undoStack else redoStack
+                        val destination = if (undo) redoStack else undoStack
+                        val previous = snapshot()
+                        val undoBefore = undoStack.toList()
+                        val redoBefore = redoStack.toList()
+                        var publishing = false
+                        val outcome = com.vibetoon.domain.raster.TextureTransaction.execute(
+                            replace = { replaceExpandedTexture(view, from, to) },
+                            publish = {
+                                check(projectId == pid && RenderHost.view === view && source.lastOrNull() === target)
+                                publishing = true
+                                source.removeLast()
+                                destination.addLast(previous.withTexture(op))
+                                paintSizes[from.media.id] = intArrayOf(to.width, to.height)
+                                clearSelection()
+                                restore(target)
+                                invalidateThumb(from.media.id)
+                                paintDirty += from.media.id
+                                markDirty()
+                                updateHistoryFlags()
+                                enforcePaintBudget()
+                            },
+                            rollback = {
+                                if (projectId != pid || RenderHost.view !== view || !replaceExpandedTexture(view, to, from)) false
+                                else {
+                                    if (publishing) {
+                                        undoStack.clear(); undoStack.addAll(undoBefore)
+                                        redoStack.clear(); redoStack.addAll(redoBefore)
+                                        paintSizes[from.media.id] = intArrayOf(from.width, from.height)
+                                        restore(previous)
+                                        invalidateThumb(from.media.id)
+                                        paintDirty += from.media.id
+                                        updateHistoryFlags()
+                                    }
+                                    true
+                                }
+                            }
+                        )
+                        when (outcome) {
+                            com.vibetoon.domain.raster.TextureTransaction.Outcome.COMMITTED -> Unit
+                            com.vibetoon.domain.raster.TextureTransaction.Outcome.REJECTED,
+                            com.vibetoon.domain.raster.TextureTransaction.Outcome.ROLLED_BACK ->
+                                _state.value = UiState.Message("Не удалось восстановить текстуру; история не изменена")
+                            com.vibetoon.domain.raster.TextureTransaction.Outcome.RECOVERY_REQUIRED -> {
+                                rasterRecoveryRequired = true
+                                _state.value = UiState.Error("Не удалось безопасно восстановить текстуру; сохранение приостановлено")
+                            }
+                        }
+                    }
+                }
+            } finally { if (!rasterRecoveryRequired) _selectionExtractBusy.value = false }
+        }
     }
 
     private fun restore(snap: Snapshot) {
@@ -1463,12 +1865,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         override.clear()
         _animation.value = snap.animation
         meta = meta?.copy(fps = snap.animation.settings.fps, durationFrames = snap.animation.settings.durationFrames)
-        media.clear(); media.addAll(snap.media)
+        media.clear(); media.addAll(snap.media.map { item ->
+            val current = oldMedia.firstOrNull { it.id == item.id }
+            val versioned = item.id in versionedRasterIds || (current != null && com.vibetoon.domain.raster.RasterVersionPolicy.isVersionPath(current.file))
+            com.vibetoon.domain.raster.RasterVersionPolicy.keepCurrentFile(item, current, versioned)
+        })
         deletedPsd = snap.deleted
         _clips.value = snap.clips
         _links.value = snap.links
         _bones.value = snap.bones
         regroup = snap.regroup
+        groupDeformationAnchors = snap.groupAnchors.toMap()
+        warpGridSizes = snap.warpSizes.toMap()
+        denseWarps = snap.denseWarps.toMap()
         warpLayers = snap.warps
         meshLayers = snap.meshes
         perspLayers = snap.persps
@@ -1563,6 +1972,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- маркеры и быстрая навигация ----
+    fun stepTimeline(direction: Int, byFrame: Boolean) {
+        val id = _selected.value
+        val points = if (id == null) emptySet() else {
+            val cells = media.firstOrNull { it.id == id }?.cells.orEmpty().map { it.start }
+            (cells + com.vibetoon.domain.anim.TrackGroups.frames(id, _animation.value.tracks)).toSet()
+        }
+        scrubTo(com.vibetoon.domain.anim.TimelineNavigation.step(_frame.value, direction, duration(), byFrame, points))
+    }
+
+    fun quickDelete(drawing: Boolean) {
+        if (drawing) deleteFrame() else deleteSelected()
+    }
+
     fun goStart() = scrubTo(0)
     fun goEnd() = scrubTo(duration() - 1)
 
@@ -1585,53 +2007,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun splitSelected() {
         val pid = projectId ?: return
-        val id = _selected.value ?: return
         if (_playing.value) return
-        val item = media.firstOrNull { it.id == id }
-        if (item == null) {
-            _state.value = UiState.Message("Разрезать пока можно картинки, видео, текст и аудио (слои PSD - позже)")
-            return
-        }
+        val ids = _selection.value.ifEmpty { _selected.value?.let { setOf(it) }.orEmpty() }
+        if (ids.isEmpty()) return
+        if (ids.any { isLockedId(it) }) { lockedNotice(); return }
         val frame = _frame.value
-        val clip = clipOf(id)
-        if (frame <= clip.start || frame >= clip.end) {
-            _state.value = UiState.Message("Поставьте плейхед внутри клипа выбранного слоя")
-            return
+        // Нельзя разрезать часть выделения молча: сначала валидируем всю операцию.
+        val items = ids.mapNotNull { id -> media.firstOrNull { it.id == id } }
+        if (items.size != ids.size || items.any { it.kind !in setOf(MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.TEXT, MediaKind.AUDIO) }) {
+            _state.value = UiState.Message("Разрезать пока можно картинки, видео, текст и аудио (слои PSD - позже)"); return
+        }
+        val halves = com.vibetoon.domain.project.ClipSplit.split(items.map { clipOf(it.id) }, frame)
+        if (halves == null) {
+            _state.value = UiState.Message("Поставьте плейхед внутри клипа каждого выбранного слоя"); return
         }
         checkpoint("split", force = true)
-        val newId = nextMediaId()
-        val len1 = frame - clip.start
-        val len2 = clip.end - frame
-        // смещения источника: вперёд - вторая часть сдвигается на len1; реверс - первая часть берёт "хвост"
-        val off1: Int
-        val off2: Int
-        if (!clip.reverse) {
-            off1 = clip.offset
-            off2 = clip.offset + Math.round(len1 * clip.speed)
-        } else {
-            off1 = clip.offset + Math.round(len2 * clip.speed)
-            off2 = clip.offset
-        }
-        val first = clip.copy(end = frame, offset = off1)
-        val second = clip.copy(start = frame, offset = off2)
-        media += item.copy(id = newId)
-        _clips.value = _clips.value + (id to first) + (newId to second)
-        base[id]?.let { base[newId] = it }
-        _animation.value.tracks[id]?.let { tr ->
-            _animation.value = _animation.value.copy(tracks = _animation.value.tracks + (newId to AnimationTrack(newId, tr.keys)))
-        }
-        rebuildLayers()
-        pushScene()
-        val copy = media.first { it.id == newId }
-        if (copy.isVisual) {
-            viewModelScope.launch {
-                withContext(decodeDispatcher) { runCatching { uploadTextureFor(pid, copy) } }
-                RenderHost.view?.requestRender()
+        val copies = ArrayList<MediaItem>()
+        for ((item, parts) in items.zip(halves)) {
+            val id = item.id
+            val newId = nextMediaId()
+            val copy = item.copy(id = newId)
+            media += copy; copies += copy
+            _clips.value = _clips.value + (id to parts.first) + (newId to parts.second)
+            base[id]?.let { base[newId] = it }
+            _animation.value.tracks[id]?.let { tr ->
+                _animation.value = _animation.value.copy(tracks = _animation.value.tracks + (newId to AnimationTrack(newId, tr.keys)))
             }
+            fxLayers[id]?.let { fxLayers = fxLayers + (newId to it); copyEffectTracks(id, newId) }
+            layerProps[id]?.let { setProps(layerProps + (newId to it)) }
         }
-        selectLayer(newId)
+        rebuildLayers(); pushScene()
+        for (copy in copies.filter { it.isVisual }) viewModelScope.launch {
+            withContext(decodeDispatcher) { runCatching { uploadTextureFor(pid, copy) } }
+            RenderHost.view?.requestRender()
+        }
+        applySelection(copies.mapTo(LinkedHashSet()) { it.id }, copies.last().id)
         markDirty()
-        _state.value = UiState.Message("Клип разрезан на кадре $frame")
+        _state.value = UiState.Message("Разрезано клипов: ${copies.size}")
     }
 
     /**
@@ -1659,7 +2071,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _clips.value[id]?.let { _clips.value = _clips.value + (newId to it) }
         base[id]?.let { base[newId] = it }
         _animation.value.tracks[id]?.let { tr -> _animation.value = _animation.value.copy(tracks = _animation.value.tracks + (newId to AnimationTrack(newId, tr.keys))) }
-        fxLayers[id]?.let { fxLayers = fxLayers + (newId to it) }
+        fxLayers[id]?.let { effects ->
+            fxLayers = fxLayers + (newId to effects)
+            copyEffectTracks(id, newId)
+        }
         layerProps[id]?.let { setProps(layerProps + (newId to it)) }
         rebuildLayers()
         pushScene()
@@ -1890,11 +2305,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val key = symbolKey(inst, def, f)
             if (symShown[inst.id] == key || inst.id in symBusy) continue
             symBusy += inst.id
+            val ticket = RenderNative.textureUploadTicket(inst.id)
             viewModelScope.launch {
                 var ok = false
                 try {
                     val bmp = symbolBitmap(def.id, key, 0)
-                    if (bmp != null) { RenderNative.uploadBitmap(inst.id, bmp); bmp.recycle(); invalidateThumb(inst.id); restoreMemberTextures(def.id); RenderHost.view?.requestRender(); ok = true }
+                    if (bmp != null) {
+                        ok = RenderNative.uploadBitmapIfCurrent(inst.id, bmp, ticket); bmp.recycle()
+                        if (ok) invalidateThumb(inst.id)
+                        restoreMemberTextures(def.id); RenderHost.view?.requestRender()
+                    }
                 } catch (t: kotlinx.coroutines.CancellationException) {
                     throw t
                 } catch (t: Throwable) {
@@ -1928,8 +2348,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val mem = symbolMembers(defId)
         for (n in media.filter { it.kind == MediaKind.SYMBOL && it.id in mem }) {
             val nd = media.firstOrNull { it.id == n.symRef && it.symDur > 0 } ?: continue
+            val ticket = RenderNative.textureUploadTicket(n.id)
             val bmp = symbolBitmap(nd.id, symbolKey(n, nd, local), depth + 1) ?: continue
-            RenderNative.uploadBitmap(n.id, bmp); bmp.recycle()
+            RenderNative.uploadBitmapIfCurrent(n.id, bmp, ticket); bmp.recycle()
         }
     }
 
@@ -1940,7 +2361,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val (w, h) = symbolDims()
         val scene = withContext(Dispatchers.Default) { buildSceneAt(fps, null, defId)(local) }
         val bytes = captureNow(scene, true, w, h) ?: return null
-        return captureBitmap(bytes, w, h)
+        return withContext(Dispatchers.Default) { captureBitmap(bytes, w, h) }
     }
 
     /** Предварительная отрисовка вложенных сцен для экспорта: определение -> PNG каждого внутреннего кадра (null - не снялся). [frame] - только кадр проекта. */
@@ -1950,7 +2371,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val top = media.filter { it.kind == MediaKind.SYMBOL && it.id !in inside }
         val defs = top.map { it.symRef }.distinct().mapNotNull { id -> media.firstOrNull { it.id == id && it.symDur > 0 } }
         if (defs.isEmpty()) return emptyMap()
-        flushPaintSaves()
+        check(flushPaintSavesSafely()) { "Не удалось сохранить рисунок" }
         val st = _animation.value.settings
         val out = HashMap<Int, List<ByteArray?>>()
         for (d in defs) {
@@ -2092,6 +2513,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val f = projects.mediaFile(pid, thumbName(def.id, mk.frame))
                 if (mk.thumb.isEmpty() || !f.exists()) continue
                 val bmp = withContext(Dispatchers.IO) { android.graphics.BitmapFactory.decodeFile(f.absolutePath) } ?: continue
+                if (projectId != pid) { bmp.recycle(); return@launch }
                 _markerThumbs.value = _markerThumbs.value + (key to bmp.asImageBitmap())
             }
         }
@@ -2127,33 +2549,59 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         editInstance(instId, "Ключ времени (Hold) на кадре ${_frame.value + 1}") { it.copy(timeKeys = SymbolMath.withKey(it.timeKeys, TimeKey(_frame.value, v))) }
     }
 
-    private fun thumbName(defId: Int, frame: Int) = "st${defId}_$frame.png"
+    // Новый кэш не перезаписывает старые миниатюры в существующих проектах.
+    private fun thumbName(defId: Int, frame: Int) = "st2_${defId}_$frame.png"
+
+    private fun cropMarkerThumb(b: android.graphics.Bitmap): android.graphics.Bitmap {
+        val pixels = IntArray(b.width * b.height)
+        b.getPixels(pixels, 0, b.width, 0, 0, b.width, b.height)
+        val rect = com.vibetoon.domain.project.ThumbnailBounds.padded(pixels, b.width, b.height)
+            ?: return android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+        val cropped = android.graphics.Bitmap.createBitmap(b, rect.x, rect.y, rect.width, rect.height)
+        val k = 160f / maxOf(cropped.width, cropped.height)
+        val result = android.graphics.Bitmap.createScaledBitmap(cropped, maxOf(1, (cropped.width * k).toInt()), maxOf(1, (cropped.height * k).toInt()), true)
+        if (cropped !== b && cropped !== result) cropped.recycle()
+        return if (result === b) b.copy(android.graphics.Bitmap.Config.ARGB_8888, false) else result
+    }
+
+    private val markerThumbJobs = HashMap<Int, kotlinx.coroutines.Job>()
 
     /** Миниатюры маркеров (PNG ~96 px в папке проекта; ссылка хранится в маркере). Недостающие или устаревшие (force) рисуются заново. */
     private fun regenMarkerThumbs(defId: Int, force: Boolean) {
         val pid = projectId ?: return
-        viewModelScope.launch {
+        val previous = markerThumbJobs[defId]
+        if (previous?.isActive == true && !force) return
+        val job = viewModelScope.launch {
+            if (previous?.isActive == true) previous.join()
+            if (projectId != pid) return@launch
             val def = media.firstOrNull { it.id == defId && it.symDur > 0 } ?: return@launch
             val got = HashMap<Int, String>()
-            for (mk in def.markers) {
-                val f = projects.mediaFile(pid, thumbName(defId, mk.frame))
-                if (!force && mk.thumb.isNotEmpty() && f.exists()) continue
-                val b = runCatching { symbolBitmap(defId, mk.frame, 0) }.getOrNull() ?: continue
-                val k = 96f / maxOf(b.width, b.height)
-                val small = android.graphics.Bitmap.createScaledBitmap(b, maxOf(1, (b.width * k).toInt()), maxOf(1, (b.height * k).toInt()), true)
-                if (small !== b) b.recycle()
-                withContext(Dispatchers.IO) { f.outputStream().use { small.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
-                _markerThumbs.value = _markerThumbs.value + ("$defId:${mk.frame}" to small.asImageBitmap())
-                got[mk.frame] = "assets/${f.name}"
-            }
-            restoreMemberTextures(defId)
-            if (got.isNotEmpty()) {
+            try {
+                for (mk in def.markers) {
+                    if (projectId != pid) return@launch
+                    val f = projects.mediaFile(pid, thumbName(defId, mk.frame))
+                    if (!force && mk.thumb.isNotEmpty() && f.exists()) continue
+                    val b = try { symbolBitmap(defId, mk.frame, 0) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { Log.w("VT/Symbols", "marker capture", e); null } ?: continue
+                    val small = withContext(Dispatchers.Default) {
+                        try { cropMarkerThumb(b) } finally { if (!b.isRecycled) b.recycle() }
+                    }
+                    if (projectId != pid) { small.recycle(); return@launch }
+                    withContext(Dispatchers.IO) { f.outputStream().use { check(small.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) } }
+                    if (projectId != pid) { small.recycle(); return@launch }
+                    _markerThumbs.value = _markerThumbs.value + ("$defId:${mk.frame}" to small.asImageBitmap())
+                    got[mk.frame] = "assets/${f.name}"
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Log.w("VT/Symbols", "marker thumbnail generation failed", e) }
+            finally { if (projectId == pid) restoreMemberTextures(defId) }
+            if (projectId == pid && got.isNotEmpty()) {
                 val i = media.indexOfFirst { it.id == defId }
                 if (i >= 0) { media[i] = media[i].copy(markers = media[i].markers.map { m -> got[m.frame]?.let { m.copy(thumb = it) } ?: m }); refreshSymbolState(); markDirty() }
             }
         }
+        markerThumbJobs[defId] = job
+        job.invokeOnCompletion { if (markerThumbJobs[defId] === job) markerThumbJobs.remove(defId) }
     }
-
 
     // ---- покадровые слои (рисунки-экспозиции) и калька (Onion Skin) ----
 
@@ -2208,13 +2656,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val same = list.size == ghosts.size && list.indices.all { ghosts[it].id == list[it].id && ghosts[it].file == list[it].file && ghosts[it].alpha == list[it].alpha }
         ghosts = list
         val pid = projectId ?: return
+        val need = list.filter { ghostShown[it.id] != it.file }
+        val tickets = need.associate { it.id to RenderNative.textureUploadTicket(it.id) }
         viewModelScope.launch {
-            val need = list.filter { ghostShown[it.id] != it.file }
             if (need.isNotEmpty()) {
                 withContext(decodeDispatcher) {
                     for (g in need) runCatching {
                         val d = importer.decodeImage(projects.fileOf(pid, g.file))
-                        RenderNative.uploadBitmap(g.id, d.bitmap); d.bitmap.recycle(); ghostShown[g.id] = g.file
+                        val uploaded = RenderNative.uploadBitmapIfCurrent(g.id, d.bitmap, tickets.getValue(g.id))
+                        d.bitmap.recycle(); if (uploaded) ghostShown[g.id] = g.file
                     }
                 }
             }
@@ -2243,11 +2693,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val act = FrameMath.active(m.cells, f) ?: continue
             if (cellShown[m.id] == act.file || m.id in cellBusy) continue
             cellBusy += m.id
+            val ticket = RenderNative.textureUploadTicket(m.id)
             viewModelScope.launch {
                 try {
-                    flushPaintSaves()   // нарисованное на прошлом рисунке уходит в его файл до замены текстуры
+                    if (!flushPaintSavesSafely()) {
+                        _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён")
+                        return@launch
+                    } // не подменяем рисунок, пока прежний не сохранён
                     val d = withContext(decodeDispatcher) { importer.decodeImage(projects.fileOf(pid, act.file)) }
-                    RenderNative.uploadBitmap(m.id, d.bitmap); d.bitmap.recycle()
+                    val uploaded = RenderNative.uploadBitmapIfCurrent(m.id, d.bitmap, ticket); d.bitmap.recycle()
+                    if (!uploaded) return@launch
                     cellShown[m.id] = act.file
                     invalidateThumb(m.id)
                     RenderHost.view?.requestRender()
@@ -2293,7 +2748,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = frameLayerOrNotice() ?: return
         if (_playing.value) return
         viewModelScope.launch {
-            flushPaintSaves()
+            if (!flushPaintSavesSafely()) { _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён"); return@launch }
             val cells0 = m.cells.ifEmpty { listOf(FrameCell(0, m.file)) }
             val target = FrameMath.freeStart(cells0, _frame.value, duration()) ?: run { _state.value = UiState.Message("Нет свободного кадра до конца проекта"); return@launch }
             val name = newCellName(m.copy(cells = cells0))
@@ -2313,7 +2768,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = frameLayerOrNotice() ?: return
         if (_playing.value) return
         viewModelScope.launch {
-            flushPaintSaves()
+            if (!flushPaintSavesSafely()) { _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён"); return@launch }
             val cells0 = m.cells.ifEmpty { listOf(FrameCell(0, m.file)) }
             val cur = FrameMath.active(cells0, _frame.value) ?: return@launch
             val target = FrameMath.freeStart(cells0, _frame.value + 1, duration()) ?: run { _state.value = UiState.Message("Нет свободного кадра до конца проекта"); return@launch }
@@ -2487,19 +2942,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun saveToGallery(file: java.io.File, mime: String) {
-        if (android.os.Build.VERSION.SDK_INT < 29) return
-        runCatching {
-            val resolver = getApplication<Application>().contentResolver
-            val video = mime.startsWith("video/")
-            val v = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
-                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
-                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, if (video) "Movies/VibeToon" else "Pictures/VibeToon")
-            }
-            val uri = resolver.insert(if (video) android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI else android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v) ?: return
-            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+    private fun saveToGallery(file: java.io.File, mime: String): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 29) return false
+        val resolver = getApplication<Application>().contentResolver
+        val video = mime.startsWith("video/")
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, if (video) "Movies/VibeToon" else "Pictures/VibeToon")
+            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
         }
+        val collection = if (video) android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI else android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        return com.vibetoon.domain.export.GalleryCopy.publish(
+            create = { resolver.insert(collection, values) },
+            write = { uri ->
+                val out = resolver.openOutputStream(uri) ?: throw java.io.IOException("Cannot open gallery output")
+                out.use { target -> file.inputStream().use { it.copyTo(target) } }
+            },
+            finish = { uri -> resolver.update(uri, android.content.ContentValues().apply { put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) > 0 },
+            discard = { uri -> resolver.delete(uri, null, null); Unit }
+        )
     }
 
     /** Экспорт текущего кадра (плейхеда) в PNG (с прозрачным фоном) или JPEG (с фоном холста), полное разрешение холста. */
@@ -2509,21 +2971,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pause()
         viewModelScope.launch {
             _export.value = ExportUi.Running(0, 1)
-            val (w, h) = captureDims()
-            val symC = prerenderSymbols(_frame.value)
-            val still = withContext(Dispatchers.Default) { buildSceneAt(_animation.value.settings.fps, symCache = symC)(_frame.value) }   // без призраков кальки
-            val bytes = captureNow(still, !jpeg, w, h)
-            if (bytes == null) { _export.value = ExportUi.Failed("Не удалось снять кадр"); return@launch }
-            val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
-            val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-f${_frame.value}-$stamp.${if (jpeg) "jpg" else "png"}")
-            withContext(Dispatchers.IO) {
-                file.parentFile?.mkdirs()
-                val bmp = captureBitmap(bytes, w, h)
-                file.outputStream().use { bmp.compress(if (jpeg) android.graphics.Bitmap.CompressFormat.JPEG else android.graphics.Bitmap.CompressFormat.PNG, 95, it) }
-                bmp.recycle()
-                saveToGallery(file, if (jpeg) "image/jpeg" else "image/png")
+            var file: File? = null
+            try {
+                val (w, h) = captureDims()
+                val symC = prerenderSymbols(_frame.value)
+                val still = withContext(Dispatchers.Default) { buildSceneAt(_animation.value.settings.fps, symCache = symC)(_frame.value) }
+                val bytes = captureNow(still, !jpeg, w, h) ?: error("Не удалось снять кадр")
+                val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+                val output = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-f${_frame.value}-$stamp-${java.util.UUID.randomUUID().toString().take(8)}.${if (jpeg) "jpg" else "png"}")
+                file = output
+                val gallerySaved = withContext(Dispatchers.IO) {
+                    val bmp = captureBitmap(bytes, w, h)
+                    try {
+                        com.vibetoon.domain.export.ExportFiles.write(output) { out ->
+                            check(bmp.compress(if (jpeg) android.graphics.Bitmap.CompressFormat.JPEG else android.graphics.Bitmap.CompressFormat.PNG, 95, out))
+                        }
+                    } finally { bmp.recycle() }
+                    saveToGallery(output, if (jpeg) "image/jpeg" else "image/png")
+                }
+                _export.value = ExportUi.Done(output, gallerySaved)
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                file?.let { com.vibetoon.domain.export.ExportFiles.discard(it) }
+                _export.value = ExportUi.Idle
+                throw t
+            } catch (t: Exception) {
+                file?.let { com.vibetoon.domain.export.ExportFiles.discard(it) }
+                Log.e("VT/Export", "still failed", t)
+                _export.value = ExportUi.Failed(t.message ?: "Не удалось снять кадр")
+            } finally {
+                withContext(kotlinx.coroutines.NonCancellable) { runCatching { restoreAfterExport() } }
             }
-            _export.value = ExportUi.Done(file)
         }
     }
 
@@ -2536,31 +3013,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         exportCancel = java.util.concurrent.atomic.AtomicBoolean(false)
         val cancel = exportCancel
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
-        val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp.gif")
+        val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp-${java.util.UUID.randomUUID().toString().take(8)}.gif")
         _export.value = ExportUi.Running(0, frames)
         viewModelScope.launch {
             try {
                 file.parentFile?.mkdirs()
                 val sceneAt = buildSceneAt(fps, symCache = prerenderSymbols())
-                val out = java.io.BufferedOutputStream(file.outputStream())
-                val enc = com.vibetoon.domain.export.GifEncoder(out, w, h, fps, transparent)
-                for (i in 0 until frames) {
-                    if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
-                    val scene = withContext(Dispatchers.Default) { sceneAt(i) }
-                    val bytes = captureNow(scene, transparent, w, h) ?: error("Не удалось снять кадр $i")
-                    withContext(Dispatchers.Default) { enc.addFrame(captureArgb(bytes, w, h)) }
-                    _export.value = ExportUi.Running(i + 1, frames)
+                com.vibetoon.domain.export.ExportFiles.write(file) { out ->
+                    val enc = com.vibetoon.domain.export.GifEncoder(out, w, h, fps, transparent)
+                    for (i in 0 until frames) {
+                        if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
+                        val scene = withContext(Dispatchers.Default) { sceneAt(i) }
+                        val bytes = captureNow(scene, transparent, w, h) ?: error("Не удалось снять кадр $i")
+                        withContext(Dispatchers.Default) { enc.addFrame(captureArgb(bytes, w, h)) }
+                        _export.value = ExportUi.Running(i + 1, frames)
+                    }
+                    enc.finish()
                 }
-                enc.finish(); out.close()
-                withContext(Dispatchers.IO) { saveToGallery(file, "image/gif") }
-                _export.value = ExportUi.Done(file)
+                val gallerySaved = withContext(Dispatchers.IO) { saveToGallery(file, "image/gif") }
+                _export.value = ExportUi.Done(file, gallerySaved)
             } catch (t: kotlinx.coroutines.CancellationException) {
                 file.delete(); _export.value = ExportUi.Idle
             } catch (t: Throwable) {
                 Log.e("VT/Export", "gif failed", t)
                 file.delete(); _export.value = ExportUi.Failed(t.message ?: "Не удалось записать GIF")
+            } finally {
+                withContext(kotlinx.coroutines.NonCancellable) { runCatching { restoreAfterExport() } }
             }
-            restoreAfterExport()
         }
     }
 
@@ -2573,36 +3052,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         exportCancel = java.util.concurrent.atomic.AtomicBoolean(false)
         val cancel = exportCancel
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
-        val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp-png.zip")
+        val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp-${java.util.UUID.randomUUID().toString().take(8)}-png.zip")
         _export.value = ExportUi.Running(0, frames)
         viewModelScope.launch {
             try {
                 file.parentFile?.mkdirs()
                 val sceneAt = buildSceneAt(fps, symCache = prerenderSymbols())
-                val zip = java.util.zip.ZipOutputStream(java.io.BufferedOutputStream(file.outputStream()))
-                val base = safeName(_projectName.value)
-                for (i in 0 until frames) {
-                    if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
-                    val scene = withContext(Dispatchers.Default) { sceneAt(i) }
-                    val bytes = captureNow(scene, transparent, w, h) ?: error("Не удалось снять кадр $i")
-                    withContext(Dispatchers.Default) {
-                        val bmp = android.graphics.Bitmap.createBitmap(captureArgb(bytes, w, h), w, h, android.graphics.Bitmap.Config.ARGB_8888)
-                        zip.putNextEntry(java.util.zip.ZipEntry("%s_%05d.png".format(base, i + 1)))
-                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, zip)
-                        zip.closeEntry()
-                        bmp.recycle()
+                com.vibetoon.domain.export.ExportFiles.write(file) { out ->
+                    java.util.zip.ZipOutputStream(out).use { zip ->
+                        val base = safeName(_projectName.value)
+                        for (i in 0 until frames) {
+                            if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
+                            val scene = withContext(Dispatchers.Default) { sceneAt(i) }
+                            val bytes = captureNow(scene, transparent, w, h) ?: error("Не удалось снять кадр $i")
+                            withContext(Dispatchers.Default) {
+                                val bmp = android.graphics.Bitmap.createBitmap(captureArgb(bytes, w, h), w, h, android.graphics.Bitmap.Config.ARGB_8888)
+                                try {
+                                    zip.putNextEntry(java.util.zip.ZipEntry("%s_%05d.png".format(base, i + 1)))
+                                    check(bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, zip))
+                                    zip.closeEntry()
+                                } finally { bmp.recycle() }
+                            }
+                            _export.value = ExportUi.Running(i + 1, frames)
+                        }
                     }
-                    _export.value = ExportUi.Running(i + 1, frames)
                 }
-                zip.close()
                 _export.value = ExportUi.Done(file)
             } catch (t: kotlinx.coroutines.CancellationException) {
                 file.delete(); _export.value = ExportUi.Idle
             } catch (t: Throwable) {
                 Log.e("VT/Export", "png zip failed", t)
                 file.delete(); _export.value = ExportUi.Failed(t.message ?: "Не удалось записать ZIP")
+            } finally {
+                withContext(kotlinx.coroutines.NonCancellable) { runCatching { restoreAfterExport() } }
             }
-            restoreAfterExport()
         }
     }
 
@@ -2727,7 +3210,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun exportProjectBackup(uri: Uri, ctx: android.content.Context) {
         val pid = projectId ?: return
         viewModelScope.launch {
-            saveNow()
+            if (!saveNow()) return@launch
             val ok = withContext(Dispatchers.IO) { runCatching { ctx.contentResolver.openOutputStream(uri)!!.use { projects.exportBackup(pid, it) } }.isSuccess }
             _state.value = UiState.Message(if (ok) "Резервная копия .tsproj сохранена" else "Не удалось сохранить копию")
         }
@@ -2868,6 +3351,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (gone.isEmpty()) return
         val ids = gone.flatMap { l -> (0 until WarpMath.POINTS).map { WarpMath.pointId(l, it) } }.toSet()
         warpLayers = warpLayers - gone.toSet()
+        warpGridSizes = warpGridSizes - gone.toSet()
+        denseWarps = denseWarps - gone.toSet()
         for (id in ids) base.remove(id)
         _animation.value = _animation.value.copy(tracks = _animation.value.tracks.filterKeys { it !in ids })
     }
@@ -2883,6 +3368,83 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _warpTool.value = on
         if (on) ensureWarp()
         refreshWarpOverlay()
+    }
+
+    /** Временный явный шаг подготовки: только сохраняет рамку, деформация ещё не включена. */
+    fun prepareGroupDeformationAnchor() {
+        if (_playing.value || _selection.value.size != 1) return
+        val id = _selected.value ?: return
+        val group = layers.firstOrNull { it.id == id } ?: return
+        if (group.kind != LayerKind.GROUP_OPEN && group.kind != LayerKind.GROUP_CLOSED) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        if (id in groupDeformationAnchors) {
+            _state.value = UiState.Message("Область группы уже сохранена; деформация в разработке")
+            return
+        }
+        val bounds = scene?.groupLocalBounds?.get(id)
+        if (bounds == null) {
+            _state.value = UiState.Message("Нет видимых непустых слоёв для области группы")
+            return
+        }
+        val anchor = com.vibetoon.domain.project.GroupDeformationAnchor(bounds.x, bounds.y, bounds.w, bounds.h)
+        if (!anchor.valid()) return
+        checkpoint("group-deformation-anchor", force = true)
+        groupDeformationAnchors = groupDeformationAnchors + (id to anchor)
+        markDirty()
+        _state.value = UiState.Message("Область группы сохранена; деформация в разработке")
+    }
+
+    fun clearGroupDeformationAnchor() {
+        if (_playing.value || _selection.value.size != 1) return
+        val id = _selected.value ?: return
+        if (id !in groupDeformationAnchors) return
+        if (id in warpLayers || id in perspLayers) { _state.value = UiState.Message("Сначала сбросьте деформации группы"); return }
+        if (isLockedId(id)) { lockedNotice(); return }
+        checkpoint("group-deformation-anchor-clear", force = true)
+        groupDeformationAnchors = groupDeformationAnchors - id
+        markDirty()
+        _state.value = UiState.Message("Область группы удалена")
+    }
+
+    private fun selectedDeformerGroup(): Int? {
+        val id = _selected.value ?: return null
+        if (_selection.value.size != 1 || id >= BONE_ID_BASE) return null
+        val kind = layers.firstOrNull { it.id == id }?.kind
+        return id.takeIf { kind == LayerKind.GROUP_OPEN || kind == LayerKind.GROUP_CLOSED }
+    }
+
+    private fun deformerTarget(): Int? {
+        val id = selectedDeformerGroup()
+        if (id != null && id in groupDeformationAnchors &&
+            ((_warpTool.value && id in warpLayers) || (_perspTool.value && id in perspLayers))) return id
+        return warpTarget()
+    }
+
+    private fun deformerQuad(id: Int): FloatArray? {
+        val anchor = groupDeformationAnchors[id] ?: return scene?.selectionQuads?.get(id)
+        val world = scene?.groupWorlds?.get(id) ?: return null
+        val xs = floatArrayOf(anchor.x, anchor.x + anchor.width, anchor.x + anchor.width, anchor.x)
+        val ys = floatArrayOf(anchor.y, anchor.y, anchor.y + anchor.height, anchor.y + anchor.height)
+        return FloatArray(8) { i -> if (i % 2 == 0) world.applyX(xs[i / 2], ys[i / 2]) else world.applyY(xs[i / 2], ys[i / 2]) }
+    }
+
+    fun enableGroupWarp() = enableGroupDeformer(true)
+    fun enableGroupPerspective() = enableGroupDeformer(false)
+    private fun enableGroupDeformer(warp: Boolean) {
+        if (_playing.value) return
+        val id = selectedDeformerGroup() ?: return
+        if (isLockedId(id)) { lockedNotice(); return }
+        if (id !in groupDeformationAnchors) { _state.value = UiState.Message("Сначала подготовьте область группы"); return }
+        if (if (warp) id in warpLayers else id in perspLayers) return
+        val nextWarp = if (warp) warpLayers + id else warpLayers
+        val nextPersp = if (warp) perspLayers else perspLayers + id
+        if (runCatching { buildEditorScene(nextWarp, nextPersp) }.isFailure) {
+            _state.value = UiState.Message("Групповая деформация недоступна для этого содержимого или области")
+            return
+        }
+        checkpoint("group-deformation-enable", force = true)
+        warpLayers = nextWarp; perspLayers = nextPersp
+        pushScene(); markDirty()
     }
 
     /** Слой, к которому применяется Warp: один выделенный обычный слой (не группа, не кость). */
@@ -2903,15 +3465,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         markDirty()
     }
 
-    private fun warpsNow(): Map<Int, FloatArray> =
-        warpLayers.associateWith { WarpMath.offsets(it, _frame.value, base, _animation.value, _fx.value) }
-
     /** Убирает деформацию выделенного слоя: сетка, форма привязки и ключи точек удаляются. */
     fun resetWarp() {
-        val t = warpTarget() ?: return
+        val t = deformerTarget() ?: return
         if (t !in warpLayers) return
         checkpoint("warp-reset", force = true)
         warpLayers = warpLayers - t
+        warpGridSizes = warpGridSizes - t
+        denseWarps = denseWarps - t
         val ids = (0 until WarpMath.POINTS).map { WarpMath.pointId(t, it) }.toSet()
         for (id in ids) { base.remove(id); override.remove(id) }
         _animation.value = _animation.value.copy(tracks = _animation.value.tracks.filterKeys { it !in ids })
@@ -2930,56 +3491,140 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return ((px * fy - py * fx) / det) to ((ex * py - ey * px) / det)
     }
 
+    fun changeWarpGrid(horizontal: Boolean, delta: Int) {
+        if (_playing.value || delta !in listOf(-1, 1)) return
+        val id = deformerTarget() ?: return
+        if (id !in warpLayers || isLockedId(id)) return
+        val grid = denseWarps[id]
+        val old = warpGridSizes[id] ?: com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT
+        val currentW = grid?.width ?: old.width; val currentH = grid?.height ?: old.height
+        val nextW = currentW + if (horizontal) delta else 0
+        val nextH = currentH + if (horizontal) 0 else delta
+        if (nextW !in 2..33 || nextH !in 2..33) return
+        if (grid != null || nextW > 4 || nextH > 4) {
+            if (selectedDeformerGroup() != null || _fx.value) { _state.value = UiState.Message("Плотный Warp: только обычный слой и FX выкл"); return }
+            val ids = (0 until WarpMath.POINTS).map { WarpMath.pointId(id, it) }
+            if (ids.any { _animation.value.hasTrack(it) || it in override }) { _state.value = UiState.Message("Плотный Warp недоступен при ключах точек"); return }
+            if (nextW <= 4 && nextH <= 4) {
+                if (grid == null || grid.offsets.any { it != 0f }) { _state.value = UiState.Message("Сетка не изменена: форма или ключи несовместимы"); return }
+                val target = com.vibetoon.domain.anim.CubicWarpGrid.Size(nextW, nextH)
+                val converted = com.vibetoon.domain.anim.CubicWarpGrid.migrate(id, old, target, base, _animation.value)
+                if (converted == null) { _state.value = UiState.Message("Сетка не изменена: форма или ключи несовместимы"); return }
+                checkpoint("dense-warp-grid:$id", force = true)
+                base.clear(); base.putAll(converted.base); _animation.value = converted.animation
+                warpGridSizes = if (target == com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT) warpGridSizes - id else warpGridSizes + (id to target)
+                denseWarps = denseWarps - id
+            } else {
+                val proposed = if (grid == null) com.vibetoon.domain.anim.DenseWarpGrid.zero(nextW, nextH) else grid.resized(nextW, nextH)
+                if (proposed == null || !proposed.valid()) { _state.value = UiState.Message("Сетка не изменена: форма или ключи несовместимы"); return }
+                val candidate = denseWarps + (id to proposed)
+                if (runCatching { buildEditorScene(dense = candidate) }.isFailure) { _state.value = UiState.Message("Плотный Warp несовместим с содержимым слоя"); return }
+                checkpoint("dense-warp-grid:$id", force = true)
+                denseWarps = candidate
+            }
+            pushScene(); markDirty(); return
+        }
+        val target = if (horizontal) old.copy(width = old.width + delta) else old.copy(height = old.height + delta)
+        if (!target.valid()) return
+        val ids = (0 until WarpMath.POINTS).map { WarpMath.pointId(id, it) }
+        if (ids.any { it in override }) { _state.value = UiState.Message("Изменение сетки недоступно: есть временные правки точек"); return }
+        val converted = com.vibetoon.domain.anim.CubicWarpGrid.migrate(id, old, target, base, _animation.value)
+        if (converted == null) { _state.value = UiState.Message("Сетка не изменена: форма или ключи несовместимы"); return }
+        checkpoint("warp-grid:$id", force = true)
+        base.clear(); base.putAll(converted.base)
+        _animation.value = converted.animation
+        warpGridSizes = if (target == com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT) warpGridSizes - id else warpGridSizes + (id to target)
+        pushScene(); markDirty()
+    }
+
     private fun refreshWarpOverlay() {
-        val t = warpTarget()
+        val t = deformerTarget()
         if (!_warpTool.value || _boneMode.value || t == null || t !in warpLayers) {
             if (_warpOverlay.value.points.isNotEmpty()) _warpOverlay.value = WarpOverlay()
             return
         }
-        val q = scene?.selectionQuads?.get(t) ?: run { _warpOverlay.value = WarpOverlay(); return }
-        val off = WarpMath.offsets(t, _frame.value, base, _animation.value, _fx.value)
+        val q = deformerQuad(t) ?: run { _warpOverlay.value = WarpOverlay(); return }
+        val grid = denseWarps[t]
+        if (grid != null) {
+            val cubic = com.vibetoon.domain.anim.CubicWarpGrid.cubic(t, warpGridSizes[t] ?: com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT, _frame.value, base, _animation.value, _fx.value)
+            val ex = q[2] - q[0]; val ey = q[3] - q[1]; val fx = q[6] - q[0]; val fy = q[7] - q[1]
+            val pts = FloatArray(grid.width * grid.height * 2)
+            for (k in 0 until grid.width * grid.height) {
+                val u = (k % grid.width).toFloat() / (grid.width - 1); val v = (k / grid.width).toFloat() / (grid.height - 1)
+                val b = com.vibetoon.domain.anim.WarpGridMath.evaluate(cubic, 4, u, v) ?: return
+                val x = u + b.first + grid.offsets[k * 2]; val y = v + b.second + grid.offsets[k * 2 + 1]
+                pts[k * 2] = toScreenX(q[0] + x * ex + y * fx); pts[k * 2 + 1] = toScreenY(q[1] + x * ey + y * fy)
+            }
+            _warpOverlay.value = WarpOverlay(pts.toList(), grid.width, grid.height); return
+        }
+        val size = warpGridSizes[t] ?: com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT
+        val off = com.vibetoon.domain.anim.CubicWarpGrid.raw(t, size, _frame.value, base, _animation.value, _fx.value)
         val ex = q[2] - q[0]; val ey = q[3] - q[1]
         val fx = q[6] - q[0]; val fy = q[7] - q[1]
-        val pts = FloatArray(WarpMath.POINTS * 2)
-        for (k in 0 until WarpMath.POINTS) {
-            val u = WarpMath.latticeX(k) + off[k * 2]
-            val v = WarpMath.latticeY(k) + off[k * 2 + 1]
+        val pts = FloatArray(size.width * size.height * 2)
+        for (k in 0 until size.width * size.height) {
+            val u = (k % size.width).toFloat() / (size.width - 1) + off[k * 2]
+            val v = (k / size.width).toFloat() / (size.height - 1) + off[k * 2 + 1]
             pts[k * 2] = toScreenX(q[0] + u * ex + v * fx)
             pts[k * 2 + 1] = toScreenY(q[1] + u * ey + v * fy)
         }
-        _warpOverlay.value = WarpOverlay(pts.toList())
+        _warpOverlay.value = WarpOverlay(pts.toList(), size.width, size.height)
     }
 
+    private var groupHandleCheckpointed = false
+
     private fun warpDown(sx: Float, sy: Float): Boolean {
-        val t = warpTarget() ?: return false
+        val t = deformerTarget() ?: return false
         if (t !in warpLayers || _playing.value) return false
         val p = _warpOverlay.value.points
-        if (p.size < WarpMath.POINTS * 2) return false
+        val width = _warpOverlay.value.width; val height = _warpOverlay.value.height
+        if (p.size < width * height * 2) return false
         var best = -1
         var bestD = 44f
-        for (k in 0 until WarpMath.POINTS) {
+        for (k in 0 until width * height) {
             val d = kotlin.math.hypot(sx - p[k * 2], sy - p[k * 2 + 1])
             if (d < bestD) { bestD = d; best = k }
         }
         if (best < 0) return false
+        groupHandleCheckpointed = false
         grab = 20 + best
         return true
     }
 
     private fun warpMove(sx: Float, sy: Float) {
         val k = grab - 20
-        val t = warpTarget() ?: return
-        val q = scene?.selectionQuads?.get(t) ?: return
+        val t = deformerTarget() ?: return
+        val q = deformerQuad(t) ?: return
         val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
-        val ox = (u - WarpMath.latticeX(k)).coerceIn(-1.5f, 1.5f)
-        val oy = (v - WarpMath.latticeY(k)).coerceIn(-1.5f, 1.5f)
-        checkpoint("warp$t-$k")
+        val grid = denseWarps[t]
+        if (grid != null) {
+            if (_fx.value) { _state.value = UiState.Message("Плотный Warp: только обычный слой и FX выкл"); return }
+            if (k !in 0 until grid.width * grid.height) return
+            val x = (k % grid.width).toFloat() / (grid.width - 1); val y = (k / grid.width).toFloat() / (grid.height - 1)
+            val cubic = com.vibetoon.domain.anim.CubicWarpGrid.cubic(t, warpGridSizes[t] ?: com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT, _frame.value, base, _animation.value, false)
+            val b = com.vibetoon.domain.anim.WarpGridMath.evaluate(cubic, 4, x, y) ?: return
+            val dx = (u - x - b.first).coerceIn(-1.5f, 1.5f); val dy = (v - y - b.second).coerceIn(-1.5f, 1.5f)
+            if (dx == grid.offsets[k * 2] && dy == grid.offsets[k * 2 + 1]) return
+            if (!groupHandleCheckpointed) { checkpoint("dense-warp:$t", force = true); groupHandleCheckpointed = true }
+            val offsets = grid.offsets.toMutableList(); offsets[k * 2] = dx; offsets[k * 2 + 1] = dy
+            denseWarps = denseWarps + (t to grid.copy(offsets = offsets.toList()))
+            pushScene(); markDirty(); return
+        }
+        val size = warpGridSizes[t] ?: com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT
+        if (k !in 0 until size.width * size.height) return
+        val ox = (u - (k % size.width).toFloat() / (size.width - 1)).coerceIn(-1.5f, 1.5f)
+        val oy = (v - (k / size.width).toFloat() / (size.height - 1)).coerceIn(-1.5f, 1.5f)
+        if (t in groupDeformationAnchors) {
+            if (!groupHandleCheckpointed) { checkpoint("group-warp:$t", force = true); groupHandleCheckpointed = true }
+        } else checkpoint("warp$t-$k")
         val id = WarpMath.pointId(t, k)
         if (!_fx.value) {
             base[id] = LayerTransform(dx = ox, dy = oy)   // FX выкл: базовая форма (Bind Pose), ключи не создаются
         } else {
             val bind = base[id]
             // FX вкл: смещение записывается ключом на текущем кадре (дельта относительно формы привязки)
+            if (t in groupDeformationAnchors && _frame.value > 0 && !_animation.value.hasTrack(id))
+                _animation.value = _animation.value.withKey(id, 0, LayerTransform())
             _animation.value = _animation.value.withKey(id, _frame.value, LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
         }
         pushScene()
@@ -2995,6 +3640,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** 4 угла слоя на экране (x, y в пикселях вида); пусто - инструмент не активен. */
     val perspOverlay: StateFlow<FloatArray> = _perspOverlay.asStateFlow()
     private val PERSP_GRAB = 30_000
+    private data class PerspSideDrag(val layer: Int, val frame: Int, val fx: Boolean, val quad: FloatArray,
+                                     val start: Pair<Float, Float>, val offsets: FloatArray, var checkpointed: Boolean = false)
+    private var perspSideDrag: PerspSideDrag? = null
 
     private fun perspNow(): Map<Int, FloatArray> = perspLayers.associateWith {
         PerspectiveMath.matrix(PerspectiveMath.offsets(it, _frame.value, base, _animation.value, _fx.value))
@@ -3028,7 +3676,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun resetPersp() {
-        val t = warpTarget() ?: return
+        val t = deformerTarget() ?: return
         if (t !in perspLayers) return
         checkpoint("persp-reset", force = true)
         perspLayers = perspLayers - t
@@ -3041,8 +3689,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun refreshPerspOverlay() {
-        val t = warpTarget()
-        val q = if (t != null) scene?.selectionQuads?.get(t) else null
+        val t = deformerTarget()
+        val q = if (t != null) deformerQuad(t) else null
         if (!_perspTool.value || _boneMode.value || t == null || t !in perspLayers || q == null) {
             if (_perspOverlay.value.isNotEmpty()) _perspOverlay.value = FloatArray(0)
             return
@@ -3057,22 +3705,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             pts[k * 2] = toScreenX(q[0] + u * ex + v * fx)
             pts[k * 2 + 1] = toScreenY(q[1] + u * ey + v * fy)
         }
-        _perspOverlay.value = pts
+        _perspOverlay.value = com.vibetoon.domain.anim.PerspectiveHandles.screenHandles(pts) ?: FloatArray(0)
     }
 
     private fun perspDown(sx: Float, sy: Float): Boolean {
         swallowTap = false
-        val t = warpTarget() ?: return false
+        val t = deformerTarget() ?: return false
         if (t !in perspLayers || _playing.value) return false
         val p = _perspOverlay.value
-        if (p.size < 8) return false
+        if (p.size < 16) return false
         var best = -1
         var bestD = 48f
-        for (k in 0 until 4) {
+        for (k in 0 until com.vibetoon.domain.anim.PerspectiveHandles.HANDLES) {
             val d = kotlin.math.hypot(sx - p[k * 2], sy - p[k * 2 + 1])
             if (d < bestD) { bestD = d; best = k }
         }
         if (best < 0) return false
+        perspSideDrag = if (best >= 4) {
+            val quad = deformerQuad(t)?.copyOf() ?: return false
+            val start = unitOf(quad, toCanvasX(sx), toCanvasY(sy)) ?: return false
+            PerspSideDrag(t, _frame.value, _fx.value, quad, start, PerspectiveMath.offsets(t, _frame.value, base, _animation.value, _fx.value))
+        } else null
+        groupHandleCheckpointed = false
         grab = PERSP_GRAB + best
         swallowTap = true
         return true
@@ -3080,17 +3734,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun perspMove(sx: Float, sy: Float) {
         val k = grab - PERSP_GRAB
-        val t = warpTarget() ?: return
-        val q = scene?.selectionQuads?.get(t) ?: return
+        val t = deformerTarget() ?: return
+        val q = deformerQuad(t) ?: return
         val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        if (k >= com.vibetoon.domain.anim.PerspectiveHandles.CORNERS) {
+            val drag = perspSideDrag ?: return
+            if (drag.layer != t || drag.frame != _frame.value || drag.fx != _fx.value || !drag.quad.contentEquals(q)) return
+            val moved = com.vibetoon.domain.anim.PerspectiveHandles.moveEdge(drag.offsets, k, u - drag.start.first, v - drag.start.second) ?: return
+            val (a, b) = com.vibetoon.domain.anim.PerspectiveHandles.edgeCorners(k) ?: return
+            val current = PerspectiveMath.offsets(t, _frame.value, base, _animation.value, _fx.value)
+            if (current.contentEquals(moved)) return
+            if (!drag.checkpointed) { checkpoint("persp-edge:$t:$k", force = true); drag.checkpointed = true }
+            for (corner in listOf(a, b)) {
+                val id = PerspectiveMath.pointId(t, corner)
+                val ox = moved[corner * 2]; val oy = moved[corner * 2 + 1]
+                if (!_fx.value) base[id] = LayerTransform(dx = ox, dy = oy)
+                else {
+                    val bind = base[id]
+                    // Первый ключ после нуля не должен менять исходную форму на предыдущих кадрах.
+                    if (_frame.value > 0 && !_animation.value.hasTrack(id))
+                        _animation.value = _animation.value.withKey(id, 0, LayerTransform())
+                    _animation.value = _animation.value.withKey(id, _frame.value,
+                        LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
+                }
+            }
+            pushScene(); markDirty()
+            return
+        }
         val ox = (u - PerspectiveMath.cornerX(k)).coerceIn(-1.5f, 1.5f)
         val oy = (v - PerspectiveMath.cornerY(k)).coerceIn(-1.5f, 1.5f)
-        checkpoint("persp$t-$k")
+        if (t in groupDeformationAnchors) {
+            if (!groupHandleCheckpointed) { checkpoint("group-persp:$t", force = true); groupHandleCheckpointed = true }
+        } else checkpoint("persp$t-$k")
         val id = PerspectiveMath.pointId(t, k)
         if (!_fx.value) {
             base[id] = LayerTransform(dx = ox, dy = oy)
         } else {
             val bind = base[id]
+            if (t in groupDeformationAnchors && _frame.value > 0 && !_animation.value.hasTrack(id))
+                _animation.value = _animation.value.withKey(id, 0, LayerTransform())
             _animation.value = _animation.value.withKey(id, _frame.value, LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
         }
         pushScene()
@@ -3291,9 +3973,88 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Круг кисти под пальцем: x, y, радиус в пикселях экрана (null - нет касания). */
     val paintCursor: StateFlow<FloatArray?> = _paintCursor.asStateFlow()
 
+    private val _gradientMode = MutableStateFlow(false)
+    val gradientMode = _gradientMode.asStateFlow()
+    private val _gradientAlpha = MutableStateFlow(false)
+    val gradientAlpha = _gradientAlpha.asStateFlow()
+    fun toggleGradient() {
+        if (stroker != null) paintCancel()
+        _gradientMode.value = !_gradientMode.value
+        if (_gradientMode.value) _rulerMode.value = com.vibetoon.domain.paint.RulerPath.Mode.OFF
+    }
+    fun toggleGradientAlpha() { if (stroker != null) paintCancel(); _gradientAlpha.value = !_gradientAlpha.value }
+
+    private val _rulerMode = MutableStateFlow(com.vibetoon.domain.paint.RulerPath.Mode.OFF)
+    val rulerMode = _rulerMode.asStateFlow()
+    private val _rulerGuide = MutableStateFlow<List<Float>>(emptyList())
+    val rulerGuide = _rulerGuide.asStateFlow()
+    private var rulerQuad: FloatArray? = null
+    private var rulerCamera: Camera? = null
+    private var rulerViewW = 0f
+    private var rulerViewH = 0f
+    private var rulerParams: BrushParams? = null
+    private var rulerPressure = 1f
+
+    fun setRulerMode(mode: com.vibetoon.domain.paint.RulerPath.Mode) {
+        if (stroker != null) paintCancel()
+        _rulerMode.value = mode
+        if (mode != com.vibetoon.domain.paint.RulerPath.Mode.OFF) _gradientMode.value = false
+        _rulerGuide.value = emptyList()
+    }
+    private fun clearRulerGesture() { _rulerGuide.value = emptyList(); rulerQuad = null; rulerCamera = null; rulerParams = null }
+
     private var stroker: DabStroker? = null
     private var strokeLayer = -1
     private var strokeSize = intArrayOf(0, 0)
+    private var assistPoints: MutableList<com.vibetoon.domain.paint.ShapeAssist.Point>? = null
+    private var assistAnchorX = 0f
+    private var assistAnchorY = 0f
+    private var assistLastMove = 0L
+    private var assistQuad: FloatArray? = null
+    private var assistParams: BrushParams? = null
+    private var assistCamera: Camera? = null
+    private var assistViewW = 0f
+    private var assistViewH = 0f
+
+    private fun clearShapeAssist() { assistPoints = null; assistQuad = null; assistParams = null; assistCamera = null }
+    private fun recordShapePoint(sx: Float, sy: Float, pressure: Float) {
+        val points = assistPoints ?: return
+        val slop = 4f * getApplication<Application>().resources.displayMetrics.density
+        if (kotlin.math.hypot(sx - assistAnchorX, sy - assistAnchorY) >= slop) {
+            assistAnchorX = sx; assistAnchorY = sy; assistLastMove = SystemClock.uptimeMillis()
+        }
+        val last = points.last()
+        if (kotlin.math.hypot(sx - last.x, sy - last.y) < 1f) return
+        if (points.size >= com.vibetoon.domain.paint.ShapeAssist.MAX_POINTS) { clearShapeAssist(); return }
+        points.add(com.vibetoon.domain.paint.ShapeAssist.Point(sx, sy, pressure))
+    }
+
+    /** Заменяет ещё незавершённый растровый штрих до commit: в истории одна операция. */
+    private fun assistedLine(view: com.vibetoon.render.VtGLSurfaceView, layer: Int): DabStroker? {
+        val points = assistPoints ?: return null
+        val q = assistQuad ?: return null
+        val params = assistParams ?: return null
+        if (scene?.selectionQuads?.get(layer)?.contentEquals(q) != true || paintTargetId() != layer ||
+            camera != assistCamera || viewW != assistViewW || viewH != assistViewH) return null
+        val density = getApplication<Application>().resources.displayMetrics.density
+        val held = SystemClock.uptimeMillis() - assistLastMove
+        val path = com.vibetoon.domain.paint.ShapeAssist.line(points, held, density)
+            ?: com.vibetoon.domain.paint.ShapeAssist.closed(points, held, density)
+            ?: com.vibetoon.domain.paint.ShapeAssist.triangle(points, held, density) ?: return null
+        val ends = path.map { p ->
+            val u = unitOf(q, toCanvasX(p.x), toCanvasY(p.y)) ?: return null
+            Triple(u.first * strokeSize[0], u.second * strokeSize[1], p.pressure)
+        }
+        view.paintEnd(false) { }
+        val c = params.color
+        view.paintBegin(layer, params.mode.gl, params.opacity, layerProps[layer]?.alphaLock == true,
+            ((c shr 16) and 0xFF) / 255f, ((c shr 8) and 0xFF) / 255f, (c and 0xFF) / 255f, params.shape.gl, params.hardness,
+            params.grain.gl, params.grainMode.gl, params.grainScale, params.grainContrast, params.roundness, params.curve, GrainMath.texture(params.grain)) { }
+        val st = DabStroker(params)
+        sendDabs(st.begin(ends[0].first, ends[0].second, ends[0].third))
+        for (point in ends.drop(1)) sendDabs(st.add(point.first, point.second, point.third))
+        return st
+    }
     private val paintSizes = java.util.concurrent.ConcurrentHashMap<Int, IntArray>()
     private val paintDirty: MutableSet<Int> = java.util.Collections.synchronizedSet(HashSet<Int>())
     @Volatile private var stylusDown = false
@@ -3302,6 +4063,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setPaintTool(t: PaintTool?) {
         if (_paintTool.value == t) return
         if (stroker != null) paintCancel()
+        clearRulerGesture()
+        _gradientMode.value = false
         _paintTool.value = t
         if (t != null) {
             paintTargetId()?.let { requestPaintSize(it) }
@@ -3321,6 +4084,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Горячие клавиши физической клавиатуры. */
     fun onHotkey(a: com.vibetoon.domain.HotkeyAction) {
+        if (_selectionExtractBusy.value) return
         when (a) {
             com.vibetoon.domain.HotkeyAction.UNDO -> undo()
             com.vibetoon.domain.HotkeyAction.REDO -> redo()
@@ -3415,11 +4179,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _paintCursor.value = floatArrayOf(sx, sy, (params.size / 2f * scale).coerceAtLeast(2f))
     }
 
+    /** Наведение пера: только отображение контура, без создания штриха или изменения слоя. */
+    fun paintHover(sx: Float, sy: Float) {
+        if (stroker != null || vecLayer >= 0 || !paintToolActive()) return
+        val id = paintTargetId() ?: run { clearPaintHover(); return }
+        val size = paintSizes[id] ?: run { requestPaintSize(id); clearPaintHover(); return }
+        val q = scene?.selectionQuads?.get(id) ?: run { clearPaintHover(); return }
+        val unit = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: run { clearPaintHover(); return }
+        if (unit.first !in 0f..1f || unit.second !in 0f..1f) { clearPaintHover(); return }
+        val ex = toScreenX(q[2]) - toScreenX(q[0]); val ey = toScreenY(q[3]) - toScreenY(q[1])
+        val radius = com.vibetoon.domain.input.EditorInputPolicy.cursorRadius(paintParams().size, kotlin.math.hypot(ex, ey), size[0])
+        _paintCursor.value = floatArrayOf(sx, sy, radius)
+    }
+
+    fun clearPaintHover() { if (stroker == null && vecLayer < 0) _paintCursor.value = null }
+
     /** Начало штриха; false - рисовать нечем (нет подходящего слоя) и жест идёт обычным путём. */
     fun paintDown(sx: Float, sy: Float, pressure: Float): Boolean {
         swallowTap = false
         if (_paintTool.value == null || _playing.value) return false
         selectedVectorId()?.let { vid ->
+            if (_gradientMode.value || _rulerMode.value != com.vibetoon.domain.paint.RulerPath.Mode.OFF) {
+                _state.value = UiState.Message("Направляющие и градиент работают только на растровом слое"); return false
+            }
             if (isLockedId(vid)) { lockedNotice(); return false }
             if (_paintTool.value == PaintTool.ERASER) { _state.value = UiState.Message("На векторном слое ластика нет: «Убрать последнюю» удаляет примитив"); return false }
             return vectorDown(vid, sx, sy)
@@ -3433,21 +4215,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = UiState.Message("Слой готовится, повторите мазок")
             return false
         }
+        if (_gradientMode.value && (id in warpLayers || id in meshLayers || id in perspLayers || id in skinLayers || id in denseWarps ||
+                groupDeformationAnchors.keys.any { group -> (group in warpLayers || group in perspLayers) && id in symbolMembers(group) } ||
+                size[0].toLong() * size[1] > 4194304L)) {
+            _state.value = UiState.Message("Градиент недоступен для деформированного слоя или текстуры больше 4 Мп")
+            return false
+        }
         val q = scene?.selectionQuads?.get(id) ?: return false
         val view = RenderHost.view ?: return false
         val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return false
         val params = paintParams()
         strokeLayer = id
         strokeSize = size
+        clearShapeAssist()
+        clearRulerGesture()
+        if (_gradientMode.value || _rulerMode.value != com.vibetoon.domain.paint.RulerPath.Mode.OFF) {
+            rulerQuad = q.copyOf(); rulerCamera = camera; rulerViewW = viewW; rulerViewH = viewH
+            rulerParams = params; rulerPressure = pressure
+            _rulerGuide.value = listOf(sx, sy, sx, sy)
+        }
+        if (!_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF && _paintTool.value == PaintTool.BRUSH && getApplication<Application>()
+                .getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("shape_assist", false)) {
+            assistPoints = arrayListOf(com.vibetoon.domain.paint.ShapeAssist.Point(sx, sy, pressure))
+            assistAnchorX = sx; assistAnchorY = sy; assistLastMove = SystemClock.uptimeMillis()
+            assistQuad = q.copyOf(); assistParams = params; assistCamera = camera; assistViewW = viewW; assistViewH = viewH
+        }
         val st = DabStroker(params)
         stroker = st
         val c = params.color
         view.paintBegin(
-            id, params.mode.gl, params.opacity, layerProps[id]?.alphaLock == true,
+            id, if (_gradientMode.value) 0 else params.mode.gl, params.opacity, layerProps[id]?.alphaLock == true || (_gradientMode.value && _gradientAlpha.value),
             ((c shr 16) and 0xFF) / 255f, ((c shr 8) and 0xFF) / 255f, (c and 0xFF) / 255f, params.shape.gl, params.hardness,
             params.grain.gl, params.grainMode.gl, params.grainScale, params.grainContrast, params.roundness, params.curve, GrainMath.texture(params.grain)
         ) { }
-        sendDabs(st.begin(p.first * size[0], p.second * size[1], pressure))
+        if (!_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF)
+            sendDabs(st.begin(p.first * size[0], p.second * size[1], pressure))
         updatePaintCursor(sx, sy, q, params)
         swallowTap = true
         return true
@@ -3459,6 +4261,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val st = stroker ?: return
         val q = scene?.selectionQuads?.get(strokeLayer) ?: return
         val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        if (rulerQuad != null) {
+            val g = _rulerGuide.value
+            if (g.size == 4) _rulerGuide.value = listOf(g[0], g[1], sx, sy)
+            return
+        }
+        recordShapePoint(sx, sy, pressure)
         sendDabs(st.add(p.first * strokeSize[0], p.second * strokeSize[1], pressure))
         updatePaintCursor(sx, sy, q, paintParams())
     }
@@ -3466,10 +4274,62 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Конец штриха: слой запекается, "до" и "после" уходят в Undo (сжатие в фоне), слой помечается на сохранение. */
     fun paintUp() {
         if (vecLayer >= 0) { vectorUp(); return }
-        val st = stroker ?: return
+        val original = stroker ?: return
+        val layer = strokeLayer
+        val view = RenderHost.view
+        if (rulerQuad != null) {
+            val q = rulerQuad!!; val guide = _rulerGuide.value; val params = rulerParams
+            val valid = guide.size == 4 && params != null && view != null && paintTargetId() == layer &&
+                camera == rulerCamera && viewW == rulerViewW && viewH == rulerViewH && scene?.selectionQuads?.get(layer)?.contentEquals(q) == true
+            if (_gradientMode.value) {
+                if (!valid || guide.any { !it.isFinite() } || kotlin.math.hypot(guide[2] - guide[0], guide[3] - guide[1]) < 2f) { paintCancel(); return }
+                val screenQuad = FloatArray(8) { index -> if (index % 2 == 0) toScreenX(q[index]) else toScreenY(q[index]) }
+                val geometry = com.vibetoon.domain.paint.GradientGeometry.create(screenQuad, guide[0], guide[1], guide[2], guide[3])
+                    ?: run { paintCancel(); return }
+                clearRulerGesture(); clearShapeAssist(); stroker = null; _paintCursor.value = null
+                val cellAtStroke = cellShown[layer]
+                view!!.paintGradientEnd(layer, geometry) { bytes ->
+                    if (bytes == null) { viewModelScope.launch(Dispatchers.Main) { _state.value = UiState.Message("Не удалось применить градиент") }; return@paintGradientEnd }
+                    viewModelScope.launch(Dispatchers.Default) {
+                        val op = PaintOp.parse(layer, bytes) ?: return@launch
+                        op.cellFile = cellAtStroke
+                        withContext(Dispatchers.Main) { commitPaintOp(op) }
+                        op.compress()
+                        withContext(Dispatchers.Main) { enforcePaintBudget() }
+                    }
+                }
+                return
+            }
+            val path = if (valid) com.vibetoon.domain.paint.RulerPath.path(_rulerMode.value,
+                com.vibetoon.domain.paint.RulerPath.Point(guide[0], guide[1]), com.vibetoon.domain.paint.RulerPath.Point(guide[2], guide[3])) else null
+            val mapped = path?.map { point -> unitOf(q, toCanvasX(point.x), toCanvasY(point.y)) }
+            if (mapped == null || mapped.any { it == null }) {
+                paintCancel(); return
+            }
+            val st = DabStroker(params!!)
+            val first = mapped.first()!!
+            sendDabs(st.begin(first.first * strokeSize[0], first.second * strokeSize[1], rulerPressure))
+            for (point in mapped.drop(1)) {
+                val p = point!!; sendDabs(st.add(p.first * strokeSize[0], p.second * strokeSize[1], rulerPressure))
+            }
+            sendDabs(st.end())
+            clearRulerGesture(); clearShapeAssist(); stroker = null; _paintCursor.value = null
+            val cellAtStroke = cellShown[layer]
+            view!!.paintEndSoft(layer) { bytes ->
+                if (bytes != null) viewModelScope.launch(Dispatchers.Default) {
+                    val op = PaintOp.parse(layer, bytes) ?: return@launch
+                    op.cellFile = cellAtStroke
+                    withContext(Dispatchers.Main) { commitPaintOp(op) }
+                    op.compress()
+                    withContext(Dispatchers.Main) { enforcePaintBudget() }
+                }
+            }
+            return
+        }
+        val st = if (view != null) assistedLine(view, layer) ?: original else original
+        clearShapeAssist()
         stroker = null
         _paintCursor.value = null
-        val layer = strokeLayer
         val cellAtStroke = cellShown[layer]
         sendDabs(st.end())
         RenderHost.view?.paintEndSoft(layer) { bytes ->
@@ -3488,6 +4348,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (vecLayer >= 0) { vectorCancel(); return }
         if (stroker == null) return
         stroker = null
+        clearShapeAssist()
+        clearRulerGesture()
         _paintCursor.value = null
         RenderHost.view?.paintEnd(false) { }
     }
@@ -3501,14 +4363,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         markDirty()
     }
 
-    /** Лимит памяти Undo: самые старые штрихи вытесняются вместе со всеми записями под ними. */
+    /** Общий бюджет для патчей и полных снимков. Удаляем только непрерывные старые префиксы. */
     private fun enforcePaintBudget() {
-        val ops = undoStack.mapNotNull { it.paintOp } + redoStack.mapNotNull { it.paintOp }
-        val n = PaintBudget.overflow(ops.map { it.sizeBytes })
-        if (n == 0) return
-        for (i in 0 until n) ops[i].evict()
-        val lastEvicted = undoStack.indexOfLast { it.paintOp?.evicted == true }
-        repeat(lastEvicted + 1) { undoStack.removeFirstOrNull() }
+        fun bytes(s: Snapshot) = (s.paintOp?.sizeBytes ?: 0L) + (s.textureOp?.sizeBytes ?: 0L)
+        val trim = com.vibetoon.domain.paint.HistoryMemoryBudget.trim(undoStack.map(::bytes), redoStack.map(::bytes))
+        if (trim.undo == 0 && trim.redo == 0) return
+        repeat(trim.undo) { undoStack.removeFirst() }
+        repeat(trim.redo) { redoStack.removeFirst() }
         updateHistoryFlags()
         _state.value = UiState.Message("Память Undo для рисунка заполнена: старые штрихи больше не отменяются")
     }
@@ -3547,30 +4408,66 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return if (id < MEDIA_ID_BASE) projects.mediaFile(pid, "liq_$id.png") else null
     }
 
-    /** Сохраняет изменённые слои (PNG) из пикселей текстуры; вызывается при каждом автосохранении и при выходе из проекта. */
-    private suspend fun flushPaintSaves() {
-        val pid = projectId ?: return
-        val ids = synchronized(paintDirty) { val c = paintDirty.toList(); paintDirty.clear(); c }
-        if (ids.isEmpty()) return
-        val view = RenderHost.view ?: run { paintDirty.addAll(ids); return }
-        for (id in ids) {
-            val file = paintFile(pid, id) ?: continue
-            val bytes = kotlinx.coroutines.withTimeoutOrNull(4000) {
-                kotlinx.coroutines.suspendCancellableCoroutine<ByteArray?> { c ->
-                    view.layerPixels(id) { if (c.isActive) c.resumeWith(Result.success(it)) }
-                }
-            }
-            if (bytes == null || bytes.size <= 8) { paintDirty += id; continue }
-            withContext(Dispatchers.IO) { writeLayerPng(bytes, file) }
-        }
+    /** Остальные вызовы не должны освобождать paintDirty одновременно с saveNow. */
+    private suspend fun flushPaintSavesSafely(): Boolean = rasterTransactionGate.run {
+        if (rasterRecoveryRequired) false else flushPaintSaves()
     }
 
-    /** Пиксели текстуры (8 байт размера + RGBA premultiplied) -> PNG (ARGB без premultiply). */
+    /** Сохраняет изменённые слои (PNG) из пикселей текстуры; вызывается при каждом автосохранении и при выходе из проекта. */
+    private suspend fun flushPaintSaves(): Boolean {
+        val pid = projectId ?: return false
+        val ids = synchronized(paintDirty) { val c = paintDirty.toList(); paintDirty.clear(); c }
+        if (ids.isEmpty()) return true
+        val view = RenderHost.view ?: run { paintDirty.addAll(ids); return false }
+        var ok = true
+        try {
+            for (id in ids) {
+                val file = paintFile(pid, id)
+                val bytes = if (file == null) null else kotlinx.coroutines.withTimeoutOrNull(4000) {
+                    kotlinx.coroutines.suspendCancellableCoroutine<ByteArray?> { c ->
+                        view.layerPixels(id) { if (c.isActive) c.resumeWith(Result.success(it)) }
+                    }
+                }
+                if (file == null || bytes == null || bytes.size <= 8) {
+                    paintDirty += id; ok = false; continue
+                }
+                val original = media.firstOrNull { it.id == id }
+                val versioned = original != null && original.kind == MediaKind.IMAGE && original.cells.isEmpty() &&
+                    (id in versionedRasterIds || com.vibetoon.domain.raster.RasterVersionPolicy.isVersionPath(original.file))
+                if (versioned && original != null && !com.vibetoon.domain.raster.RasterVersionPolicy.matchesDimensions(bytes, original.srcWidth, original.srcHeight)) {
+                    paintDirty += id; ok = false; continue
+                }
+                val newPath = if (versioned) "assets/raster_${java.util.UUID.randomUUID()}.png" else null
+                val destination = if (newPath != null) projects.fileOf(pid, newPath) else file
+                val written = withContext(Dispatchers.IO) {
+                    try { writeLayerPng(bytes, destination); true }
+                    catch (t: Exception) { Log.e("VT/Project", "PNG save failed", t); false }
+                }
+                if (!written) { paintDirty += id; ok = false; continue }
+                if (newPath != null) {
+                    val index = media.indexOfFirst { it.id == id }
+                    if (projectId != pid || index < 0 || media[index] != original) {
+                        paintDirty += id; ok = false; continue
+                    }
+                    media[index] = media[index].copy(file = newPath)
+                    versionedRasterIds.add(id)
+                }
+            }
+        } catch (t: Throwable) {
+            // Повторно проверяем все снимки, если операция была прервана в середине.
+            paintDirty.addAll(ids)
+            throw t
+        }
+        return ok
+    }
+
+    /** Пиксели RGBA -> PNG: не уничтожаем исходный файл при ошибке кодирования. */
     private fun writeLayerPng(bytes: ByteArray, file: java.io.File) {
         fun i32(o: Int) = (bytes[o].toInt() and 0xFF) or ((bytes[o + 1].toInt() and 0xFF) shl 8) or
             ((bytes[o + 2].toInt() and 0xFF) shl 16) or ((bytes[o + 3].toInt() and 0xFF) shl 24)
+        require(bytes.size >= 8)
         val w = i32(0); val h = i32(4)
-        if (w <= 0 || h <= 0 || bytes.size < 8 + w * h * 4) return
+        require(w > 0 && h > 0 && w.toLong() * h * 4 + 8 <= bytes.size)
         val px = IntArray(w * h)
         for (k in 0 until w * h) {
             val o = 8 + k * 4
@@ -3580,8 +4477,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             px[k] = (a shl 24) or (r shl 16) or (g shl 8) or b
         }
         val bmp = android.graphics.Bitmap.createBitmap(px, w, h, android.graphics.Bitmap.Config.ARGB_8888)
-        runCatching { file.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
-        bmp.recycle()
+        val temp = java.io.File(file.parentFile, file.name + "." + java.util.UUID.randomUUID() + ".tmp")
+        try {
+            temp.outputStream().use { stream ->
+                check(bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)) { "PNG encoding failed" }
+                stream.fd.sync()
+            }
+            val info = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(temp.absolutePath, info)
+            check(info.outWidth == w && info.outHeight == h && info.outMimeType == "image/png") { "PNG verification failed" }
+            check(temp.renameTo(file)) { "PNG replacement failed" }
+        } finally { bmp.recycle(); temp.delete() }
     }
 
     // ---------------------------------------------------------------- свойства слоя (этап 3)
@@ -3611,17 +4517,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val bh = (canvasH * scale).toInt().coerceAtLeast(1)
         val id = nextMediaId()
         val count = media.count { it.name.startsWith("Рисунок") } + 1
+        val ticket = RenderNative.textureUploadTicket(id)
         viewModelScope.launch {
             try {
                 val item = withContext(decodeDispatcher) {
                     val bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
-                    val fileName = "m$id.png"
+                    val fileName = "m${id}_${java.util.UUID.randomUUID()}.png"
                     projects.mediaFile(pid, fileName).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-                    val ok = RenderNative.uploadBitmap(id, bmp)
+                    val ok = RenderNative.uploadBitmapIfCurrent(id, bmp, ticket)
                     bmp.recycle()
                     if (!ok) error("Не удалось создать слой в графике")
                     MediaItem(id, MediaKind.IMAGE, "Рисунок $count", "assets/$fileName", bw, bh, 0f, 0f, canvasW.toFloat(), canvasH.toFloat())
                 }
+                if (projectId != pid || closing) return@launch
                 checkpoint("add", force = true)
                 media += item
                 rebuildLayers()
@@ -3648,19 +4556,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val bh = (canvasH * scale).toInt().coerceAtLeast(1)
         val id = nextMediaId()
         val count = media.count { it.name.startsWith(prefix) } + 1
+        val ticket = RenderNative.textureUploadTicket(id)
         viewModelScope.launch {
             try {
                 val item = withContext(decodeDispatcher) {
                     val bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
                     if (fillArgb != 0) bmp.eraseColor(fillArgb)
-                    val fileName = "m$id.png"
+                    val fileName = "m${id}_${java.util.UUID.randomUUID()}.png"
                     projects.mediaFile(pid, fileName).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-                    val ok = RenderNative.uploadBitmap(id, bmp)
+                    val ok = RenderNative.uploadBitmapIfCurrent(id, bmp, ticket)
                     bmp.recycle()
                     if (!ok) error("Не удалось создать слой в графике")
                     MediaItem(id, MediaKind.IMAGE, "$prefix $count", "assets/$fileName", bw, bh, 0f, 0f, canvasW.toFloat(), canvasH.toFloat(),
                         cells = if (animated) listOf(FrameCell(0, "assets/$fileName")) else emptyList(), vector = vector, background = atBottom)
                 }
+                if (projectId != pid || closing) return@launch
                 checkpoint("add", force = true)
                 if (atBottom) media.add(0, item) else media += item
                 rebuildLayers(); pushScene(); selectLayer(item.id); markDirty()
@@ -3772,6 +4682,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun removeLastVector() {
         val id = selectedVectorId() ?: return
+        if (isLockedId(id)) { lockedNotice(); return }
         val m = media.firstOrNull { it.id == id } ?: return
         if (m.vectors.isEmpty()) return
         setVectors(id, com.vibetoon.domain.vector.VectorMath.withoutLast(m.vectors))
@@ -3779,6 +4690,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearVectors() {
         val id = selectedVectorId() ?: return
+        if (isLockedId(id)) { lockedNotice(); return }
         if (vectorCount(id) == 0) return
         setVectors(id, emptyList())
     }
@@ -3800,6 +4712,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         vecGen[m.id] = gen
         val shapes = if (extra != null) m.vectors + extra else m.vectors
         val cw = canvasW; val ch = canvasH
+        val ticket = RenderNative.textureUploadTicket(m.id)
         viewModelScope.launch {
             try {
                 withContext(decodeDispatcher) {
@@ -3807,7 +4720,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val bmp = com.vibetoon.data.VectorRaster.render(shapes, m.srcWidth, m.srcHeight, cw, ch)
                     if (vecGen[m.id] == gen) {
                         if (save) projects.mediaFile(pid, m.file.removePrefix("assets/")).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-                        RenderNative.uploadBitmap(m.id, bmp)
+                        RenderNative.uploadBitmapIfCurrent(m.id, bmp, ticket)
                     }
                     bmp.recycle()
                 }
@@ -3864,6 +4777,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val id = nextMediaId()
         val argb = argbOverride ?: brush.value.color.toInt()
         val side = (minOf(canvasW, canvasH) * 0.4f).coerceAtLeast(64f)
+        val ticket = RenderNative.textureUploadTicket(id)
         viewModelScope.launch {
             try {
                 val item = withContext(decodeDispatcher) {
@@ -3878,12 +4792,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val fileName = "m$id.png"
                     projects.mediaFile(pid, fileName).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-                    val ok = RenderNative.uploadBitmap(id, bmp)
+                    val ok = RenderNative.uploadBitmapIfCurrent(id, bmp, ticket)
                     bmp.recycle()
                     if (!ok) error("Не удалось создать фигуру в графике")
                     MediaItem(id, MediaKind.IMAGE, "Фигура: ${kind.title}", "assets/$fileName", n, n,
                         (canvasW - side) / 2f + dxOverride, (canvasH - side) / 2f, side, side)
                 }
+                if (projectId != pid || closing) return@launch
                 checkpoint("add", force = true)
                 media += item
                 rebuildLayers(); pushScene(); selectLayer(item.id); markDirty()
@@ -3920,7 +4835,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setFillParams(f: (FillParams) -> FillParams) { _fillParams.value = f(_fillParams.value) }
     fun setSmudgeParams(f: (SmudgeParams) -> SmudgeParams) { _smudgeParams.value = f(_smudgeParams.value) }
-    fun setSelMode(m: SelMode) { _selMode.value = m }
+    fun setSelMode(m: SelMode) { if (m != _selMode.value) cancelPendingLasso(); _selMode.value = m }
 
     fun rasterToolActive(): Boolean = _rasterTool.value != null && !_playing.value
 
@@ -4008,18 +4923,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun rasterMove(sx: Float, sy: Float) {
+        if (rasterMode == 5 && kotlin.math.hypot(sx - closeTapX, sy - closeTapY) > 12f * getApplication<Application>().resources.displayMetrics.density) closeTapMoved = true
         when (rasterMode) { 1 -> selDrawMove(sx, sy); 2 -> selMoveMove(sx, sy); 3 -> pxSmudgeMove(sx, sy); 4 -> vecNodeMove(sx, sy) }
     }
 
     fun rasterUp() {
-        when (rasterMode) { 1 -> selDrawUp(); 2 -> selMoveUp(); 3 -> pxSmudgeUp(); 4 -> vecNodeUp() }
+        when (rasterMode) { 1 -> selDrawUp(); 2 -> selMoveUp(); 3 -> pxSmudgeUp(); 4 -> vecNodeUp(); 5 -> if (!closeTapMoved) finishPendingLasso() }
         rasterMode = 0
     }
 
     /** Жест прерван вторым пальцем (камера). */
     fun rasterCancel() {
-        when (rasterMode) { 1 -> { _toolDrag.value = null; selPts.clear() }; 2 -> { selShiftX = 0f; selShiftY = 0f; refreshSelOverlay() }; 3 -> pxSmudgeUp() }
+        when (rasterMode) { 1 -> { _toolDrag.value = null; selPts.clear(); selLayerPts.clear() }; 2 -> { selShiftX = 0f; selShiftY = 0f; refreshSelOverlay() }; 3 -> pxSmudgeUp(); 4 -> vecNodeCancel() }
         rasterMode = 0
+        cancelPendingLasso()
     }
 
     // ---- заливка ----
@@ -4051,13 +4968,71 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val selPts = ArrayList<Float>()       // экранные точки лассо / рамки
     private val selLayerPts = ArrayList<Float>()  // те же точки в пикселях слоя
     private var selDragId = -1
+    private val _pendingLasso = MutableStateFlow(false)
+    val pendingLasso: StateFlow<Boolean> = _pendingLasso.asStateFlow()
+    private var pendingQuad: FloatArray? = null
+    private var pendingFrame = -1
+    private var closeTapX = 0f
+    private var closeTapY = 0f
+    private var closeTapMoved = false
+    private fun lassoRadius() = 24f * getApplication<Application>().resources.displayMetrics.density
+
+    /** Открытый контур — только черновик, предыдущая маска и проект не меняются. */
+    fun cancelPendingLasso() {
+        if (!_pendingLasso.value) return
+        _pendingLasso.value = false
+        pendingQuad = null
+        if (rasterMode == 1 || rasterMode == 5) rasterMode = 0
+        selPts.clear(); selLayerPts.clear()
+        _toolDrag.value = null
+    }
+
+    private fun pendingLassoValid(id: Int): Boolean = _pendingLasso.value && id == selDragId &&
+        _frame.value == pendingFrame && manualLassoClose() && _selMode.value == SelMode.LASSO &&
+        pendingQuad?.contentEquals(scene?.selectionQuads?.get(id)) == true
+
+    private fun finishPendingLasso() {
+        if (!pendingLassoValid(selDragId)) { cancelPendingLasso(); return }
+        val pts = selLayerPts.toFloatArray()
+        val id = selDragId
+        cancelPendingLasso()
+        if (pts.size >= 6) createSelectionMask(id, SelMode.LASSO, pts)
+    }
     private var selMoveStartL: Pair<Float, Float>? = null
     private var selMoveStartS = 0f to 0f
     private var selShiftX = 0f
     private var selShiftY = 0f
 
+    private fun manualLassoClose(): Boolean = getApplication<Application>()
+        .getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("manual_selection_close", false)
+
     private fun selDown(id: Int, sx: Float, sy: Float): Boolean {
         val lp0 = layerPoint(id, sx, sy) ?: return false
+        if (_pendingLasso.value) {
+            if (!pendingLassoValid(id)) cancelPendingLasso()
+            else {
+                when (com.vibetoon.domain.raster.LassoClosure.resume(selPts.toFloatArray(), sx, sy, lassoRadius())) {
+                    com.vibetoon.domain.raster.LassoClosure.Resume.CLOSE -> {
+                        rasterMode = 5; closeTapX = sx; closeTapY = sy; closeTapMoved = false
+                    }
+                    com.vibetoon.domain.raster.LassoClosure.Resume.CONTINUE -> { rasterMode = 1 }
+                    com.vibetoon.domain.raster.LassoClosure.Resume.MISS -> {
+                        rasterMode = 0
+                        _state.value = UiState.Message("Продолжите от конца контура или коснитесь начала; отмена — в панели инструмента")
+                    }
+                }
+                return true
+            }
+        }
+        val s = sel
+        if (s != null && s.id == id) {
+            val x = lp0.first.toInt(); val y = lp0.second.toInt()
+            if (x in 0 until s.w && y in 0 until s.h && s.mask[y * s.w + x].toInt() != 0) {
+                // тянем внутри выделения: переносим его содержимое
+                rasterMode = 2; selMoveStartL = lp0; selMoveStartS = sx to sy; lastMoveSx = sx; lastMoveSy = sy; selShiftX = 0f; selShiftY = 0f
+                return true
+            }
+        }
         if (_selMode.value == SelMode.WAND) {
             val thr = _fillParams.value.threshold
             viewModelScope.launch {
@@ -4068,15 +5043,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 setSelection(Sel(id, lp.w, lp.h, mask))
             }
             return true
-        }
-        val s = sel
-        if (s != null && s.id == id) {
-            val x = lp0.first.toInt(); val y = lp0.second.toInt()
-            if (x in 0 until s.w && y in 0 until s.h && s.mask[y * s.w + x].toInt() != 0) {
-                // тянем внутри выделения: переносим его содержимое
-                rasterMode = 2; selMoveStartL = lp0; selMoveStartS = sx to sy; selShiftX = 0f; selShiftY = 0f
-                return true
-            }
         }
         rasterMode = 1; selDragId = id
         selPts.clear(); selLayerPts.clear()
@@ -4094,9 +5060,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             SelMode.LASSO -> {
                 val n = selPts.size
-                if (kotlin.math.hypot(sx - selPts[n - 2], sy - selPts[n - 1]) >= 4f) {
+                if (n >= 2 && n < 20_000 && kotlin.math.hypot(sx - selPts[n - 2], sy - selPts[n - 1]) >= 4f) {
                     selPts += sx; selPts += sy; selLayerPts += lp.first; selLayerPts += lp.second
-                    _toolDrag.value = ToolDrag(2, selPts.toFloatArray())
+                    _toolDrag.value = ToolDrag(if (manualLassoClose()) 5 else 2, selPts.toFloatArray())
                 }
             }
             else -> {}
@@ -4108,11 +5074,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pts = selLayerPts.toFloatArray()
         val screen = selPts.toFloatArray()
         val mode = _selMode.value
-        selPts.clear(); selLayerPts.clear()
-        _toolDrag.value = null
         // касание без протяжки вне выделения снимает его
-        val moved = screen.size >= 4 && kotlin.math.hypot(screen[screen.size - 2] - screen[0], screen[screen.size - 1] - screen[1]) > 6f
-        if (!moved) { clearSelection(); return }
+        if (mode == SelMode.LASSO) {
+            when (com.vibetoon.domain.raster.LassoClosure.classify(screen, manualLassoClose(), lassoRadius())) {
+                com.vibetoon.domain.raster.LassoClosure.Result.TAP -> { clearSelection(); return }
+                com.vibetoon.domain.raster.LassoClosure.Result.OPEN -> {
+                    if (selPts.size >= 20_000) { cancelPendingLasso(); selPts.clear(); selLayerPts.clear(); _toolDrag.value = null; _state.value = UiState.Message("Контур слишком длинный; начните заново"); return }
+                    _pendingLasso.value = true
+                    pendingQuad = scene?.selectionQuads?.get(id)?.copyOf()
+                    pendingFrame = _frame.value
+                    _toolDrag.value = ToolDrag(5, screen)
+                    _state.value = UiState.Message("Продолжите от конца контура или коснитесь начала; отмена — в панели инструмента")
+                    return
+                }
+                com.vibetoon.domain.raster.LassoClosure.Result.CLOSE -> Unit
+            }
+        } else {
+            val moved = screen.size >= 4 && kotlin.math.hypot(screen[screen.size - 2] - screen[0], screen[screen.size - 1] - screen[1]) > 6f
+            if (!moved) { clearSelection(); return }
+        }
+        _pendingLasso.value = false; pendingQuad = null
+        selPts.clear(); selLayerPts.clear(); _toolDrag.value = null
+        createSelectionMask(id, mode, pts)
+    }
+
+    private fun createSelectionMask(id: Int, mode: SelMode, pts: FloatArray) {
         val size = paintSizes[id] ?: return
         viewModelScope.launch {
             val mask = withContext(Dispatchers.Default) {
@@ -4139,8 +5125,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val end = layerPoint(s.id, selMoveStartS.first + (lastMoveSx - selMoveStartS.first), selMoveStartS.second + (lastMoveSy - selMoveStartS.second)) ?: run { refreshSelOverlay(); return }
         val dx = Math.round(end.first - start.first); val dy = Math.round(end.second - start.second)
         if (dx == 0 && dy == 0) { refreshSelOverlay(); return }
+        val box = com.vibetoon.domain.raster.RasterMath.bounds(s.mask, s.w, s.h) ?: return
+        if (!com.vibetoon.domain.raster.RasterMath.moveFits(box, s.w, s.h, dx, dy)) {
+            refreshSelOverlay()
+            if (EXPANDED_MOVE_ENABLED) { moveSelectionExpanded(s, dx, dy); return }
+            val pid = projectId
+            val frame = _frame.value
+            viewModelScope.launch {
+                // Предпроверка не выделяет расширенный буфер и не меняет слой.
+                val plan = withContext(Dispatchers.Default) {
+                    val budget = com.vibetoon.data.RasterMemory.available(getApplication())
+                    com.vibetoon.domain.raster.ExpandedSelectionMove.plan(s.w, s.h, s.mask, dx, dy, budget)
+                }
+                if (projectId != pid || _frame.value != frame || sel !== s || paintTargetId() != s.id) return@launch
+                _state.value = UiState.Message(if (plan == null)
+                    "Перенос превышает безопасный предел размера или памяти; пиксели не изменены"
+                else "Перенос за границу слоя пока не поддерживается; пиксели не изменены")
+            }
+            return
+        }
+        // Независимый PNG проводим через ту же проверяемую транзакцию и внутри текстуры:
+        // иначе история и автосохранение могли опередить асинхронный GL-patch.
+        val moveSource = media.firstOrNull { it.id == s.id }
+        if (moveSource != null && moveSource.file.endsWith(".png", ignoreCase = true) && safeSelectionSource(moveSource, separating = false)) {
+            moveSelectionExpanded(s, dx, dy)
+            return
+        }
+        val pid = projectId
+        val frame = _frame.value
         viewModelScope.launch {
             val lp = readLayer(s.id) ?: return@launch
+            if (lp.w != s.w || lp.h != s.h) { refreshSelOverlay(); return@launch }
             val (res, shifted) = withContext(Dispatchers.Default) {
                 val r = com.vibetoon.domain.raster.RasterMath.moveResult(lp.bytes, 8, lp.w, lp.h, s.mask, dx, dy)
                 val m = ByteArray(s.mask.size)
@@ -4150,8 +5165,169 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 r to m
             }
+            if (projectId != pid || _frame.value != frame || sel !== s || paintTargetId() != s.id || _playing.value) return@launch
             if (res != null) commitRaster(s.id, res.rect, res.before, res.after)
             setSelection(Sel(s.id, s.w, s.h, shifted))
+        }
+    }
+
+    private data class SelectionGestureStart(val selection: Sel, val a: com.vibetoon.domain.raster.FreeSelectionTransform.Point,
+        val b: com.vibetoon.domain.raster.FreeSelectionTransform.Point, val quad: FloatArray, val camera: Camera, val frame: Int, val viewW: Float, val viewH: Float)
+    private var selectionGestureStart: SelectionGestureStart? = null
+    /** Starts only after the first finger landed inside the existing pixel mask. */
+    fun beginSelectionGesture(ax: Float, ay: Float, bx: Float, by: Float): Boolean {
+        if (rasterMode != 2 || _rasterTool.value != RasterTool.SELECT || _selectionExtractBusy.value) return false
+        val s = sel ?: return false
+        val src = media.firstOrNull { it.id == s.id } ?: return false
+        if (!src.file.endsWith(".png", ignoreCase = true) || !safeSelectionSource(src, separating = false)) return false
+        val a = layerPoint(s.id, ax, ay) ?: return false; val b = layerPoint(s.id, bx, by) ?: return false
+        if (kotlin.math.hypot(a.first - b.first, a.second - b.second) < 4f) return false
+        val q = scene?.selectionQuads?.get(s.id)?.copyOf() ?: return false
+        selectionGestureStart = SelectionGestureStart(s, com.vibetoon.domain.raster.FreeSelectionTransform.Point(a.first, a.second),
+            com.vibetoon.domain.raster.FreeSelectionTransform.Point(b.first, b.second), q, camera, _frame.value, viewW, viewH)
+        selShiftX = 0f; selShiftY = 0f; refreshSelOverlay(); rasterMode = 0
+        return true
+    }
+    fun endSelectionGesture(ax: Float, ay: Float, bx: Float, by: Float, cancel: Boolean) {
+        val start = selectionGestureStart ?: return
+        selectionGestureStart = null
+        val s = start.selection
+        if (cancel || sel !== s || camera != start.camera || _frame.value != start.frame || viewW != start.viewW || viewH != start.viewH ||
+            scene?.selectionQuads?.get(s.id)?.contentEquals(start.quad) != true) return
+        val a = layerPoint(s.id, ax, ay) ?: return; val b = layerPoint(s.id, bx, by) ?: return
+        val gesture = com.vibetoon.domain.raster.FreeSelectionTransform.Gesture(start.a, start.b,
+            com.vibetoon.domain.raster.FreeSelectionTransform.Point(a.first, a.second), com.vibetoon.domain.raster.FreeSelectionTransform.Point(b.first, b.second))
+        val matrix = com.vibetoon.domain.raster.FreeSelectionTransform.matrix(gesture)
+        if (matrix == null) { _state.value = UiState.Message("Жест выделения отменён: недопустимый масштаб"); return }
+        if (kotlin.math.abs(matrix.a - 1.0) < .001 && kotlin.math.abs(matrix.b) < .001 && kotlin.math.abs(matrix.tx) < .25 && kotlin.math.abs(matrix.ty) < .25) return
+        moveSelectionExpanded(s, 0, 0, gesture = gesture)
+    }
+
+    private val EXPANDED_MOVE_ENABLED = true
+
+    fun mirrorSelectedPixels(horizontal: Boolean) {
+        val selected = sel ?: return
+        moveSelectionExpanded(selected, 0, 0, if (horizontal) com.vibetoon.domain.raster.SelectionMirror.Operation.FLIP_X else com.vibetoon.domain.raster.SelectionMirror.Operation.FLIP_Y)
+    }
+    fun rotateSelectedPixels(clockwise: Boolean) {
+        val selected = sel ?: return
+        moveSelectionExpanded(selected, 0, 0, if (clockwise) com.vibetoon.domain.raster.SelectionMirror.Operation.ROTATE_CW else com.vibetoon.domain.raster.SelectionMirror.Operation.ROTATE_CCW)
+    }
+
+    fun scaleSelectedPixels(enlarge: Boolean) {
+        val selected = sel ?: return
+        moveSelectionExpanded(selected, 0, 0, if (enlarge) com.vibetoon.domain.raster.SelectionMirror.Operation.SCALE_DOUBLE else com.vibetoon.domain.raster.SelectionMirror.Operation.SCALE_HALF)
+    }
+
+    private fun moveSelectionExpanded(s: Sel, dx: Int, dy: Int, selectionOperation: com.vibetoon.domain.raster.SelectionMirror.Operation? = null,
+                                      gesture: com.vibetoon.domain.raster.FreeSelectionTransform.Gesture? = null) {
+        if (_selectionExtractBusy.value || _playing.value || _pendingLasso.value) return
+        val pid = projectId ?: return
+        val view = RenderHost.view ?: return
+        val frame = _frame.value
+        val src = media.firstOrNull { it.id == s.id }
+        val sourceTransform = base[s.id] ?: LayerTransform()
+        if (src == null || !src.file.endsWith(".png", ignoreCase = true) || !safeSelectionSource(src, separating = false) || _selected.value != s.id || _selection.value.size != 1) {
+            _state.value = UiState.Message(if (src != null && !src.file.endsWith(".png", ignoreCase = true))
+                "Для переноса за границы нужен PNG; GIF и другие форматы пока не поддерживаются"
+            else selectionSourceMessage(src, separating = false))
+            return
+        }
+        _selectionExtractBusy.value = true
+        viewModelScope.launch {
+            try {
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    rasterTransactionGate.run {
+                        val budget = com.vibetoon.data.RasterMemory.available(getApplication())
+                        val withinSize = selectionOperation != null || gesture != null || withContext(Dispatchers.Default) {
+                            com.vibetoon.domain.raster.ExpandedSelectionMove.plan(s.w, s.h, s.mask, dx, dy, Long.MAX_VALUE) != null
+                        }
+                        val plan = if (selectionOperation == null && gesture == null && withinSize) withContext(Dispatchers.Default) {
+                            com.vibetoon.domain.raster.ExpandedSelectionMove.plan(s.w, s.h, s.mask, dx, dy, budget)
+                        } else null
+                        // Компактный путь может поместиться и тогда, когда обычный план слишком затратен.
+                        // Перед чтением полной GL-текстуры оставляем запас на неё и полный Undo.
+                        if (plan == null && budget < s.w.toLong() * s.h * 9L + 8L * 1024 * 1024) {
+                            _state.value = UiState.Message("Недостаточно запаса памяти для переноса; пиксели не изменены")
+                            return@run
+                        }
+                        val lp = readLayer(s.id)
+                        if (lp == null) {
+                            _state.value = UiState.Message("Слой ещё не загружен, повторите"); return@run
+                        }
+                        if (lp.w != s.w || lp.h != s.h) return@run
+                        val change = try {
+                            withContext(Dispatchers.Default) {
+                                if (gesture != null) com.vibetoon.domain.raster.FreeSelectionTransform.prepare(src, lp.bytes, 8, lp.w, lp.h, s.mask, gesture, budget)
+                                else if (selectionOperation != null) com.vibetoon.domain.raster.SelectionMirror.prepare(src, lp.bytes, 8, lp.w, lp.h, s.mask, selectionOperation, budget)
+                                else if (plan != null) com.vibetoon.domain.raster.ExpandedLayerSnapshot.prepare(src, lp.bytes, 8, lp.w, lp.h, s.mask, dx, dy, budget)
+                                else com.vibetoon.domain.raster.ExpandedLayerSnapshot.prepareTrimmed(src, lp.bytes, 8, lp.w, lp.h, s.mask, dx, dy, budget)
+                            }
+                        } catch (_: OutOfMemoryError) { null }
+                        if (change == null) {
+                            Log.i("VT/Sel", "expanded move rejected: source=${s.w}x${s.h}, dx=$dx dy=$dy, cpuBudget=$budget, withinSize=$withinSize")
+                            _state.value = UiState.Message("Операция не выполнена: граница слоя, предел 2048 или недостаточно памяти; пиксели не изменены")
+                            return@run
+                        }
+                        val nextTransform = com.vibetoon.domain.raster.ExpandedTransform.compensate(change, sourceTransform)
+                        if (nextTransform == null) {
+                            _state.value = UiState.Message("Невозможно безопасно сохранить масштаб слоя; пиксели не изменены")
+                            return@run
+                        }
+                        if (projectId != pid || RenderHost.view !== view || _frame.value != frame || sel !== s ||
+                            _selected.value != s.id || _selection.value.size != 1 || _playing.value ||
+                            media.firstOrNull { it.id == s.id } != src || (base[s.id] ?: LayerTransform()) != sourceTransform || !safeSelectionSource(src, separating = false)) return@run
+                        val previous = snapshot()
+                        val undoBefore = undoStack.toList()
+                        val redoBefore = redoStack.toList()
+                        val history = com.vibetoon.domain.raster.ExpandedLayerHistory(change)
+                        var publishing = false
+                        val outcome = com.vibetoon.domain.raster.TextureTransaction.execute(
+                            replace = { replaceExpandedTexture(view, change.before, change.after) },
+                            publish = {
+                                check(projectId == pid && RenderHost.view === view && _frame.value == frame && sel === s && !_playing.value &&
+                                    media.firstOrNull { it.id == s.id } == src && (base[s.id] ?: LayerTransform()) == sourceTransform && safeSelectionSource(src, separating = false))
+                                publishing = true
+                                val index = media.indexOfFirst { it.id == s.id }
+                                media[index] = change.after.media
+                                if (nextTransform == LayerTransform()) base.remove(s.id) else base[s.id] = nextTransform
+                                versionedRasterIds.add(s.id)
+                                paintSizes[s.id] = intArrayOf(change.after.width, change.after.height)
+                                undoStack.addLast(previous.withTexture(history))
+                                if (undoStack.size > 50) undoStack.removeFirst()
+                                redoStack.clear(); lastCheckKey = null
+                                rebuildLayers(); pushScene()
+                                setSelection(Sel(s.id, change.after.width, change.after.height, change.selection))
+                                invalidateThumb(s.id); paintDirty += s.id
+                                markDirty(); updateHistoryFlags(); enforcePaintBudget()
+                            },
+                            rollback = {
+                                if (projectId != pid || RenderHost.view !== view || !replaceExpandedTexture(view, change.after, change.before)) false
+                                else {
+                                    if (publishing) {
+                                        undoStack.clear(); undoStack.addAll(undoBefore)
+                                        redoStack.clear(); redoStack.addAll(redoBefore)
+                                        paintSizes[s.id] = intArrayOf(s.w, s.h)
+                                        restore(previous); setSelection(s)
+                                        invalidateThumb(s.id); paintDirty += s.id; updateHistoryFlags()
+                                    }
+                                    true
+                                }
+                            }
+                        )
+                        when (outcome) {
+                            com.vibetoon.domain.raster.TextureTransaction.Outcome.COMMITTED -> Unit
+                            com.vibetoon.domain.raster.TextureTransaction.Outcome.REJECTED,
+                            com.vibetoon.domain.raster.TextureTransaction.Outcome.ROLLED_BACK ->
+                                _state.value = UiState.Message("Не удалось восстановить текстуру; история не изменена")
+                            com.vibetoon.domain.raster.TextureTransaction.Outcome.RECOVERY_REQUIRED -> {
+                                rasterRecoveryRequired = true
+                                _state.value = UiState.Error("Не удалось безопасно восстановить текстуру; сохранение приостановлено")
+                            }
+                        }
+                    }
+                }
+            } finally { if (!rasterRecoveryRequired) _selectionExtractBusy.value = false }
         }
     }
 
@@ -4203,7 +5379,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _selOverlay.value = SelOverlay(bmp, c)
     }
 
-    fun clearSelection() { sel = null; selBmp = null; _hasSel.value = false; _selOverlay.value = SelOverlay(); _toolDrag.value = null }
+    fun clearSelection() { cancelPendingLasso(); sel = null; selBmp = null; _hasSel.value = false; _selOverlay.value = SelOverlay(); _toolDrag.value = null }
 
     fun invertSelection() {
         val s = sel ?: return
@@ -4216,69 +5392,228 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** «Очистить»: содержимое под выделением становится прозрачным (в Undo одной записью). */
     fun clearSelectionContent() {
         val s = sel ?: return
+        if (_pendingLasso.value || _selectionExtractBusy.value || paintTargetId() != s.id) return
+        val pid = projectId
+        val frame = _frame.value
         viewModelScope.launch {
             val lp = readLayer(s.id) ?: return@launch
+            if (lp.w != s.w || lp.h != s.h) return@launch
             val res = withContext(Dispatchers.Default) { com.vibetoon.domain.raster.RasterMath.clearResult(lp.bytes, 8, lp.w, lp.h, s.mask) }
+            if (projectId != pid || _frame.value != frame || sel !== s || paintTargetId() != s.id) return@launch
             if (res == null) _state.value = UiState.Message("Под выделением пусто") else commitRaster(s.id, res.rect, res.before, res.after)
         }
     }
 
-    /**
-     * «В новый слой»: пиксели под выделением вырезаются из слоя и становятся новым слоем-картинкой того же размера прямо над исходным
-     * (рука, глаз и т.п. отделяются от общего рисунка для привязки к кости). Вырезание попадает в Undo исходного слоя.
-     */
-    fun selectionToNewLayer() {
-        val s = sel ?: return
+    private val _selectionExtractBusy = MutableStateFlow(false)
+    val selectionExtractBusy: StateFlow<Boolean> = _selectionExtractBusy.asStateFlow()
+
+    /** У переносов и отделения общий набор ограничений, но причина отказа показывается отдельно. */
+    private fun selectionSourceRejection(src: MediaItem, separating: Boolean = true): com.vibetoon.domain.raster.SelectionSourcePolicy.Reason? {
+        val id = src.id
+        val layer = layers.firstOrNull { it.id == id }
+        val facts = com.vibetoon.domain.raster.SelectionSourcePolicy.Facts(
+            raster = src.kind == MediaKind.IMAGE && !src.vector && !src.background && src.cells.isEmpty(),
+            rootAndVisible = if (separating) com.vibetoon.domain.raster.GroupSelectionPolicy.supports(
+                id, layers, media.filter { it.kind == MediaKind.GROUP }.mapTo(HashSet()) { it.id },
+                hiddenIds() + _clips.value.filterValues { !it.visibleAt(_frame.value) }.keys,
+                layerProps.filterValues { it.locked }.keys
+            ) else layer != null && layer.parentId == -1 && layer.isVisible && layerPropsOf(id).visible,
+            defaultProperties = layer != null && if (separating) layerPropsOf(id).copy(name = null) == LayerProps()
+                else com.vibetoon.domain.raster.SelectionSourcePolicy.moveSafeProperties(layerPropsOf(id)),
+            linked = id in _links.value || id in _links.value.values,
+            clip = id in _clips.value,
+            animated = id in _animation.value.tracks,
+            transformed = !com.vibetoon.domain.raster.SelectionSourcePolicy.copySafeStaticTransform(base[id] ?: LayerTransform()) ||
+                (override[id] ?: LayerTransform()) != LayerTransform(),
+            deformed = id in warpLayers || id in meshLayers || id in perspLayers || id in skinLayers || id in turbLayers || id in pinLayers,
+            effects = !fxLayers[id].isNullOrEmpty(),
+            sceneClipping = separating && layers.any { layerPropsOf(it.id).clip }
+        )
+        return com.vibetoon.domain.raster.SelectionSourcePolicy.rejection(facts)
+    }
+
+    private fun safeSelectionSource(src: MediaItem, separating: Boolean = true) = selectionSourceRejection(src, separating) == null
+
+    private fun selectionSourceMessage(src: MediaItem?, separating: Boolean = true): String {
+        if (src == null) return "Выберите растровый слой"
+        return when (selectionSourceRejection(src, separating)) {
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.UNSUPPORTED_TYPE -> "Этот тип слоя пока не поддерживается"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.GROUP_OR_VISIBILITY -> if (separating) "Слой и его группы должны быть видимы и разблокированы; группы PSD пока не поддерживаются" else "Слой должен быть видимым и находиться вне группы"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.PROPERTIES -> "Свойства слоя пока не поддерживаются для этой операции"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.LINKS -> "Связанные слои пока не поддерживаются"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.CLIP -> "Слой с изменённым клипом пока не поддерживается"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.ANIMATION -> "Слой с ключами анимации пока не поддерживается"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.TRANSFORM -> "Трансформация слоя пока не поддерживается"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.DEFORMER -> "Деформация слоя пока не поддерживается"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.EFFECTS -> "Эффекты слоя пока не поддерживаются"
+            com.vibetoon.domain.raster.SelectionSourcePolicy.Reason.CLIPPING_IN_SCENE -> "Обтравочные слои в проекте пока не поддерживаются"
+            null -> "Выберите один слой PNG"
+        }
+    }
+
+    /** Cut и Copy используют одну маску; PSD, анимация и деформеры блокируются до сквозной поддержки. */
+    fun selectionToNewLayer(partName: String) = extractSelection(cut = true, partName = partName)
+    fun copySelectionToNewLayer(partName: String) = extractSelection(cut = false, partName = partName)
+
+    private fun extractSelection(cut: Boolean, partName: String) {
+        if (_selectionExtractBusy.value) { _state.value = UiState.Message("Подождите завершения операции"); return }
+        if (_playing.value) { _state.value = UiState.Message("Остановите воспроизведение перед отделением"); return }
+        if (_pendingLasso.value) { _state.value = UiState.Message("Сначала замкните или отмените контур лассо"); return }
+        val s = sel ?: run { _state.value = UiState.Message("Сначала выделите область"); return }
         val pid = projectId ?: return
-        val srcIdx = media.indexOfFirst { it.id == s.id }
-        if (srcIdx < 0) { _state.value = UiState.Message("«В новый слой» работает на слое-картинке (не на слое PSD)"); return }
-        val src = media[srcIdx]
-        val newId = nextMediaId()
+        val renderView = RenderHost.view ?: run { _state.value = UiState.Message("Слой ещё не загружен, повторите"); return }
+        val frame = _frame.value
+        val sourceTransform = base[s.id] ?: LayerTransform()
+        val sourceParent = layers.firstOrNull { it.id == s.id }?.parentId ?: return
+        val sourceQuad = scene?.selectionQuads?.get(s.id)?.copyOf()
+        fun sourceUnchanged(): Boolean = layers.firstOrNull { it.id == s.id }?.parentId == sourceParent &&
+            sourceQuad != null && sourceQuad.contentEquals(scene?.selectionQuads?.get(s.id))
+        val src = media.firstOrNull { it.id == s.id }
+        if (src == null || !src.file.endsWith(".png", ignoreCase = true) || !safeSelectionSource(src) || _selected.value != s.id || _selection.value.size != 1) {
+            _state.value = UiState.Message(if (src != null && !src.file.endsWith(".png", ignoreCase = true))
+                "Для отделения нужен PNG; GIF и другие форматы пока не поддерживаются" else selectionSourceMessage(src)); return
+        }
+        _selectionExtractBusy.value = true
+        val fileName = "selection_${java.util.UUID.randomUUID()}.png"
         viewModelScope.launch {
-            val lp = readLayer(s.id) ?: return@launch
-            val parts = withContext(Dispatchers.Default) {
-                val b = com.vibetoon.domain.raster.RasterMath.bounds(s.mask, s.w, s.h) ?: return@withContext null
-                val px = IntArray(s.w * s.h)
-                var any = false
-                for (k in 0 until s.w * s.h) {
-                    if (s.mask[k].toInt() == 0) continue
-                    val o = 8 + k * 4
-                    val a = lp.bytes[o + 3].toInt() and 0xFF
-                    if (a == 0) continue
-                    any = true
-                    var r = lp.bytes[o].toInt() and 0xFF; var g = lp.bytes[o + 1].toInt() and 0xFF; var bl = lp.bytes[o + 2].toInt() and 0xFF
-                    if (a < 255) { r = minOf(255, r * 255 / a); g = minOf(255, g * 255 / a); bl = minOf(255, bl * 255 / a) }
-                    px[k] = (a shl 24) or (r shl 16) or (g shl 8) or bl
-                }
-                if (!any) null else Triple(px, b, com.vibetoon.domain.raster.RasterMath.clearResult(lp.bytes, 8, lp.w, lp.h, s.mask))
-            }
-            if (parts == null) { _state.value = UiState.Message("Под выделением пусто"); return@launch }
-            val (px, _, cut) = parts
+            var bitmap: android.graphics.Bitmap? = null
+            var committed = false
             try {
-                val item = withContext(decodeDispatcher) {
-                    val bmp = android.graphics.Bitmap.createBitmap(px, s.w, s.h, android.graphics.Bitmap.Config.ARGB_8888)
-                    val fileName = "m$newId.png"
-                    projects.mediaFile(pid, fileName).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-                    val ok = RenderNative.uploadBitmap(newId, bmp)
-                    bmp.recycle()
-                    if (!ok) error("Не удалось создать слой в графике")
-                    val n = media.count { it.name.startsWith("Часть") } + 1
-                    MediaItem(newId, MediaKind.IMAGE, "Часть $n", "assets/$fileName", s.w, s.h, src.x, src.y, src.w, src.h)
+                rasterTransactionGate.run extraction@{
+                val budget = com.vibetoon.data.RasterMemory.available(getApplication())
+                val estimate = s.w.toLong() * s.h * 25L + 8L * 1024 * 1024
+                if (estimate > budget) { _state.value = UiState.Message("Недостаточно запаса памяти для отделения; пиксели не изменены"); return@extraction }
+                val lp = readLayer(s.id) ?: error("Не удалось прочитать пиксели слоя")
+                if (lp.w != s.w || lp.h != s.h) error("Размер слоя изменился: выделите область заново")
+                val part = withContext(Dispatchers.Default) {
+                    com.vibetoon.domain.raster.SelectionExtract.extract(lp.bytes, 8, lp.w, lp.h, s.mask)
+                } ?: run { _state.value = UiState.Message("Под выделением пусто или слой слишком велик"); return@extraction }
+                bitmap = withContext(decodeDispatcher) {
+                    val bmp = android.graphics.Bitmap.createBitmap(part.argb, s.w, s.h, android.graphics.Bitmap.Config.ARGB_8888)
+                    try {
+                        projects.mediaFile(pid, fileName).outputStream().use {
+                            check(bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) { "Не удалось сохранить выделение" }
+                        }
+                        bmp
+                    } catch (t: Throwable) { bmp.recycle(); throw t }
                 }
-                checkpoint("add", force = true)
-                media.add((media.indexOfFirst { it.id == s.id } + 1).coerceAtMost(media.size), item)
-                rebuildLayers(); pushScene()
-                if (cut != null) commitRaster(s.id, cut.rect, cut.before, cut.after)
-                clearSelection()
-                selectLayer(newId)
-                contentBoxScheduled(newId)
-                markDirty()
-                delay(400)
-                requestPaintSize(newId)
-                _state.value = UiState.Message("Выделение вынесено в слой «${item.name}»: теперь его можно привязать к кости")
-            } catch (t: Throwable) {
-                Log.e("VT/Sel", "to new layer failed", t)
+                if (projectId != pid || RenderHost.view !== renderView || sel !== s || _selected.value != s.id || _playing.value || _frame.value != frame ||
+                    media.firstOrNull { it.id == s.id } != src || (base[s.id] ?: LayerTransform()) != sourceTransform || !sourceUnchanged() || !safeSelectionSource(src)) {
+                    _state.value = UiState.Message("Слой изменился: повторите операцию"); return@extraction
+                }
+                val newId = nextMediaId()
+                // JNI копирует большой bitmap и ждёт mutex очереди: это нельзя делать на UI-потоке.
+                val uploaded = withContext(decodeDispatcher) {
+                    val ticket = RenderNative.textureUploadTicket(newId)
+                    RenderNative.uploadBitmapIfCurrent(newId, bitmap ?: error("Не удалось создать изображение"), ticket)
+                }
+                if (!uploaded) error("Не удалось создать слой в графике")
+                val uploadedSize = kotlinx.coroutines.withTimeoutOrNull(4000) {
+                    kotlinx.coroutines.suspendCancellableCoroutine<IntArray?> { c ->
+                        renderView.layerSizeAfterFrame(newId) { if (c.isActive) c.resumeWith(Result.success(it)) }
+                    }
+                }
+                if (uploadedSize == null || uploadedSize.size < 2 || uploadedSize[0] != s.w || uploadedSize[1] != s.h) {
+                    _state.value = UiState.Message("Не удалось загрузить новый слой; пиксели не изменены")
+                    return@extraction
+                }
+                if (projectId != pid || RenderHost.view !== renderView || sel !== s || _selected.value != s.id || _playing.value || _frame.value != frame ||
+                    media.firstOrNull { it.id == s.id } != src || (base[s.id] ?: LayerTransform()) != sourceTransform || !sourceUnchanged() || !safeSelectionSource(src)) {
+                    _state.value = UiState.Message("Слой изменился: повторите операцию"); return@extraction
+                }
+                val item = MediaItem(newId, MediaKind.IMAGE, "${src.name} — $partName", "assets/$fileName", s.w, s.h, src.x, src.y, src.w, src.h)
+                var previous: Snapshot? = null
+                var undoBefore: List<Snapshot> = emptyList(); var redoBefore: List<Snapshot> = emptyList()
+                val change = part.cut
+                // Полные снимки позволяют Undo/Redo ждать подтверждённую замену GL до публикации дерева.
+                val history = if (cut) withContext(Dispatchers.Default) {
+                    val before = lp.bytes.copyOfRange(8, 8 + s.w * s.h * 4)
+                    val after = before.copyOf()
+                    for (y in 0 until change.rect.h) System.arraycopy(change.after, y * change.rect.w * 4, after,
+                        ((change.rect.y + y) * s.w + change.rect.x) * 4, change.rect.w * 4)
+                    com.vibetoon.domain.raster.ExpandedLayerHistory(com.vibetoon.domain.raster.ExpandedLayerSnapshot.Change(
+                        com.vibetoon.domain.raster.ExpandedLayerSnapshot.State(src, s.w, s.h, before),
+                        com.vibetoon.domain.raster.ExpandedLayerSnapshot.State(src, s.w, s.h, after), ByteArray(0)))
+                } else null
+                var published = false
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    suspend fun patch(data: ByteArray): Boolean? {
+                        val reply = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                        val req = renderView.paintRestoreChecked(s.id, change.rect.x, change.rect.y, change.rect.w, change.rect.h, data) { reply.complete(it) }
+                        val first = kotlinx.coroutines.withTimeoutOrNull(4000) { reply.await() }
+                        if (first == null && req.cancelIfQueued()) return null
+                        return first ?: reply.await()
+                    }
+                    val outcome = com.vibetoon.domain.raster.TextureTransaction.execute(
+                        replace = {
+                            if (!cut) true else when (patch(change.after)) {
+                                true -> true
+                                null -> false // отменено до начала GL
+                                false -> {
+                                    // GL мог изменить часть текстуры до ошибки: сначала восстанавливаем её.
+                                    if (patch(change.before) == true) false else error("GL rollback failed")
+                                }
+                            }
+                        },
+                        publish = {
+                            check(projectId == pid && RenderHost.view === renderView && sel === s && _frame.value == frame &&
+                                media.firstOrNull { it.id == s.id } == src && (base[s.id] ?: LayerTransform()) == sourceTransform && sourceUnchanged() && safeSelectionSource(src))
+                            previous = snapshot()
+                            undoBefore = undoStack.toList(); redoBefore = redoStack.toList()
+                            published = true
+                            checkpoint("extract-selection", force = true)
+                            if (history != null) {
+                                val saved = undoStack.removeLast()
+                                undoStack.addLast(saved.withTexture(history))
+                                invalidateThumb(s.id); paintDirty += s.id
+                                // PNG источника версионируется до публикации нового дерева в JSON.
+                                versionedRasterIds.add(s.id)
+                            }
+                            media.add(media.indexOfFirst { it.id == s.id } + 1, item)
+                            if (sourceParent != -1) regroup = regroup.filter { it.first != newId } + (newId to sourceParent)
+                            if (sourceTransform != LayerTransform()) base[newId] = sourceTransform
+                            rebuildLayers(); pushScene()
+                            clearSelection(); selectLayer(newId)
+                            contentBoxScheduled(newId); markDirty(); RenderHost.view?.requestRender()
+                        },
+                        rollback = {
+                            if (projectId != pid || RenderHost.view !== renderView || (cut && patch(change.before) != true)) false
+                            else {
+                                if (published) {
+                                    undoStack.clear(); undoStack.addAll(undoBefore)
+                                    redoStack.clear(); redoStack.addAll(redoBefore)
+                                    restore(checkNotNull(previous)); setSelection(s)
+                                    if (cut) { invalidateThumb(s.id); paintDirty += s.id }
+                                    updateHistoryFlags()
+                                }
+                                true
+                            }
+                        }
+                    )
+                    when (outcome) {
+                        com.vibetoon.domain.raster.TextureTransaction.Outcome.COMMITTED -> {
+                            committed = true
+                            if (history != null) enforcePaintBudget()
+                            _state.value = UiState.Message(if (cut) "Выделение вырезано в новый слой" else "Выделение скопировано в новый слой")
+                        }
+                        com.vibetoon.domain.raster.TextureTransaction.Outcome.REJECTED,
+                        com.vibetoon.domain.raster.TextureTransaction.Outcome.ROLLED_BACK ->
+                            _state.value = UiState.Message("Не удалось отделить выделение; пиксели не изменены")
+                        com.vibetoon.domain.raster.TextureTransaction.Outcome.RECOVERY_REQUIRED -> {
+                            rasterRecoveryRequired = true
+                            _state.value = UiState.Error("Не удалось безопасно восстановить текстуру; сохранение приостановлено")
+                        }
+                    }
+                }
+                }
+            } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+            catch (t: Throwable) {
+                Log.e("VT/Sel", "extract selection failed", t)
                 _state.value = UiState.Error(t.message ?: "Не удалось создать слой")
+            } finally {
+                bitmap?.recycle()
+                if (!committed) runCatching { projects.mediaFile(pid, fileName).delete() }
+                if (!rasterRecoveryRequired) _selectionExtractBusy.value = false
             }
         }
     }
@@ -4359,6 +5694,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var nodeShape = -1
     private var nodePt = -1
     private var nodeSelId = -1
+    private var nodeOriginal: MediaItem? = null
+    private var nodeDraft: List<com.vibetoon.domain.vector.VectorShape>? = null
+    private var nodeSelectionSnapshot: List<com.vibetoon.domain.vector.VectorShape>? = null
 
     private fun canvasToScreen(q: FloatArray, x: Float, y: Float): Pair<Float, Float> {
         val u = x / canvasW; val v = y / canvasH
@@ -4382,7 +5720,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val hit = vecNodeAt(id, sx, sy)
         if (hit == null) { nodeShape = -1; nodePt = -1; refreshPenOverlay(); return false }
         nodeShape = hit.first; nodePt = hit.second; nodeSelId = id
-        checkpoint("vecnode", force = true)
+        nodeOriginal = media.firstOrNull { it.id == id } ?: return false
+        nodeDraft = nodeOriginal!!.vectors
+        nodeSelectionSnapshot = nodeOriginal!!.vectors.toList()
         rasterMode = 4
         swallowTap = true
         refreshPenOverlay()
@@ -4390,32 +5730,62 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun vecNodeMove(sx: Float, sy: Float) {
-        val id = nodeSelId
-        val i = media.indexOfFirst { it.id == id }
-        if (i < 0 || nodeShape < 0) return
-        val q = scene?.selectionQuads?.get(id) ?: return
+        val original = nodeOriginal ?: return
+        if (selectedVectorId() != original.id || isLockedId(original.id) || media.firstOrNull { it.id == original.id } != original) return
+        val draft = nodeDraft ?: return
+        val shape = draft.getOrNull(nodeShape) ?: return
+        if (nodePt !in 0 until shape.pts.size / 2) return
+        val q = scene?.selectionQuads?.get(original.id) ?: return
         val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
-        val m = media[i]
-        val s = m.vectors.getOrNull(nodeShape) ?: return
-        val pts = s.pts.toMutableList()
-        pts[nodePt * 2] = p.first * canvasW; pts[nodePt * 2 + 1] = p.second * canvasH
-        media[i] = m.copy(vectors = m.vectors.toMutableList().also { it[nodeShape] = s.copy(pts = pts) })
+        nodeDraft = com.vibetoon.domain.vector.VectorMath.moveNode(draft, nodeShape, nodePt, p.first * canvasW, p.second * canvasH) ?: return
         refreshPenOverlay()
         val now = SystemClock.uptimeMillis()
-        if (now - vecPreviewAt >= 70) { vecPreviewAt = now; renderVector(media[i], save = false) }
+        if (now - vecPreviewAt >= 70) { vecPreviewAt = now; renderVector(original.copy(vectors = nodeDraft!!), save = false) }
+    }
+
+    private fun vecNodeCancel() {
+        val id = nodeOriginal?.id
+        nodeOriginal = null; nodeDraft = null
+        if (id != null) media.firstOrNull { it.id == id }?.let { renderVector(it, save = false) }
+        refreshPenOverlay()
     }
 
     private fun vecNodeUp() {
-        val i = media.indexOfFirst { it.id == nodeSelId }
-        if (i >= 0) { renderVector(media[i], save = true); invalidateThumb(nodeSelId); markDirty() }
+        val original = nodeOriginal ?: return
+        val draft = nodeDraft
+        nodeOriginal = null; nodeDraft = null
+        val current = media.firstOrNull { it.id == original.id }
+        if (draft != null && draft != original.vectors && current == original && selectedVectorId() == original.id && !isLockedId(original.id)) {
+            setVectors(original.id, draft)
+            nodeSelectionSnapshot = draft.toList()
+        } else current?.let { renderVector(it, save = false) }
         refreshPenOverlay()
+    }
+
+    private fun canEditSelectedVectorNode(): Boolean {
+        val item = media.firstOrNull { it.id == nodeSelId } ?: return false
+        return selectedVectorId() == nodeSelId && !isLockedId(nodeSelId) &&
+            com.vibetoon.domain.vector.VectorMath.selectionStillValid(nodeSelectionSnapshot, item.vectors, nodeShape, nodePt)
+    }
+
+    fun restyleSelectedVector() {
+        if (!canEditSelectedVectorNode()) { _state.value = UiState.Message("Сначала коснитесь узла выбранного незаблокированного слоя"); return }
+        val item = media.firstOrNull { it.id == nodeSelId } ?: return
+        val shape = item.vectors.getOrNull(nodeShape) ?: return
+        val updated = com.vibetoon.domain.vector.VectorMath.restyle(shape, vecStroke(), brush.value.size) ?: return
+        if (shape == updated) return
+        val result = item.vectors.toMutableList().also { it[nodeShape] = updated }
+        setVectors(nodeSelId, result)
+        nodeSelectionSnapshot = result.toList()
+        _state.value = UiState.Message("Цвет и толщина контура обновлены")
     }
 
     /** Удаляет выбранный узел примитива (пока остаётся минимум точек); у линии, рамки и эллипса узел удалить нельзя - удаляется весь примитив. */
     fun deleteVectorNode() {
         val i = media.indexOfFirst { it.id == nodeSelId }
-        if (i < 0 || nodeShape < 0) { _state.value = UiState.Message("Сначала коснитесь узла примитива"); return }
+        if (i < 0 || !canEditSelectedVectorNode()) { _state.value = UiState.Message("Сначала коснитесь узла выбранного незаблокированного слоя"); return }
         val s = media[i].vectors.getOrNull(nodeShape) ?: return
+        if (nodePt !in 0 until s.pts.size / 2) { _state.value = UiState.Message("Сначала коснитесь узла примитива"); return }
         val canDrop = (s.kind == com.vibetoon.domain.vector.VecKind.PATH || s.kind == com.vibetoon.domain.vector.VecKind.POLY || s.kind == com.vibetoon.domain.vector.VecKind.POLYGON) &&
             s.pts.size / 2 > (if (s.kind == com.vibetoon.domain.vector.VecKind.POLYGON) 3 else 2)
         if (!canDrop) { deleteVectorShape(); return }
@@ -4427,7 +5797,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteVectorShape() {
         val i = media.indexOfFirst { it.id == nodeSelId }
-        if (i < 0 || nodeShape < 0) { _state.value = UiState.Message("Сначала коснитесь узла примитива"); return }
+        if (i < 0 || !canEditSelectedVectorNode()) { _state.value = UiState.Message("Сначала коснитесь узла выбранного незаблокированного слоя"); return }
         setVectors(nodeSelId, media[i].vectors.filterIndexed { k, _ -> k != nodeShape })
         nodeShape = -1; nodePt = -1
         refreshPenOverlay()
@@ -4458,6 +5828,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun penFinish(closed: Boolean) {
         val id = selectedVectorId() ?: return
+        if (isLockedId(id)) { lockedNotice(); return }
         val m = media.firstOrNull { it.id == id } ?: return
         if (penPts.size < 4) { _state.value = UiState.Message("Для контура нужно хотя бы две точки"); return }
         val c = vecStroke()
@@ -4485,7 +5856,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (q != null && penPts.isEmpty() && _rasterTool.value == RasterTool.PATH && id != null) {
             // нет контура в работе: показываем узлы готовых примитивов, выбранный подсвечен
             val m = media.firstOrNull { it.id == id }
-            val shapes = m?.vectors.orEmpty()
+            val shapes = if (nodeOriginal?.id == id) nodeDraft.orEmpty() else m?.vectors.orEmpty()
             if (shapes.isNotEmpty()) {
                 val flat = ArrayList<Float>(); var sel = -1
                 for ((i, s) in shapes.withIndex()) for (k in 0 until s.pts.size / 2) {
@@ -4845,6 +6216,105 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- эффекты слоёв (FBO-цепочка)
 
     private var fxLayers: Map<Int, List<Effect>> = emptyMap()
+
+    private fun copyEffectTracks(from: Int, to: Int) {
+        if (from !in 0..com.vibetoon.domain.anim.EffectTracks.MAX_LAYER || to !in 0..com.vibetoon.domain.anim.EffectTracks.MAX_LAYER) return
+        var anim = _animation.value
+        for (id in TrackGroups.ids(from, anim.tracks).filter { com.vibetoon.domain.anim.EffectTracks.belongs(it, from) }) {
+            val target = TrackGroups.remap(id, from, to) ?: continue
+            val tr = anim.tracks[id] ?: continue
+            anim = anim.copy(tracks = anim.tracks + (target to AnimationTrack(target, tr.keys)))
+        }
+        _animation.value = anim
+    }
+    private fun selectedEffectGroup(): Int? {
+        val id = _selected.value ?: return null
+        if (_selection.value.size != 1) return null
+        val layer = layers.firstOrNull { it.id == id } ?: return null
+        return id.takeIf { layer.kind == LayerKind.GROUP_OPEN || layer.kind == LayerKind.GROUP_CLOSED }
+    }
+
+    private fun groupEffectPlan(id: Int, allowAnimated: Boolean = false): com.vibetoon.domain.anim.GroupEffects.Plan {
+        val plan = com.vibetoon.domain.anim.GroupEffects.plan(id, layers, fxLayers, _animation.value.tracks.keys,
+            media.filter { it.kind == MediaKind.CAMERA || it.kind == MediaKind.NULLOBJ || it.kind == MediaKind.SYMBOL }.mapTo(HashSet()) { it.id },
+            layerProps.filterValues { it.locked }.keys, layerProps.filterValues { it.clip }.keys, allowAnimated)
+        if (allowAnimated && plan.rejection == null && !com.vibetoon.domain.anim.GroupEffectKeys.synchronized(plan.ids, plan.effects, _animation.value))
+            return plan.copy(rejection = com.vibetoon.domain.anim.GroupEffects.Rejection.ANIMATED)
+        return plan
+    }
+
+    private val _groupFxInfo = MutableStateFlow("")
+    val groupFxInfo: StateFlow<String> = _groupFxInfo.asStateFlow()
+    private val _groupFxBlocked = MutableStateFlow(false)
+    val groupFxBlocked: StateFlow<Boolean> = _groupFxBlocked.asStateFlow()
+
+    private fun editGroupFx(key: String, force: Boolean = false, change: (List<Effect>) -> List<Effect>): Boolean {
+        val group = selectedEffectGroup() ?: return false
+        if (_playing.value) { _state.value = UiState.Message("Остановите воспроизведение перед редактированием эффектов группы"); return true }
+        if (autoKeyEnabled()) { _state.value = UiState.Message("Групповые эффекты с автоключом пока не поддерживаются"); return true }
+        val plan = groupEffectPlan(group)
+        if (plan.rejection != null) { _state.value = UiState.Message("Групповые эффекты недоступны: проверьте одинаковость цепочек, ключи, обтравку и блокировки"); return true }
+        val next = change(plan.effects)
+        if (next == plan.effects) return true
+        checkpoint("$key:$group", force)
+        fxLayers = com.vibetoon.domain.anim.GroupEffects.apply(fxLayers, plan.ids, next)
+        pushScene(); markDirty()
+        return true
+    }
+
+    /** Ключи пока находятся на дочерних дорожках, не на собственной строке группы. */
+    fun keyGroupEffects() {
+        val group = selectedEffectGroup() ?: return
+        if (_playing.value) return
+        val plan = groupEffectPlan(group, allowAnimated = true)
+        val next = if (plan.rejection == null) com.vibetoon.domain.anim.GroupEffectKeys.key(plan.ids, plan.effects, _animation.value, _frame.value) else null
+        if (next == null) { _state.value = UiState.Message("Нельзя поставить групповые ключи: проверьте эффекты и совпадение дорожек"); return }
+        checkpoint("group-fx-key", force = true)
+        _animation.value = next
+        pushScene(); markDirty()
+        _state.value = UiState.Message("Ключи эффектов поставлены на вложенных слоях")
+    }
+
+    fun moveGroupEffectKeys(delta: Int) {
+        val group = selectedEffectGroup() ?: return
+        if (_playing.value) return
+        val plan = groupEffectPlan(group, allowAnimated = true)
+        val next = if (plan.rejection == null) com.vibetoon.domain.anim.GroupEffectKeys.move(plan.ids, plan.effects, _animation.value, _frame.value, delta) else null
+        if (next == null) { _state.value = UiState.Message("Ключи группы нельзя сдвинуть: нет ключа, предел или совпадение кадров"); return }
+        checkpoint("group-fx-key-move", force = true)
+        _animation.value = next
+        setFrame(_frame.value + delta)
+        pushScene(); markDirty()
+    }
+
+    fun deleteGroupEffectKeys() {
+        val group = selectedEffectGroup() ?: return
+        if (_playing.value) return
+        val plan = groupEffectPlan(group, allowAnimated = true)
+        val result = if (plan.rejection == null) com.vibetoon.domain.anim.GroupEffectKeys.delete(plan.ids, plan.effects, _animation.value, _frame.value) else null
+        if (result == null) { _state.value = UiState.Message("Нет совпадающих ключей эффектов группы на этом кадре"); return }
+        checkpoint("group-fx-key-delete", force = true)
+        _animation.value = result.animation
+        fxLayers = com.vibetoon.domain.anim.GroupEffects.apply(fxLayers, plan.ids, result.effects)
+        pushScene(); markDirty()
+    }
+
+    private fun editGroupEffectValues(index: Int, changes: Map<Int, Float>, tag: String, force: Boolean): Boolean {
+        val group = selectedEffectGroup() ?: return false
+        val plan = groupEffectPlan(group, allowAnimated = true)
+        if (plan.rejection != null) { _state.value = UiState.Message("Групповые эффекты недоступны: проверьте одинаковость цепочек, ключи, обтравку и блокировки"); return true }
+        val animated = autoKeyEnabled() || com.vibetoon.domain.anim.GroupEffectKeys.hasKeys(plan.ids, _animation.value)
+        if (!animated) return false
+        val current = com.vibetoon.domain.anim.EffectTracks.at(plan.ids.first(), plan.effects, _animation.value, _frame.value.toFloat()).getOrNull(index) ?: return true
+        if (changes.all { (param, value) -> param in current.p.indices && EffectMath.clamp(current.type, param, value) == current.p[param] }) return true
+        val next = com.vibetoon.domain.anim.GroupEffectKeys.key(plan.ids, plan.effects, _animation.value, _frame.value, index, changes)
+        if (next == null) { _state.value = UiState.Message("Нельзя поставить групповые ключи: проверьте эффекты и совпадение дорожек"); return true }
+        checkpoint("group-$tag:$group:${_frame.value}", force)
+        _animation.value = next
+        pushScene(); markDirty()
+        return true
+    }
+
     private val _layerFx = MutableStateFlow<List<Effect>>(emptyList())
     /** Цепочка эффектов выделенного слоя (по порядку применения). */
     val layerEffects: StateFlow<List<Effect>> = _layerFx.asStateFlow()
@@ -4853,14 +6323,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val fxLibrary: StateFlow<Boolean> = _fxLibrary.asStateFlow()
 
     fun openFxLibrary(on: Boolean) {
-        if (on && warpTarget() == null) { _state.value = UiState.Message("Выберите один слой, чтобы добавить эффект"); return }
+        if (on && warpTarget() == null && selectedEffectGroup() == null) { _state.value = UiState.Message("Выберите один слой, чтобы добавить эффект"); return }
+        if (on && selectedEffectGroup() != null && groupEffectPlan(selectedEffectGroup()!!).rejection != null) {
+            _state.value = UiState.Message("Групповые эффекты недоступны: проверьте одинаковость цепочек, ключи, обтравку и блокировки"); return
+        }
         _fxLibrary.value = on
     }
 
-    private fun refreshFxState() { _layerFx.value = warpTarget()?.let { fxLayers[it] }.orEmpty() }
+    private fun refreshFxState() {
+        val group = selectedEffectGroup()
+        val plan = group?.let { groupEffectPlan(it, allowAnimated = true) }
+        _groupFxBlocked.value = group != null && plan?.rejection != null
+        _groupFxInfo.value = when {
+            group == null -> ""
+            plan?.rejection != null -> "Группа: цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка"
+            else -> "Группа: ключи эффектов создаются на вложенных слоях; ромба группы пока нет"
+        }
+        val id = warpTarget()
+        _layerFx.value = if (group != null && plan?.rejection == null && plan?.ids?.isNotEmpty() == true) com.vibetoon.domain.anim.EffectTracks.at(plan.ids.first(), plan.effects, _animation.value, _frame.value.toFloat()) else if (id == null) emptyList() else com.vibetoon.domain.anim.EffectTracks.at(id, fxLayers[id].orEmpty(), _animation.value, _frame.value.toFloat())
+    }
 
     private fun fxNow(): Map<Int, List<FloatArray>> {
-        val base = fxRecords(fxLayers, _colors.value, _frame.value.toFloat() / _animation.value.settings.fps.coerceAtLeast(1))
+        val base = fxRecords(fxLayers, _colors.value, _animation.value, _frame.value, _animation.value.settings.fps)
         if (ghosts.isEmpty()) return base
         val out = HashMap(base)
         for (g in ghosts) out[g.id] = listOf(floatArrayOf(TINT_FX, g.r, g.g, g.b, 0.85f, 0f, 0f, 0f, 0f, 0f))   // красный/зелёный оттенок кадров-ориентиров
@@ -4868,13 +6352,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Записи эффектов слоёв: цветокоррекция слоя - неявный первый эффект «Цветокоррекция». Общий путь для экрана и экспорта. */
-    private fun fxRecords(fx: Map<Int, List<Effect>>, colors: Map<Int, ColorAdjust>, sec: Float): Map<Int, List<FloatArray>> {
+    private fun fxRecords(fx: Map<Int, List<Effect>>, colors: Map<Int, ColorAdjust>, anim: Animation, frame: Int, fps: Int): Map<Int, List<FloatArray>> {
+        val sec = frame.toFloat() / fps.coerceAtLeast(1)
         val adj = colors.filterValues { !it.isIdentity }
         if (fx.isEmpty() && adj.isEmpty()) return emptyMap()
         val out = HashMap<Int, List<FloatArray>>()
         for (id in fx.keys + adj.keys) {
             val own = adj[id]?.let { listOf(Effect(EffectMath.COLOR, listOf(it.exposure / 50f, it.contrast / 100f, it.saturation / 100f, it.hue * 1.8f, 0f, 0f, 0f, 0f))) }.orEmpty()
-            val r = EffectMath.records(own + fx[id].orEmpty(), sec)
+            val r = EffectMath.records(own + com.vibetoon.domain.anim.EffectTracks.at(id, fx[id].orEmpty(), anim, frame.toFloat()), sec)
             if (r.isNotEmpty()) out[id] = r
         }
         return out
@@ -4895,36 +6380,111 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Добавляет эффект выбранного типа в конец цепочки выделенного слоя. */
     fun addEffect(type: Int) {
         val e = EffectMath.create(type) ?: return
+        if (editGroupFx("group-fx-add", force = true) { list ->
+            if (list.size >= EffectMath.MAX_PER_LAYER) {
+                _state.value = UiState.Message("На слое не больше ${EffectMath.MAX_PER_LAYER} эффектов"); list
+            } else com.vibetoon.domain.anim.EffectTracks.assignSlots(list + e)
+        }) { _fxLibrary.value = false; return }
         val t = warpTarget() ?: run { _state.value = UiState.Message("Выберите один слой"); return }
         if ((fxLayers[t]?.size ?: 0) >= EffectMath.MAX_PER_LAYER) { _state.value = UiState.Message("На слое не больше ${EffectMath.MAX_PER_LAYER} эффектов"); return }
-        editFx("fx-add", force = true) { it + e }
+        editFx("fx-add", force = true) { com.vibetoon.domain.anim.EffectTracks.assignSlots(it + e) }
         _fxLibrary.value = false
     }
 
-    fun removeEffect(index: Int) = editFx("fx-del", force = true) { l -> l.filterIndexed { i, _ -> i != index } }
-
-    fun moveEffect(index: Int, dir: Int) = editFx("fx-move", force = true) { l ->
-        val j = index + dir
-        if (index !in l.indices || j !in l.indices) l else l.toMutableList().also { val x = it[index]; it[index] = it[j]; it[j] = x }
+    fun removeEffect(index: Int) {
+        if (editGroupFx("group-fx-del", force = true) { list -> list.filterIndexed { i, _ -> i != index } }) return
+        val layer = warpTarget() ?: return
+        val list = fxLayers[layer].orEmpty()
+        val e = list.getOrNull(index) ?: return
+        checkpoint("fx-del", force = true)
+        if (layer in 0..com.vibetoon.domain.anim.EffectTracks.MAX_LAYER && e.slot in 0 until com.vibetoon.domain.anim.EffectTracks.SLOTS) {
+            val ids = com.vibetoon.domain.anim.EffectTracks.ids(layer, e.slot).toSet()
+            _animation.value = _animation.value.copy(tracks = _animation.value.tracks.filterKeys { it !in ids })
+        }
+        fxLayers = fxLayers + (layer to list.filterIndexed { i, _ -> i != index })
+        pushScene(); markDirty()
     }
 
-    fun setEffectParam(index: Int, param: Int, v: Float) = editFx("fx-p$index-$param") { l ->
-        val e = l.getOrNull(index) ?: return@editFx l
-        l.toMutableList().also { it[index] = e.copy(p = e.p.toMutableList().also { p -> p[param] = EffectMath.clamp(e.type, param, v) }) }
+    fun moveEffect(index: Int, dir: Int) {
+        val reorder: (List<Effect>) -> List<Effect> = { l ->
+            val j = index + dir
+            if (index !in l.indices || j !in l.indices) l else l.toMutableList().also { val x = it[index]; it[index] = it[j]; it[j] = x }
+        }
+        if (editGroupFx("group-fx-move", force = true, change = reorder)) return
+        editFx("fx-move", force = true, change = reorder)
     }
 
-    /** Цвет r, g, b эффекта (ARGB) в три подряд идущих параметра, начиная с colorAt типа. */
+    private fun editEffectValues(index: Int, changes: Map<Int, Float>, tag: String, force: Boolean = false) {
+        if (_playing.value) return
+        if (editGroupEffectValues(index, changes, tag, force)) return
+        if (editGroupFx("group-$tag", force) { list ->
+            val effect = list.getOrNull(index)
+            if (effect == null || changes.keys.any { it !in effect.p.indices }) list else {
+                val updated = effect.copy(p = effect.p.toMutableList().also { p ->
+                    for ((param, value) in changes) p[param] = EffectMath.clamp(effect.type, param, value)
+                })
+                list.toMutableList().also { it[index] = updated }
+            }
+        }) return
+        val layer = warpTarget() ?: return
+        val list = fxLayers[layer].orEmpty()
+        val effect = list.getOrNull(index) ?: return
+        if (changes.keys.any { it !in effect.p.indices }) return
+        val tracks = com.vibetoon.domain.anim.EffectTracks
+        val currentEffect = tracks.at(layer, list, _animation.value, _frame.value.toFloat()).getOrNull(index) ?: return
+        if (changes.all { (param, value) -> EffectMath.clamp(effect.type, param, value) == currentEffect.p[param] }) return
+        checkpoint("$tag:${_frame.value}", force)
+        val auto = autoKeyEnabled()
+        val canAuto = layer in 0..tracks.MAX_LAYER && effect.slot in 0 until tracks.SLOTS && changes.keys.all { it < tracks.PARAMS } && canAutoKeyTransform(layer)
+        if (auto && canAuto) {
+            _animation.value = com.vibetoon.domain.anim.AutoKeyEdits.effect(_animation.value, layer, _frame.value, effective(layer), list, effect, changes)
+            override.remove(layer)
+            pushScene(); markDirty()
+            return
+        }
+        if (auto && !canAuto) _state.value = UiState.Message("Автоключ этого параметра эффекта недоступен")
+        val animated = layer in 0..tracks.MAX_LAYER && effect.slot in 0 until tracks.SLOTS &&
+            (_animation.value.hasKey(layer, _frame.value) || tracks.ids(layer, effect.slot).any { _animation.value.hasTrack(it) })
+        if (animated) {
+            // Каждый ромб содержит состояние всех параметров: перенос/удаление ключа атомарны.
+            var anim = tracks.snapshot(layer, list, _animation.value, _frame.value)
+            for ((param, value) in changes) anim = anim.withKey(tracks.id(layer, effect.slot, param), _frame.value,
+                LayerTransform(dx = EffectMath.clamp(effect.type, param, value)))
+            _animation.value = anim
+        } else {
+            val updated = effect.copy(p = effect.p.toMutableList().also { p ->
+                for ((param, value) in changes) p[param] = EffectMath.clamp(effect.type, param, value)
+            })
+            fxLayers = fxLayers + (layer to list.toMutableList().also { it[index] = updated })
+        }
+        pushScene(); markDirty()
+    }
+
+    fun setEffectParam(index: Int, param: Int, v: Float) = editEffectValues(index, mapOf(param to v), "fx-p$index-$param")
+
+    /** Цвет эффекта: три параметра записываются одной операцией Undo. */
     fun setEffectColor(index: Int, argb: Long) {
         val e = _layerFx.value.getOrNull(index) ?: return
         val at = EffectMath.def(e.type)?.colorAt?.takeIf { it >= 0 } ?: return
-        editFx("fx-color", force = true) { l ->
-            val cur = l[index]
-            l.toMutableList().also {
-                it[index] = cur.copy(p = cur.p.toMutableList().also { p ->
-                    p[at] = ((argb shr 16) and 0xFF) / 255f; p[at + 1] = ((argb shr 8) and 0xFF) / 255f; p[at + 2] = (argb and 0xFF) / 255f
-                })
-            }
+        editEffectValues(index, mapOf(at to ((argb shr 16) and 0xFF) / 255f,
+            at + 1 to ((argb shr 8) and 0xFF) / 255f, at + 2 to (argb and 0xFF) / 255f), "fx-color", true)
+    }
+
+    /** При удалении последнего ключа сохраняем последнее значение как статическое. */
+    private fun removeEffectKeys(layer: Int, frame: Int) {
+        val tracks = com.vibetoon.domain.anim.EffectTracks
+        if (layer !in 0..tracks.MAX_LAYER) return
+        val effects = fxLayers[layer].orEmpty().map { e ->
+            if (e.slot !in 0 until tracks.SLOTS) e else e.copy(p = e.p.mapIndexed { param, value ->
+                if (param >= tracks.PARAMS) value else {
+                    val id = tracks.id(layer, e.slot, param)
+                    val (next, last) = _animation.value.withoutKey(id, frame)
+                    _animation.value = next
+                    last?.dx ?: value
+                }
+            })
         }
+        if (effects.isNotEmpty()) fxLayers = fxLayers + (layer to effects)
     }
 
     /** Пипетка для цвета эффекта: следующий тап по холсту берёт цвет. */
@@ -5630,7 +7190,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val b = selectedBone() ?: return
-        checkpoint("bone$grab${b.id}")
+        checkpoint("bone$grab${b.id}:${_frame.value}")
         if (_bindPose.value) editBindPose(b, cx, cy) else editAnimPose(b, cx, cy)
         lastCx = cx
         lastCy = cy
@@ -5640,7 +7200,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun boneUp() {
         if (grab == LIQ_GRAB) { finishLiquify(); grab = 0; return }
-        if (grab >= 20) { if (grab == MESH_CUT) finishCut(); if (grab == MESH_SMUDGE) commitBrush(); grab = 0; return }
+        if (grab >= 20) { if (grab == MESH_CUT) finishCut(); if (grab == MESH_SMUDGE) commitBrush(); perspSideDrag = null; grab = 0; return }
         if (grab == 4) { finishLasso(); grab = 0; return }
         val d = draft
         if (grab == 3 && d != null) {
@@ -5682,17 +7242,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return inside
     }
 
+    /** Только видимые на текущем кадре слои, включая видимость их групп. */
+    private fun bindableLayerIds(): Set<Int> {
+        val byId = layers.associateBy { it.id }
+        val hidden = hiddenIds() + _clips.value.filterValues { !it.visibleAt(_frame.value) }.keys
+        return layers.asSequence()
+            .filter { it.kind == LayerKind.LAYER && it.id < BONE_ID_BASE }
+            .filter { LayerTree.isEffectivelyVisible(it.id, byId, hidden) }
+            .map { it.id }.toSet()
+    }
+
     /** Лассо замкнуто: выбираются слои, центр рамки которых попал внутрь контура. */
     private fun finishLasso() {
         val poly = lassoPts.toList()
         lassoPts = ArrayList()
         if (poly.size < 6) { refreshBoneOverlay(); return }
-        val sc = scene ?: return
+        val pid = projectId
+        val frame = _frame.value
         viewModelScope.launch {
-            val ids = layers.filter { it.kind == com.vibetoon.nativebridge.LayerKind.LAYER && it.id < BONE_ID_BASE }.map { it.id }
-            for (id in ids) ensureBox(id)   // границы содержимого посчитаны до выбора: центр берётся у нарисованного, а не у всего холста
+            val ids = bindableLayerIds()
+            for (id in ids) ensureBox(id)   // границы содержимого посчитаны до выбора
+            if (projectId != pid || _frame.value != frame || !_boneMode.value) return@launch
+            val sc = scene ?: return@launch
             val picked = HashSet<Int>()
-            for (id in ids) {
+            // Видимость могла измениться, пока читалась альфа-карта.
+            for (id in ids intersect bindableLayerIds()) {
                 val q = sc.selectionQuads[id] ?: continue
                 val cq = contentQuad(id, q) ?: continue
                 val cx = (cq[0] + cq[2] + cq[4] + cq[6]) / 4f
@@ -5713,10 +7287,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Привязывает обведённые слои к выбранной кости вручную. Эти слои больше не трогает автопривязка. */
     fun bindLassoToBone() {
         val bone = selectedBone() ?: run { _state.value = UiState.Message("Сначала выберите кость (инструмент «Выбрать»)"); return }
-        val set = _lassoLayers.value
-        if (set.isEmpty()) { _state.value = UiState.Message("Сначала обведите слои лассо"); return }
+        val set = _lassoLayers.value intersect bindableLayerIds()
+        if (set.isEmpty()) { _lassoLayers.value = emptySet(); updateSelectionFrame(); _state.value = UiState.Message("Сначала обведите видимые слои лассо"); return }
         if (!_bindPose.value) { _state.value = UiState.Message("Привязка работает в режиме Bind Pose"); return }
         checkpoint("lasso-bind", force = true)
+        // Skinning сетки имеет приоритет над link в SceneBuilder. Ручная привязка
+        // обещает одну кость, поэтому отключаем skinning у выбранных слоёв.
+        skinLayers = skinLayers - set
         _links.value = _links.value + set.associateWith { bone.id }
         _lassoLayers.value = emptySet()
         pushScene()
@@ -5724,8 +7301,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = UiState.Message("Привязано слоёв: ${set.size} к «${bone.name}» (вручную)")
     }
 
-    /** Сколько слоёв привязано к кости (для инспектора кости). */
-    fun boundCount(boneId: Int): Int = _links.value.count { (c, p) -> p == boneId && c < BONE_ID_BASE }
+    /** Все непосредственные привязки, включая слои в свёрнутых группах и аудиодорожки. */
+    fun boundLayers(boneId: Int, links: Map<Int, Int>): List<com.vibetoon.domain.project.BoundLayer> {
+        val visual = layers.asReversed().filter { it.kind != LayerKind.GROUP_END }.map {
+            com.vibetoon.domain.project.BoundLayer(it.id, it.name, it.kind != LayerKind.LAYER)
+        }
+        val audio = media.filter { !it.isVisual }.map { com.vibetoon.domain.project.BoundLayer(it.id, it.name) }
+        return com.vibetoon.domain.project.BoneBindings.layers(boneId, links, visual + audio)
+    }
 
     fun setBoneIndependent(id: Int, on: Boolean) {
         checkpoint("bone-indep", force = true)
@@ -5813,8 +7396,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * пересекает рамку слоя. Группы пропускаются, привязываются их слои.
      */
     fun autoBind() {
+        val pid = projectId
+        val frame = _frame.value
         viewModelScope.launch {
-            for (l in layers) if (l.kind == com.vibetoon.nativebridge.LayerKind.LAYER) ensureBox(l.id)
+            for (id in bindableLayerIds()) ensureBox(id)
+            if (projectId != pid || _frame.value != frame || !_boneMode.value) return@launch
             autoBindNow()
         }
     }
@@ -5824,9 +7410,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val bones = _bones.value
         if (bones.isEmpty()) { _state.value = UiState.Message("Сначала создайте кости"); return }
         val sc = scene ?: return
+        val visible = bindableLayerIds()
         val picks = HashMap<Int, Int>()
         for (l in layers) {
-            if (l.kind != com.vibetoon.nativebridge.LayerKind.LAYER || l.id in _links.value) continue
+            // Скинненный слой уже привязан к костям, а link для него не применяется.
+            if (l.id !in visible || l.id in _links.value || l.id in skinLayers) continue
             val q = sc.selectionQuads[l.id]?.let { contentQuad(l.id, it) } ?: continue   // по нарисованному, пустые слои пропускаются
             val minX = minOf(q[0], q[2], q[4], q[6])
             val maxX = maxOf(q[0], q[2], q[4], q[6])
@@ -5870,7 +7458,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun parentCandidates(): List<Pair<Int, String>> {
         val banned = HashSet<Int>()
         for (id in _selection.value) { banned += id; banned += linkDescendants(id) }
-        return _bones.value.filter { it.id !in banned }.map { it.id to "Кость ${it.name}" } + layers.filter {
+        return _bones.value.filter { it.id !in banned }.map { it.id to it.name } + layers.filter {
             it.id !in banned && it.kind != com.vibetoon.nativebridge.LayerKind.GROUP_END
         }.map { it.id to it.name }
     }
@@ -5889,15 +7477,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun layerName(id: Int): String =
-        _bones.value.firstOrNull { it.id == id }?.let { "Кость ${it.name}" } ?: layers.firstOrNull { it.id == id }?.name ?: "#$id"
+        _bones.value.firstOrNull { it.id == id }?.name ?: layers.firstOrNull { it.id == id }?.name ?: "#$id"
 
     /**
      * Привязывает все выделенные слои к [parentId] (null - отвязать). Ребёнок повторяет трансформацию
      * родителя поверх своей собственной; цикл привязок невозможен.
      */
     fun setParent(parentId: Int?) {
-        val ids = _selection.value
-        if (ids.isEmpty() || _playing.value) return
+        val selected = _selection.value
+        if (selected.isEmpty() || _playing.value) return
+        val toBone = parentId != null && _bones.value.any { it.id == parentId }
+        val byId = layers.associateBy { it.id }
+        val hidden = hiddenIds() + _clips.value.filterValues { !it.visibleAt(_frame.value) }.keys
+        // Группу по-прежнему можно привязать к кости, если она видима.
+        val ids = if (toBone) selected.filterTo(HashSet()) {
+            it in byId && LayerTree.isEffectivelyVisible(it, byId, hidden)
+        } else selected
+        if (ids.isEmpty()) {
+            _state.value = UiState.Message("Для привязки к кости выберите видимые слои")
+            return
+        }
         if (parentId != null && parentId in ids) return
         val banned = HashSet<Int>().also { b -> ids.forEach { b += it; b += linkDescendants(it) } }
         if (parentId != null && parentId in banned) {
@@ -5905,6 +7504,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         checkpoint("parent", force = true)
+        if (toBone) skinLayers = skinLayers - ids
         _links.value = if (parentId == null) _links.value - ids else _links.value + ids.associateWith { parentId }
         pushScene()
         markDirty()
@@ -6058,7 +7658,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun clearKeySelection() { if (_keySel.value.isNotEmpty()) _keySel.value = emptySet() }
 
     /** Сдвигает выделенные ключи на [delta] кадров (все дорожки слоя вместе, граница проекта останавливает всех). */
-    fun moveSelectedKeys(delta: Int) {
+    fun moveSelectedKeys(delta: Int, singleGesture: Boolean = false) {
         val sel = _keySel.value
         if (sel.isEmpty() || delta == 0 || _playing.value) return
         val last = duration() - 1
@@ -6066,7 +7666,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val maxF = sel.maxOf { it.second }
         val d = delta.coerceIn(-minF, last - maxF)
         if (d == 0) return
-        checkpoint("keymove")
+        if (!com.vibetoon.domain.anim.KeyMovePolicy.canMove(_animation.value, sel, d)) {
+            _state.value = UiState.Message("На целевом кадре уже есть ключ: перенос отменён")
+            return
+        }
+        checkpoint("keymove", force = singleGesture)
         var anim = _animation.value
         val byLayer = sel.groupBy({ it.first }, { it.second })
         for ((layer, frames) in byLayer) {
@@ -6115,6 +7719,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (sel.size < 2 || _playing.value) return
         val last = duration() - 1
         val lo = sel.minOf { it.second }; val hi = sel.maxOf { it.second }
+        if (!com.vibetoon.domain.anim.KeyMovePolicy.canRemap(_animation.value, sel) { map(it, lo, hi).coerceIn(0, last) }) {
+            _state.value = UiState.Message("Ключи совпадают после изменения: операция отменена")
+            return
+        }
         checkpoint(tag, force = true)
         var anim = _animation.value
         val byLayer = sel.groupBy({ it.first }, { it.second })
@@ -6146,10 +7754,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Убирает ключи всех дорожек слоя на указанных кадрах; если дорожка опустела, слой остаётся на последнем значении. */
     private fun removeKeys(sel: Set<Pair<Int, Int>>) {
-        for ((layer, frame) in sel) for (id in TrackGroups.ids(layer, _animation.value.tracks)) {
-            val (next, lastValue) = _animation.value.withoutKey(id, frame)
-            _animation.value = next
-            if (lastValue != null) base[id] = lastValue
+        for ((layer, frame) in sel) {
+            removeEffectKeys(layer, frame)
+            for (id in TrackGroups.ids(layer, _animation.value.tracks)) {
+                val (next, lastValue) = _animation.value.withoutKey(id, frame)
+                _animation.value = next
+                if (lastValue != null) base[id] = lastValue
+            }
         }
     }
 
@@ -6189,20 +7800,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val srcLayers = clip.map { it.layer }.toSet()
         val target = _selected.value?.takeIf { srcLayers.size == 1 && it != srcLayers.first() && layers.any { l -> l.id == it } }
         val cur = _frame.value
-        val last = duration() - 1
+        val knownTargets = layers.mapTo(HashSet()) { it.id }.apply { addAll(_bones.value.map { it.id }) }
+        if ((target == null && srcLayers.any { it !in knownTargets }) || (target != null && target !in knownTargets)) {
+            _state.value = UiState.Message("Ключи не вставлены: слой удалён")
+            return
+        }
+        // Different deformer topologies and FX slots cannot be mapped safely by track number alone.
+        if (target != null && clip.any { it.trackId != it.layer }) {
+            _state.value = UiState.Message("Вставка на другой слой доступна только для трансформации; деформации и эффекты не изменены")
+            return
+        }
+        val planned = clip.map { e ->
+            val id = if (target != null) TrackGroups.remap(e.trackId, srcLayers.first(), target) else e.trackId
+            if (id == null) { _state.value = UiState.Message("Ключи не вставлены: несовместимая дорожка"); return }
+            Triple(e, id, cur.toLong() + e.rel.toLong())
+        }
+        if (!com.vibetoon.domain.anim.KeyPastePolicy.canPaste(_animation.value,
+                planned.map { com.vibetoon.domain.anim.KeyPastePolicy.Destination(it.second, it.third) })) {
+            _state.value = UiState.Message("Ключи не вставлены: занятый кадр или выход за границы")
+            return
+        }
         checkpoint("keypaste", force = true)
         var anim = _animation.value
         val picked = HashSet<Pair<Int, Int>>()
-        var count = 0
-        for (e in clip) {
-            val id = if (target != null) TrackGroups.remap(e.trackId, srcLayers.first(), target) ?: continue else e.trackId
-            val f = cur + e.rel
-            if (f > last) continue
+        for ((e, id, frame) in planned) {
+            val f = frame.toInt()
             val tr = anim.tracks[id] ?: AnimationTrack(id)
             anim = anim.copy(tracks = anim.tracks + (id to tr.upsert(e.key.copy(frame = f))))
             picked += (target ?: e.layer) to f
-            count++
         }
+        val count = planned.size
         _animation.value = anim
         _keySel.value = picked
         override.clear()
@@ -6232,11 +7859,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         media.removeAll(removedMedia)
         for (id in all) { base.remove(id); override.remove(id) }
         _links.value = _links.value.filter { (c, p) -> c !in all && p !in all }
+        groupDeformationAnchors = groupDeformationAnchors - all
         dropWarpData(all)
         dropMeshData(all)
         dropPerspData(all)
         val anim = _animation.value
-        _animation.value = anim.copy(tracks = anim.tracks.filterKeys { it !in all })
+        _animation.value = anim.copy(tracks = anim.tracks.filterKeys { id -> id !in all && all.none { com.vibetoon.domain.anim.EffectTracks.belongs(id, it) } })
+        fxLayers = fxLayers.filterKeys { it !in all }
         textJob?.cancel()
         multiMode = false
         applySelection(emptySet(), null)
@@ -6272,9 +7901,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setFrame(frame: Int) {
         val f = frame.coerceIn(0, _animation.value.settings.durationFrames - 1)
         if (f == _frame.value) return
+        cancelPendingLasso()
         override.clear()
         _frame.value = f
         pushScene()
+        followSelectionDuringPlayback()
         updateVideoFrames(f)
         updateTextFx(f)
         updateCells(f)
@@ -6310,6 +7941,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun stopScrubPreview() { audioEngine.cancelScrub() }
+
     /** Пользователь тянет ползунок: воспроизведение останавливается. */
     fun scrubTo(frame: Int) {
         pause()
@@ -6317,15 +7950,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // скраббинг звука: короткий фрагмент на новом кадре (не чаще раза в 45 мс)
         val now = SystemClock.uptimeMillis()
         val f = _frame.value
-        if (f != lastScrubFrame && now - lastScrubAt >= 45) {
+        if (getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+                .getBoolean("audio_while_scrubbing", true) && f != lastScrubFrame && now - lastScrubAt >= 45) {
             lastScrubAt = now; lastScrubFrame = f
             audioEngine.scrub(f, _animation.value.settings.fps, ::clipOf)
         }
     }
 
     private var frameCallback: Choreographer.FrameCallback? = null
+    private var playbackStartFrame = 0
 
-    fun togglePlay() = if (_playing.value) pause() else play()
+    /** Сброс применяется только к явной паузе, а не к скраббингу, смене проекта или концу видео. */
+    fun togglePlay() {
+        if (_playing.value) {
+            pause()
+            val reset = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+                .getBoolean("reset_frame_after_pause", false)
+            val target = com.vibetoon.domain.anim.PausePolicy.frameAfterStop(_frame.value, playbackStartFrame, reset, explicitPause = true)
+            if (target != _frame.value) setFrame(target)
+        } else play()
+    }
 
     /**
      * Воспроизведение: кадр считается по часам Choreographer (время, а не число вызовов),
@@ -6333,11 +7977,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun play() {
         if (_playing.value) return
+        cancelPendingLasso()
         _playing.value = true
+        followSelectionDuringPlayback()
         val settings = _animation.value.settings
         val looping = _loop.value
         // без цикла старт с последнего кадра начинает проигрывание заново
         val startFrame = if (!looping && _frame.value >= settings.durationFrames - 1) 0 else _frame.value
+        playbackStartFrame = startFrame
         var startNanos = -1L
         var lastF = startFrame
         audioEngine.play(startFrame, settings.fps, ::clipOf)
@@ -6397,8 +8044,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val clipsCopy = _clips.value
         val fxIdsExp = fxLayers.keys
         val hiddenExp = layerProps.filterValues { !it.visible }.keys + symbolHidden(symbol)   // в контексте символа видны только его слои
-        val ids = baseCopy.keys + anim.tracks.keys + clipsCopy.keys + fxIdsExp + adjCopy.keys + hiddenExp + outsideIds
+        val ids = baseCopy.keys + anim.tracks.keys.filter { it >= 0 } + clipsCopy.keys + fxIdsExp + adjCopy.keys + hiddenExp + outsideIds
         val r = roots; val cw = canvasW; val ch = canvasH; val f = fit; val tids = textIds; val lnk = _links.value; val bnd = boneHeads(); val wl = warpLayers; val indep = independentBones(); val ml = meshLayers; val pl = perspLayers; val btl = boneTails(); val sk = effectiveSkins(); val tl = turbLayers; val fxl = fxLayers; val camId = if (symbol != null) -1 else cameraIdNow(); val pinl = pinLayers; val lsz = layers.associate { it.id to (it.width.toFloat() to it.height.toFloat()) }
+        // Фиксируем те же опции, что и в редакторе: null-объекты не рисуются,
+        // а глубина родительских групп применяется и при экспорте кадров.
+        val sceneOptions = com.vibetoon.domain.render.SceneOptions.capture(media, layerProps)
+        val groupAnchorsExp = groupDeformationAnchors.toMap()
+        val warpSizesExp = warpGridSizes.toMap()
+        val denseExp = denseWarps.toMap()
         val symMembers = if (symbol != null) symbolMembers(symbol) else null
         val fxTexts = media.filter { it.isText && it.fx.animated && (symMembers == null || it.id in symMembers) }
         val cellLayers = media.filter { it.kind == MediaKind.IMAGE && it.cells.isNotEmpty() && (symMembers == null || it.id in symMembers) }
@@ -6414,8 +8067,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val act = FrameMath.active(cm.cells, pf) ?: continue
                 if (cellExp[cm.id] == act.file || pidExp == null) continue
                 runCatching {
+                    val ticket = RenderNative.textureUploadTicket(cm.id)
                     val d = importer.decodeImage(projects.fileOf(pidExp, act.file))
-                    RenderNative.uploadBitmap(cm.id, d.bitmap); d.bitmap.recycle(); cellExp[cm.id] = act.file
+                    val uploaded = RenderNative.uploadBitmapIfCurrent(cm.id, d.bitmap, ticket); d.bitmap.recycle()
+                    if (uploaded) cellExp[cm.id] = act.file
                 }
             }
             for (si in symInst) {   // экземпляры символов: готовая картинка вложенной сцены на этом кадре
@@ -6425,29 +8080,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (symExp[si.id] == key) continue
                 val png = frames.getOrNull(key) ?: continue
                 runCatching {
+                    val ticket = RenderNative.textureUploadTicket(si.id)
                     val bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size)
-                    RenderNative.uploadBitmap(si.id, bmp); bmp.recycle(); symExp[si.id] = key
+                    val uploaded = RenderNative.uploadBitmapIfCurrent(si.id, bmp, ticket); bmp.recycle()
+                    if (uploaded) symExp[si.id] = key
                 }
             }
             for (tm in fxTexts) {   // текст с эффектами: картинка этого кадра заливается в текстуру до отрисовки
+                val ticket = RenderNative.textureUploadTicket(tm.id)
                 val rt = textRenderer.renderFx(tm.text, tm.textColor.toInt(), tm.font, tm.textSize, tm.gradient, tm.gradientAngle, tm.fx, pf.toFloat() / st.fps.coerceAtLeast(1), st.fps.coerceAtLeast(1), if (tm.stroke) tm.strokeWidth else 0f, tm.strokeColor.toInt(), tm.textAlign, tm.lineSpacing, tm.letterSpacing)
-                RenderNative.uploadBitmap(tm.id, rt.bitmap)
+                RenderNative.uploadBitmapIfCurrent(tm.id, rt.bitmap, ticket)
                 rt.bitmap.recycle()
             }
+            val groupInputs = com.vibetoon.domain.render.GroupSceneInputs.build(groupAnchorsExp, wl, pl, pf, baseCopy, anim, true, warpSizesExp)
+            try {
             SceneBuilder.buildTree(r, cw, ch, ids.associateWith { id ->
                 val t0 = clipsCopy[id]?.let { c -> anim.evaluate(id, c.animFrame(pf), baseCopy[id]) } ?: anim.evaluate(id, pf, baseCopy[id])
-                val t = fxl[id]?.let { l -> t0.copy(rotation = t0.rotation + EffectMath.spinAngle(l, pf, st.fps)) } ?: t0
+                val t = fxl[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.spinAngle(id, l, anim, pf, st.fps)) } ?: t0
                 val c = clipsCopy[id]
                 if (id in hiddenExp || id in outsideIds || (c != null && !c.visibleAt(pf))) t.copy(opacity = 0f) else t
-            }, f, tids, lnk, bnd, wl.associateWith { WarpMath.offsets(it, pf, baseCopy, anim, true) }, indep,
+            }, f, tids, lnk, bnd, groupInputs.warps, indep,
                 ml.mapValues { (lid, m) ->
                     val v = MeshMath.offsets(lid, m, pf, baseCopy, anim, true)
                     val ps = pinl[lid]
                     val sz = lsz[lid]
                     m to (if (ps != null && sz != null) PuppetMath.addTo(m, v, ps, PuppetMath.offsets(lid, ps.size, pf, baseCopy, anim, true), sz.first, sz.second) else v)
                 },
-                pl.associateWith { PerspectiveMath.matrix(PerspectiveMath.offsets(it, pf, baseCopy, anim, true)) }, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
-                fxRecords(fxl, adjCopy, pf.toFloat() / st.fps.coerceAtLeast(1)), camId)
+                groupInputs.perspectives, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
+                fxRecords(fxl, adjCopy, anim, pf, st.fps), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp)
+            } catch (e: IllegalArgumentException) {
+                if (groupInputs.groups.isEmpty() && denseExp.isEmpty()) throw e
+                throw IllegalStateException("Экспорт остановлен: неподдерживаемая деформация или область", e)
+            }
         }
         return sceneAtFn
     }
@@ -6460,30 +8124,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val st = _animation.value.settings
         val (w, h, frames) = exportInfo(shortSide, fps)
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
-        val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp.mp4")
+        val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp-${java.util.UUID.randomUUID().toString().take(8)}.mp4")
 
         val bg = meta?.background?.toInt() ?: 0
         exportCancel = java.util.concurrent.atomic.AtomicBoolean(false)
         val cancel = exportCancel
         _export.value = ExportUi.Running(0, frames)
         viewModelScope.launch {
-        val sceneAt = buildSceneAt(fps, symCache = prerenderSymbols())
-        view.exportVideo(
-            ExportSpec(w, h, fps, frames, file), bg, sceneAt,
-            onProgress = { _export.value = ExportUi.Running(it, frames) }, cancel = cancel
-        ) { result ->
-            viewModelScope.launch { restoreAfterExport() }   // тексты с эффектами и покадровые слои возвращаются на текущий кадр
-            result.onSuccess {
-                Log.i("VT/Export", "done ${file.length() / 1024} KB $w x $h $frames frames")
-                viewModelScope.launch {
-                    withContext(Dispatchers.IO) { saveToGallery(file, "video/mp4") }
-                    _export.value = ExportUi.Done(file)
+            try {
+                val sceneAt = buildSceneAt(fps, symCache = prerenderSymbols())
+                view.exportVideo(
+                    ExportSpec(w, h, fps, frames, file), bg, sceneAt,
+                    onProgress = { _export.value = ExportUi.Running(it, frames) }, cancel = cancel
+                ) { result ->
+                    viewModelScope.launch {
+                        runCatching { restoreAfterExport() }
+                        result.onSuccess {
+                            try {
+                                val gallerySaved = withContext(Dispatchers.IO) { saveToGallery(file, "video/mp4") }
+                                _export.value = ExportUi.Done(file, gallerySaved)
+                            } catch (t: kotlinx.coroutines.CancellationException) {
+                                _export.value = ExportUi.Idle; throw t
+                            } catch (t: Exception) {
+                                _export.value = ExportUi.Failed(t.message ?: "Не удалось сохранить видео")
+                            }
+                        }.onFailure {
+                            com.vibetoon.domain.export.ExportFiles.discard(file)
+                            _export.value = if (cancel.get()) ExportUi.Idle else ExportUi.Failed(it.message ?: "Не удалось записать видео")
+                        }
+                    }
                 }
-            }.onFailure {
-                file.delete()
-                _export.value = if (cancel.get()) ExportUi.Idle else ExportUi.Failed(it.message ?: "Не удалось записать видео")
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                com.vibetoon.domain.export.ExportFiles.discard(file)
+                _export.value = ExportUi.Idle
+                withContext(kotlinx.coroutines.NonCancellable) { runCatching { restoreAfterExport() } }
+                throw t
+            } catch (t: Exception) {
+                com.vibetoon.domain.export.ExportFiles.discard(file)
+                _export.value = ExportUi.Failed(t.message ?: "Не удалось записать видео")
+                runCatching { restoreAfterExport() }
             }
-        }
         }
     }
 

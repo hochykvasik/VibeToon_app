@@ -46,6 +46,27 @@ class BoneTest {
         assertEquals(200f, s.parentWorlds.getValue(arm).applyY(200f, 0f), 0.01f) // привязанный слой повёрнут вместе с рукой
     }
 
+    @Test fun drawnMediaLayerFollowsRigidBoneKeysAfterRoundTrip() {
+        val bone = BONE_ID_BASE + 3
+        val drawing = MEDIA_ID_BASE + 2
+        val animation = com.vibetoon.domain.anim.Animation().withKey(bone, 0, LayerTransform())
+            .withKey(bone, 24, LayerTransform(dx = 40f))
+        val data = ProjectData(ProjectMeta("p", "drawing", 100, 100),
+            tracks = animation.tracks, links = mapOf(drawing to bone))
+        val restored = ProjectJson.decode(ProjectJson.encode(data)).getOrThrow()
+        val restoredAnim = com.vibetoon.domain.anim.Animation(tracks = restored.tracks)
+        val layer = LeafNode(drawing, "leg", true, 1f, "norm", false, 0, 0, 100, 100)
+        fun x(frame: Int): Float {
+            val s = SceneBuilder.buildTree(listOf(layer), 100, 100,
+                transforms = mapOf(bone to restoredAnim.evaluate(bone, frame, null)),
+                links = restored.links, bones = mapOf(bone to (0f to 0f)))
+            return s.selectionQuads.getValue(drawing)[0]
+        }
+        assertEquals(0f, x(0), 0.001f)
+        assertEquals(20f, x(12), 0.001f)
+        assertEquals(40f, x(24), 0.001f)
+    }
+
     @Test fun bonesSurviveJson() {
         val meta = ProjectMeta("p", "n", 100, 100)
         val bones = listOf(Bone(upper, "Плечо", 0f, 0f, 100f, 0f), Bone(lower, "Локоть", 100f, 0f, 200f, 5f))

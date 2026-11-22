@@ -67,6 +67,20 @@ class SkinTest {
     }
 
     @Test
+    fun rigidBoneLinkMovesMeshWhenSkinIsRemoved() {
+        val layer = 100_001
+        val bone = 200_001
+        val leaf = LeafNode(layer, "drawing", true, 1f, "norm", false, 0, 0, 100, 100)
+        val mesh = Mesh(floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f), intArrayOf(0, 1, 2, 0, 2, 3))
+        val scene = SceneBuilder.buildTree(listOf(leaf), 100, 100,
+            transforms = mapOf(bone to LayerTransform(dx = 25f)),
+            links = mapOf(layer to bone), bones = mapOf(bone to (0f to 0f)),
+            meshes = mapOf(layer to (mesh to FloatArray(8))), skins = emptyMap())
+        assertEquals(25f, scene.selectionQuads.getValue(layer)[0], 1e-3f)
+        assertEquals(0f, scene.meshVerts[2], 1e-3f)
+    }
+
+    @Test
     fun json_roundTrip() {
         val d = com.vibetoon.domain.project.ProjectData(
             com.vibetoon.domain.project.ProjectMeta(id = "p", name = "t", width = 10, height = 10),

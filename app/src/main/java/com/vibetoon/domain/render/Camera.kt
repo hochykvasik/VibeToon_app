@@ -19,6 +19,16 @@ data class Camera(val zoom: Float = 1f, val panX: Float = 0f, val panY: Float = 
         )
     }
 
+    /** Центрирует точку холста, не меняя масштаб. Неверная геометрия не меняет вид. */
+    fun follow(x: Float, y: Float, viewW: Float, viewH: Float, canvasW: Int, canvasH: Int): Camera {
+        if (!x.isFinite() || !y.isFinite() || !viewW.isFinite() || !viewH.isFinite() ||
+            viewW <= 0f || viewH <= 0f || canvasW <= 0 || canvasH <= 0 || !zoom.isFinite() || zoom <= 0f) return this
+        val scale = fitScale(viewW, viewH, canvasW, canvasH) * zoom
+        val px = -(x - canvasW / 2f) * scale
+        val py = -(y - canvasH / 2f) * scale
+        return if (px.isFinite() && py.isFinite()) copy(panX = px, panY = py) else this
+    }
+
     companion object {
         const val MIN_ZOOM = 0.2f
         const val MAX_ZOOM = 20f

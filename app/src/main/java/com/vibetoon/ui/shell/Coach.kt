@@ -62,9 +62,11 @@ object Coach {
 
     /** Границы зарегистрированных кнопок в координатах окна. */
     val bounds = mutableStateMapOf<String, Rect>()
+    /** Popup имеет собственное окно; подсветку для него рисуем внутри самого Popup. */
+    var popupTargetVisible by mutableStateOf(false)
 
     fun start(s: Session) { session = s; index = 0 }
-    fun stop() { session = null; index = 0 }
+    fun stop() { session = null; index = 0; popupTargetVisible = false }
     fun next() { val s = session ?: return; if (index < s.steps.lastIndex) index++ else stop() }
     fun prev() { if (index > 0) index-- }
 }
@@ -80,13 +82,19 @@ fun CoachOverlay() {
     val s = Coach.session ?: return
     val step = s.steps.getOrNull(Coach.index) ?: return
     var origin by remember { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(Size.Zero) }
     val pulse = rememberInfiniteTransition(label = "coach")
     val k by pulse.animateFloat(0f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "k")
-    val rect = step.target?.let { Coach.bounds[it] }
-    Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() }) {
+    // Координаты отдельного Popup нельзя смешивать с координатами окна редактора.
+    val popupTarget = step.target == "Тестовый PSD"
+    val rect = if (popupTarget) null else step.target?.let { Coach.bounds[it] }?.let { CoachGeometry.visible(it, origin, viewport) }
+    Box(Modifier.fillMaxSize().onGloballyPositioned {
+        origin = it.positionInWindow()
+        viewport = Size(it.size.width.toFloat(), it.size.height.toFloat())
+    }) {
         if (rect != null) Canvas(Modifier.fillMaxSize()) {
             val grow = 4f + 10f * k
-            val tl = rect.topLeft - origin - Offset(grow, grow)
+            val tl = rect.topLeft - Offset(grow, grow)
             val sz = Size(rect.width + grow * 2, rect.height + grow * 2)
             drawRoundRect(s.color.copy(alpha = 0.25f + 0.2f * k), tl, sz, CornerRadius(18f), style = Stroke(width = 14f))
             drawRoundRect(s.color, tl, sz, CornerRadius(18f), style = Stroke(width = 5f))
@@ -100,7 +108,7 @@ fun CoachOverlay() {
                 Text("${com.vibetoon.ui.i18n.L(s.title)} · шаг ${Coach.index + 1} из ${s.steps.size}", fontSize = 11.sp, color = s.color)
                 Text(step.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Text(step.text, fontSize = 13.sp, lineHeight = 18.sp)
-                if (step.target != null && rect == null)
+                if (step.target != null && (if (popupTarget) !Coach.popupTargetVisible else rect == null))
                     Text("Кнопка сейчас не видна на экране: откройте нужную панель или режим.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = Coach::stop) { Text("Пропустить") }

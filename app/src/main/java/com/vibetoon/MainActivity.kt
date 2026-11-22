@@ -93,6 +93,9 @@ class MainActivity : ComponentActivity() {
             val locCtx = remember(settings.effectiveLang) { localizedContext(this@MainActivity, settings.effectiveLang) }
             CompositionLocalProvider(LocalContext provides locCtx, LocalConfiguration provides locCtx.resources.configuration, LocalAppSettings provides settings) {
             VibeTheme(settings) {
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    if (!settings.onboarded || app.needsStarterRecovery) app.ensureStarterProject()
+                }
                 val dark = isDarkNow(settings)
                 SideEffect {
                     androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply { isAppearanceLightStatusBars = !dark; isAppearanceLightNavigationBars = !dark }

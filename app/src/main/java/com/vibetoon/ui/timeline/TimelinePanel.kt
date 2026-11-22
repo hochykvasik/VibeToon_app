@@ -18,6 +18,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.foundation.layout.size
 import com.vibetoon.ui.shell.LocalStub
+import com.vibetoon.ui.thumbnailChecker
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.animation.animateContentSize
@@ -71,6 +72,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.State
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -145,6 +147,8 @@ fun TimelinePanel(
     val multi by vm.multiSelect.collectAsStateWithLifecycle()
     val keySel by vm.keySelection.collectAsStateWithLifecycle()
     val haptic = LocalHapticFeedback.current
+    val keyScope = rememberCoroutineScope()
+    var keyDragDelta by remember { mutableIntStateOf(0) }
     // Порядок строк = порядок слоёв; выделение его не меняет (иначе ломается «Лесенка»)
     val shownRows = rows
     var showSettings by remember { mutableStateOf(false) }
@@ -235,6 +239,7 @@ fun TimelinePanel(
             },
             confirmButton = { androidx.compose.material3.TextButton({ onionDialog = false }) { Text("Готово") } }
         )
+        val stepByFrames = com.vibetoon.ui.theme.LocalAppSettings.current?.stepFrames ?: true
         // ---- Панель воспроизведения ----
         Row(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -242,11 +247,11 @@ fun TimelinePanel(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
         ) {
             TlIcon(Icons.Default.FirstPage, "В начало") { vm.goStart() }
-            TlIcon(Icons.Default.ChevronLeft, "Предыдущий кадр") { vm.scrubTo(frame - 1) }
+            TlIcon(Icons.Default.ChevronLeft, "Предыдущий кадр") { vm.stepTimeline(-1, stepByFrames) }
             FilledIconButton(onClick = vm::togglePlay, modifier = Modifier.size(40.dp).coachTarget("Играть")) {
                 Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Пауза" else "Играть")
             }
-            TlIcon(Icons.Default.ChevronRight, "Следующий кадр") { vm.scrubTo(frame + 1) }
+            TlIcon(Icons.Default.ChevronRight, "Следующий кадр") { vm.stepTimeline(1, stepByFrames) }
             TlIcon(Icons.Default.LastPage, "В конец") { vm.goEnd() }
             FrameFieldHost(frameS, fps, duration - 1, vm::scrubTo)
             Text("/ ${TimeFormat.format(duration, fps)}", fontSize = 12.sp, maxLines = 1, softWrap = false)
@@ -279,6 +284,7 @@ fun TimelinePanel(
             OutlinedButton(onClick = vm::pasteKeys, enabled = hasKeyClip && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { vm.stretchSelectedKeys(2f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Растянуть ×2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { vm.stretchSelectedKeys(0.5f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Сжать ÷2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::reverseSelectedKeys, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Реверс", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::deleteSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
@@ -473,7 +479,7 @@ fun TimelinePanel(
                                     .background(MaterialTheme.colorScheme.surfaceVariant)
                             ) {
                                 if (thumb != null) androidx.compose.foundation.Image(
-                                    thumb, null, modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                    thumb, null, modifier = Modifier.fillMaxSize().thumbnailChecker(com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true), contentScale = androidx.compose.ui.layout.ContentScale.Fit
                                 )
                             }
                         }
@@ -530,6 +536,57 @@ fun TimelinePanel(
             Box(Modifier.horizontalScroll(hScroll)) {
                 Column(
                     Modifier.then(
+                        if (selectMode || playing) Modifier else Modifier.pointerInput(frameWPx, duration) {
+                            val rowH = ROW_H.toPx()
+                            val grab = 14.dp.toPx()
+                            val edge = 56.dp.toPx()
+                            val maxStep = 22.dp.toPx()
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                val row = rowsNow.value.getOrNull((down.position.y / rowH).toInt())?.takeIf { !it.isGroup }
+                                val frameHit = row?.let { TrackGroups.frames(it.layer.id, animNow.value.tracks)
+                                    .minByOrNull { f -> abs(f * frameWPx - down.position.x) }
+                                    ?.takeIf { f -> abs(f * frameWPx - down.position.x) <= grab } }
+                                if (row == null || frameHit == null) return@awaitEachGesture
+                                val cancelled = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                    while (true) {
+                                        val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                        val c = ev.changes.firstOrNull { it.id == down.id }
+                                        if (c == null || !c.pressed || ev.changes.count { it.pressed } != 1 ||
+                                            (c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull true
+                                    }
+                                    @Suppress("UNREACHABLE_CODE") false
+                                } ?: false
+                                if (cancelled) return@awaitEachGesture
+                                val hit = row.layer.id to frameHit
+                                val group = keySelNow.value + hit
+                                vm.selectKeys(group)
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                val low = group.minOf { it.second }
+                                val high = group.maxOf { it.second }
+                                var lastX = down.position.x
+                                var dx = 0
+                                var cancelledDrag = false
+                                fun updateDelta() {
+                                    dx = ((lastX - down.position.x) / frameWPx).roundToInt().coerceIn(-low, duration - 1 - high)
+                                    keyDragDelta = dx
+                                }
+                                val job = keyScope.edgeScroll(hScroll, { viewportPx }, edge, maxStep, { lastX }) { used -> lastX += used; updateDelta() }
+                                try {
+                                    while (true) {
+                                        val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                        val c = ev.changes.firstOrNull { it.id == down.id }
+                                        if (c == null || ev.changes.any { it.id != down.id && it.pressed }) { cancelledDrag = true; break }
+                                        lastX = c.position.x
+                                        updateDelta()
+                                        c.consume()
+                                        if (!c.pressed) break
+                                    }
+                                } finally { job.cancel(); keyDragDelta = 0 }
+                                if (!cancelledDrag && dx != 0) vm.moveSelectedKeys(dx, singleGesture = true)
+                            }
+                        }
+                    ).then(
                         if (!selectMode) Modifier else Modifier.pointerInput(frameWPx) {
                             val rowH = ROW_H.toPx()
                             val grab = 14.dp.toPx()
@@ -568,7 +625,11 @@ fun TimelinePanel(
                                         c.consume()
                                         if (moving) {
                                             val target = (d.x / frameWPx).roundToInt()
-                                            if (target != applied) { vm.moveSelectedKeys(target - applied); applied = target }
+                                            val group = if (hit != null && hit !in keySelNow.value) setOf(hit) else keySelNow.value
+                                            if (group.isNotEmpty()) {
+                                                applied = target.coerceIn(-group.minOf { it.second }, duration - 1 - group.maxOf { it.second })
+                                                keyDragDelta = applied
+                                            }
                                         } else {
                                             marquee.value = androidx.compose.ui.geometry.Rect(
                                                 minOf(down.position.x, c.position.x), minOf(down.position.y, c.position.y),
@@ -577,6 +638,8 @@ fun TimelinePanel(
                                         }
                                     }
                                 }
+                                keyDragDelta = 0
+                                if (moving && dragged && applied != 0) vm.moveSelectedKeys(applied, singleGesture = true)
                                 val m = marquee.value
                                 if (!moving) {
                                     if (dragged && m != null) vm.selectKeys(keysIn(m)) else vm.clearKeySelection()
@@ -644,16 +707,18 @@ fun TimelinePanel(
                             }
                             for (wf in warpFrames) {
                                 val pickedW = (l.id to wf) in keySel
-                                if (pickedW) drawCircle(Color(0xFFFB8C00).copy(alpha = 0.35f), size.height * 0.42f, Offset(wf * frameWPx, size.height / 2f))
-                                drawDiamond(wf * frameWPx, size.height / 2f, size.height * 0.2f, if (pickedW) Color(0xFFFB8C00) else Color(0xFFFFA726))
+                                val x = (wf + if (pickedW) keyDragDelta else 0) * frameWPx
+                                if (pickedW) drawCircle(Color(0xFFFB8C00).copy(alpha = 0.45f), size.height * 0.42f, Offset(x, size.height / 2f))
+                                drawDiamond(x, size.height / 2f, size.height * 0.2f, if (pickedW) Color(0xFFFB8C00) else Color(0xFFFFA726))
                             }
                             // ключ с плавностью рисуется кружком, линейный - ромбом
                             for (k in keys) {
                                 val picked = (l.id to k.frame) in keySel
                                 val kc = if (picked) Color(0xFFFB8C00) else accent
-                                if (picked) drawCircle(kc.copy(alpha = 0.35f), size.height * 0.42f, Offset(k.frame * frameWPx, size.height / 2f))
-                                if (k.easing == EasingType.LINEAR) drawDiamond(k.frame * frameWPx, size.height / 2f, size.height * 0.28f, kc)
-                                else drawCircle(kc, size.height * 0.26f, Offset(k.frame * frameWPx, size.height / 2f))
+                                val x = (k.frame + if (picked) keyDragDelta else 0) * frameWPx
+                                if (picked) drawCircle(kc.copy(alpha = 0.45f), size.height * 0.42f, Offset(x, size.height / 2f))
+                                if (k.easing == EasingType.LINEAR) drawDiamond(x, size.height / 2f, size.height * 0.28f, kc)
+                                else drawCircle(kc, size.height * 0.26f, Offset(x, size.height / 2f))
                             }
                             drawPlayhead(frame * frameWPx, playheadColor)
                             // ключи времени символа: рисуются поверх плейхеда и сдвинуты вправо от своего кадра, чтобы на 0-м кадре не прятаться под ним
@@ -697,6 +762,7 @@ fun TimelinePanel(
                                     drawLine(Color(0xFF26C6DA), Offset(x, mid - h), Offset(x, mid + h), strokeWidth = step * 0.75f)
                                     x += step
                                 }
+                                if (vis1 > vis0 && pk.isNotEmpty()) vm.waveformDrawn(a.id, pk)
                             }
                             val hw = 5.dp.toPx()
                             drawRoundRect(accent, Offset(x0, size.height * 0.2f), androidx.compose.ui.geometry.Size(hw, size.height * 0.6f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
@@ -882,7 +948,7 @@ private fun Modifier.clipGestures(id: Int, frameWPx: Float, clip: State<Clip>, s
             while (true) {
                 val ev = awaitPointerEvent(PointerEventPass.Initial)
                 val c = ev.changes.firstOrNull { it.id == down.id } ?: break
-                if (!c.pressed) break
+                if (!c.pressed || c.isConsumed) break
                 val dx = c.positionChange().x
                 if (!dragging) {
                     moved += dx

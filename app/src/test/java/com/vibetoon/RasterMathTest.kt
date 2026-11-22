@@ -91,6 +91,8 @@ class RasterMathTest {
         assertEquals(255, a(15, 20))
         assertNotNull(moved.before)
         assertNull(RasterMath.moveResult(px, 0, W, H, mask, 0, 0))
+        assertNull(RasterMath.moveResult(px, 0, W, H, mask, W, 0))
+        assertNull(RasterMath.moveResult(px, 0, W, H, mask, Int.MIN_VALUE, 0))
     }
 
     @Test fun smudgeDragsPixelsAlongStroke() {

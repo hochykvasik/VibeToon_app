@@ -1,0 +1,70 @@
+name: Android debug build
+
+on:
+  push:
+    branches:
+      - arena/c18f871e-vibetoon
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+          cache: gradle
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+      - name: Run native queue concurrency test
+        run: |
+          g++ -std=c++17 -pthread -I app/src/main/cpp app/src/test/cpp/UploadQueueTest.cpp app/src/main/cpp/render/UploadQueue.cpp -o /tmp/vibetoon-upload-queue-test
+          /tmp/vibetoon-upload-queue-test
+      - name: Test beta publishing guards
+        run: bash tools/ci/tests/publish-beta-test.sh
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          if ! ./gradlew testDebugUnitTest --no-daemon 2>&1 | tee gradle-unit.log; then
+            grep -E '^e: |FAILED|error:|Exception|tests completed|Execution failed' gradle-unit.log | tail -30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done || true
+            exit 1
+          fi
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Verify debug package and signing certificate
+        run: |
+          set -eu
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          "$TOOLS/aapt" dump badging "$APK" | grep -F "package: name='com.vibetoon'"
+          "$TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/vibetoon-signature.txt
+          grep -Fi 'Signer #1 certificate SHA-256 digest: 02e8a1d469bb32a6cd30e43659e927068a5daa752bd7055b16a81a36f3b88003' /tmp/vibetoon-signature.txt
+          if grep -q 'Signer #2 certificate' /tmp/vibetoon-signature.txt; then echo 'Unexpected second signer'; exit 1; fi
+          sha256sum "$APK"
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibetoon-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+      - name: Prepare direct APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk vibetoon-debug.apk
+      - name: Upload direct APK without ZIP
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          path: vibetoon-debug.apk
+          archive: false
+          if-no-files-found: error
+      - name: Publish public beta release (opt-in)
+        if: github.event_name == 'push' && vars.PUBLISH_PUBLIC_BETA == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/ci/publish-beta.sh vibetoon-debug.apk

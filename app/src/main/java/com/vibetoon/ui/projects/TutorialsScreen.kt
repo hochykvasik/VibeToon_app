@@ -81,6 +81,8 @@ val TUTORIALS: List<Tutorial> = listOf(
             TutorialStep("Таймлайн", "Красная линия - текущий кадр. Тяните её по линейке: у края экрана таймлайн сам прокручивается. «Играть» запускает проигрывание.",
                 listOf(UiButton(Icons.Default.PlayArrow, "Играть", "панель воспроизведения"))),
             TutorialStep("Анимация фигур", "Выберите фигуру, переставьте плейхед, подвиньте фигуру и нажмите «Add Key». Между ключами движение считается само. «Лесенка» выстраивает выбранные клипы встык."),
+            TutorialStep("Попробуйте тестовый PSD", "Меню открыто, кнопка тестового PSD подсвечена. Нажмите её сами для эксперимента или закройте меню и продолжите другие уроки. Загрузка заменит текущий PSD и его анимацию.",
+                listOf(UiButton(null, "Тестовый PSD", "меню действий", chip = true))),
             TutorialStep("Экспорт", "Готово? Нажмите «Export», выберите MP4, GIF или картинку и поделитесь результатом.",
                 listOf(UiButton(null, "Export", "верхняя панель", chip = true, coach = "Export")))
         ),
@@ -88,7 +90,7 @@ val TUTORIALS: List<Tutorial> = listOf(
         lesson = true
     ),
     Tutorial(
-        "Основы работы с холстом", "Первый проект за 5 шагов", Color(0xFF42A5F5), DiagramKind.LAYERS,
+        "Основы работы с холстом", "Первый проект за 6 шагов", Color(0xFF42A5F5), DiagramKind.LAYERS,
         listOf(
             TutorialStep("Создайте проект", "На экране проектов нажмите «＋» сверху, выберите пропорции и «Создать».",
                 listOf(UiButton(Icons.Default.Add, "Создать проект", "правый верхний угол экрана проектов"))),
@@ -99,7 +101,9 @@ val TUTORIALS: List<Tutorial> = listOf(
             TutorialStep("Двигайте сам холст", "Если ничего не выделено, два пальца двигают и масштабируют вид. Вернуть вид: «Сбросить вид холста» в меню действий.",
                 tip = "Тап в пустое место снимает выделение."),
             TutorialStep("Отмена и повтор", "Любое действие можно отменить.",
-                listOf(UiButton(Icons.Default.Undo, "Отменить", "верхняя панель"), UiButton(Icons.Default.Redo, "Повторить", "верхняя панель")))
+                listOf(UiButton(Icons.Default.Undo, "Отменить", "верхняя панель"), UiButton(Icons.Default.Redo, "Повторить", "верхняя панель"))),
+            TutorialStep("Попробуйте тестовый PSD", "Меню открыто, кнопка тестового PSD подсвечена. Нажмите её сами для эксперимента или закройте меню и продолжите другие уроки. Загрузка заменит текущий PSD и его анимацию.",
+                listOf(UiButton(null, "Тестовый PSD", "меню действий", chip = true)))
         ),
         listOf("Проект сохраняется сам через пару секунд после правки.")
     ),
@@ -198,6 +202,21 @@ val TUTORIALS: List<Tutorial> = listOf(
         ),
         listOf("Щипок двумя пальцами по таймлайну меняет масштаб времени.")
     )
+    , Tutorial("Камера: Pan и Zoom", "Движение и приближение кадра", Color(0xFF42A5F5), DiagramKind.TIMELINE,
+        listOf(TutorialStep("Добавьте камеру", "В меню действий выберите «Камера (Pan & Zoom)». Камера — отдельный слой, её положение и масштаб можно анимировать ключами."),
+            TutorialStep("Настройте движение", "Выберите камеру, измените X, Y или Scale в свойствах и поставьте ключи на таймлайне. Движение вида пальцами без выделения не меняет экспорт.")))
+    , Tutorial("Магнит таймлайна", "Привязка плейхеда", Color(0xFF26A69A), DiagramKind.TIMELINE,
+        listOf(TutorialStep("Включите магнит", "Нажмите «Магнит» на панели таймлайна. При перетаскивании плейхед притягивается к ключам, маркерам и краям клипов.",
+            listOf(UiButton(null, "Магнит", "панель таймлайна", chip = true))),
+            TutorialStep("Выключите магнит", "Нажмите кнопку ещё раз, чтобы свободно перемещать плейхед.")))
+    , Tutorial("Иерархия трансформаций", "Функция в разработке", Color(0xFF7E57C2), DiagramKind.LAYERS,
+        listOf(TutorialStep("Текущий статус", "Кнопка «Иерархия трансформаций» на таймлайне пока не реализована. Для группировки используйте доступные группы и связи слоёв.")))
+    , Tutorial("Ключи и траектория", "Ключи работают; траектория в разработке", Color(0xFFFF7043), DiagramKind.TIMELINE,
+        listOf(TutorialStep("Ключи", "Выберите слой и добавьте ключи на разных кадрах кнопкой Add Key. Перемещайте ключи выделением на таймлайне."),
+            TutorialStep("Текущий статус", "Кнопка «Режим ключей» и отображение траектории движения пока не реализованы.")))
+    , Tutorial("Расширение клипа", "Кнопка в разработке", Color(0xFF8D6E63), DiagramKind.TIMELINE,
+        listOf(TutorialStep("Текущий статус", "Кнопка «Расширить» пока не реализована. Границы клипа можно менять перетаскиванием его краёв на таймлайне.")))
+
 )
 
 /** Ряд карточек «Обучение» на экране проектов. */
@@ -272,9 +291,12 @@ fun TutorialDetailScreen(t: Tutorial, onClose: () -> Unit, onShowInEditor: (() -
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Lightbulb, null, tint = t.color, modifier = Modifier.size(18.dp))
-                                Text("  Советы", fontWeight = FontWeight.SemiBold)
+                                Text("Советы", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
                             }
-                            for (tip in t.tips) Text("• $tip", fontSize = 13.sp)
+                            for (tip in t.tips) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("•", fontSize = 13.sp)
+                                Text(tip, fontSize = 13.sp)
+                            }
                         }
                     }
                 }
@@ -295,7 +317,10 @@ private fun StepCard(n: Int, step: TutorialStep, color: Color) {
                 Text(step.text, fontSize = 14.sp, lineHeight = 20.sp)
                 for (b in step.buttons) ButtonPlate(b, color)
                 step.tip?.let {
-                    com.vibetoon.ui.IconText(androidx.compose.material.icons.Icons.Default.Lightbulb, it, 12.sp, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Top) {
+                        Icon(Icons.Default.Lightbulb, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+                        Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+                    }
                 }
             }
         }
@@ -314,12 +339,13 @@ private fun ButtonPlate(b: UiButton, color: Color) {
                 .border(1.dp, color, RoundedCornerShape(if (b.chip) 8.dp else 20.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center
         ) {
-            if (b.icon != null) Icon(b.icon, b.label, tint = color, modifier = Modifier.size(24.dp))
+            if (b.icon != null) Icon(b.icon, com.vibetoon.ui.i18n.L(b.label), tint = color, modifier = Modifier.size(24.dp))
             else Text(b.label, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = color)
         }
         Column {
             Text(b.label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            Text("Где: ${b.where}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            val location = com.vibetoon.ui.i18n.L(b.where)
+            Text(com.vibetoon.ui.i18n.L("Где: {}").replace("{}", location), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         }
     }
 }

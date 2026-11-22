@@ -88,6 +88,7 @@ fun ProjectsScreen(app: AppViewModel) {
     val allProjects by app.projects.collectAsStateWithLifecycle()
     val sizes by app.sizes.collectAsStateWithLifecycle()
     val storedFolders by app.folders.collectAsStateWithLifecycle()
+    val starterId by app.starterId.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
     var searchOn by remember { mutableStateOf(false) }
     var sortBy by remember { mutableStateOf(com.vibetoon.domain.project.ProjectSort.DATE) }
@@ -97,10 +98,14 @@ fun ProjectsScreen(app: AppViewModel) {
     var newFolder by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf<ProjectMeta?>(null) }
     var backupFor by remember { mutableStateOf<String?>(null) }
-    val folderNames = com.vibetoon.domain.project.ProjectListMath.folders(storedFolders, allProjects)
-    val projects = com.vibetoon.domain.project.ProjectListMath.sort(
-        com.vibetoon.domain.project.ProjectListMath.filter(allProjects, query, folder), sortBy, sizes
-    )
+    val folderNames = remember(storedFolders, allProjects) {
+        com.vibetoon.domain.project.ProjectListMath.folders(storedFolders, allProjects)
+    }
+    val projects = remember(allProjects, query, folder, sortBy, sizes) {
+        com.vibetoon.domain.project.ProjectListMath.sort(
+            com.vibetoon.domain.project.ProjectListMath.filter(allProjects, query, folder), sortBy, sizes
+        )
+    }
     val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) app.importBackup(uri)
     }
@@ -126,7 +131,7 @@ fun ProjectsScreen(app: AppViewModel) {
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snack) },
+        snackbarHost = { SnackbarHost(snack) { data -> androidx.compose.material3.Snackbar { Text(data.visuals.message) } } },
         contentWindowInsets = WindowInsets(0),
         containerColor = MaterialTheme.colorScheme.background
     ) { pad ->
@@ -148,7 +153,7 @@ fun ProjectsScreen(app: AppViewModel) {
                         IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.SwapVert, "Сортировка") }
                         DropdownMenu(sortMenu, { sortMenu = false }) {
                             for ((s, t) in listOf(com.vibetoon.domain.project.ProjectSort.DATE to "По дате", com.vibetoon.domain.project.ProjectSort.NAME to "По имени", com.vibetoon.domain.project.ProjectSort.SIZE to "По размеру"))
-                                DropdownMenuItem(text = { Text((if (sortBy == s) "✓ " else "") + t) }, onClick = { sortBy = s; sortMenu = false })
+                                DropdownMenuItem(text = { Text((if (sortBy == s) "✓ " else "") + com.vibetoon.ui.i18n.L(t)) }, onClick = { sortBy = s; sortMenu = false })
                         }
                     }
                     IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Download, "Импорт") }
@@ -172,6 +177,18 @@ fun ProjectsScreen(app: AppViewModel) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
+                // Явная рекомендация не зависит от фильтра папки или поиска.
+                if (allProjects.any { it.id == starterId }) item(span = { GridItemSpan(maxLineSpan) }) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Рекомендуем начать с учебного проекта", fontWeight = FontWeight.SemiBold)
+                                Text("Готовые фигуры и подсказки помогут освоить редактор.", fontSize = 12.sp)
+                            }
+                            androidx.compose.material3.Button(onClick = { app.startLesson(TUTORIALS.first { it.lesson }.coachSession()) }) { Text("Начать урок") }
+                        }
+                    }
+                }
                 // раздел «Обучение»: карточки статей (открываются на весь экран)
                 item(span = { GridItemSpan(maxLineSpan) }) { TutorialRow(onOpen = { article = it }) }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -212,18 +229,14 @@ fun ProjectsScreen(app: AppViewModel) {
     }
     article?.let { t ->
         TutorialDetailScreen(t, onClose = { article = null }, onShowInEditor = {
-            val p = projects.firstOrNull()
-            if (p == null) {
-                scope.launch { snack.currentSnackbarData?.dismiss(); snack.showSnackbar("Сначала создайте проект («+» сверху), затем нажмите «Пройти в редакторе»") }
+            val p = allProjects.firstOrNull()
+            article = null
+            if (t.lesson || p == null) {
+                // Даже при пустой библиотеке любой урок можно пройти на готовом учебном проекте.
+                app.startLesson(t.coachSession())
             } else {
-                if (t.lesson) {
-                    article = null
-                    app.startLesson(t.coachSession())   // свой учебный проект с фигурами
-                } else {
-                    com.vibetoon.ui.shell.Coach.start(t.coachSession())
-                    article = null
-                    app.open(p.id)
-                }
+                com.vibetoon.ui.shell.Coach.start(t.coachSession())
+                app.open(p.id)
             }
         })
     }
@@ -290,13 +303,18 @@ private fun ProjectCard(
     onMove: () -> Unit = {}, onBackup: () -> Unit = {}, sizeText: String? = null
 ) {
     var menu by remember { mutableStateOf(false) }
-    // Миниатюра перечитывается, когда проект меняется (updatedAt)
-    val thumb = remember(p.id, p.updatedAt) {
-        runCatching {
-            val f = app.thumbnailFile(p.id)
-            if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
-        }.getOrNull()
-    }
+    // Декодирование и обращение к диску не должны задерживать открытие списка на UI-потоке.
+    val thumb = androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
+        null, p.id, p.updatedAt, app
+    ) {
+        value = null
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val f = app.thumbnailFile(p.id)
+                if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+            }.getOrNull()
+        }
+    }.value
     // Свайп влево открывает меню действий, карточка возвращается на место
     val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
         if (v == SwipeToDismissBoxValue.EndToStart) menu = true

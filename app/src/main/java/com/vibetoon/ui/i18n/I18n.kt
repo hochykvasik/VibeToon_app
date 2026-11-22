@@ -46,6 +46,17 @@ fun L(ru: String): String {
     return sb.toString()
 }
 
+/** Translate known nested project diagnostics separately; leave OS and user-supplied text intact. */
+@Composable
+fun localizeDiagnostic(message: String): String {
+    val prefix = "Повреждённый файл проекта: "
+    if (!message.startsWith(prefix)) return L(message)
+    val detail = message.removePrefix(prefix)
+    val position = Regex("^(.*) \\(позиция ([0-9]+)\\)$").matchEntire(detail)
+    val translated = if (position != null) L("{} (позиция {})").replaceFirst("{}", L(position.groupValues[1])).replaceFirst("{}", position.groupValues[2]) else L(detail)
+    return L("Повреждённый файл проекта: {}").replace("{}", translated)
+}
+
 private val compiled: List<Pair<Regex, Int>> by lazy { I18N_TEMPLATES.map { Regex(it.first) to it.second } }
 private val templateMemo = HashMap<String, Pair<Int, List<String>>?>()
 

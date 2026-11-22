@@ -17,6 +17,8 @@ object TrackGroups {
         for (k in 0 until PerspectiveMath.CORNERS) add(PerspectiveMath.pointId(layerId, k))
         for (k in 0 until TurbMath.PARAMS) add(TurbMath.paramId(layerId, k))
         for (k in 0 until PuppetMath.MAX_PINS) add(PuppetMath.pinId(layerId, k))
+        if (layerId in 0..EffectTracks.MAX_LAYER) for (slot in 0 until EffectTracks.SLOTS)
+            for (param in 0 until EffectTracks.PARAMS) add(EffectTracks.id(layerId, slot, param))
         return out
     }
 
@@ -30,6 +32,10 @@ object TrackGroups {
     /** Тот же «слот» дорожки на другом слое [to] (трансформация, точка Warp, вершина, угол, параметр, пин) или null. */
     fun remap(id: Int, from: Int, to: Int): Int? {
         if (id == from) return to
+        if (EffectTracks.belongs(id, from) && to in 0..EffectTracks.MAX_LAYER) {
+            val index = ((-1L - id) % (EffectTracks.SLOTS * EffectTracks.PARAMS)).toInt()
+            return EffectTracks.id(to, index / EffectTracks.PARAMS, index % EffectTracks.PARAMS)
+        }
         val w0 = WarpMath.pointId(from, 0)
         if (id in w0 until w0 + WarpMath.POINTS) return WarpMath.pointId(to, id - w0)
         val m0 = MeshMath.vertexId(from, 0)

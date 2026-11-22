@@ -16,7 +16,7 @@ import kotlin.math.max
  * для слоя всегда выполняется только самый свежий. Источник декодируется в уменьшенном размере.
  */
 class VideoFrames(private val onUploaded: () -> Unit) {
-    private class Req(val file: File, val timeMs: Long, val w: Int, val h: Int)
+    private class Req(val file: File, val timeMs: Long, val w: Int, val h: Int, val ticket: Long)
 
     private val pool = Executors.newSingleThreadExecutor { r -> Thread(r, "vt-video").also { it.isDaemon = true } }
     private val pending = ConcurrentHashMap<Int, Req>()
@@ -29,7 +29,7 @@ class VideoFrames(private val onUploaded: () -> Unit) {
         lastMs[id] = timeMs
         val k = maxSide.toFloat() / max(srcW, srcH).coerceAtLeast(1)
         val s = if (k < 1f) k else 1f
-        pending[id] = Req(file, timeMs, max(2, (srcW * s).toInt()), max(2, (srcH * s).toInt()))
+        pending[id] = Req(file, timeMs, max(2, (srcW * s).toInt()), max(2, (srcH * s).toInt()), RenderNative.textureUploadTicket(id))
         pool.execute { drain() }
     }
 
@@ -51,9 +51,9 @@ class VideoFrames(private val onUploaded: () -> Unit) {
                 if (bmp == null) continue
                 if (bmp.config != Bitmap.Config.ARGB_8888) bmp = bmp.copy(Bitmap.Config.ARGB_8888, false)
                 if (bmp != null) {
-                    RenderNative.uploadBitmap(id, bmp)
+                    val uploaded = RenderNative.uploadBitmapIfCurrent(id, bmp, r.ticket)
                     bmp.recycle()
-                    onUploaded()
+                    if (uploaded) onUploaded()
                 }
                 if (f != r.file) Unit
             } catch (e: Exception) {

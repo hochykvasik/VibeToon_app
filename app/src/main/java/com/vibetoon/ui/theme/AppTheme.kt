@@ -47,6 +47,36 @@ class AppSettings(context: Context) {
     var onboarded by mutableStateOf(p.getBoolean("onboarded", false))
     /** Режим левши: панель инструментов уезжает вправо, панель слоёв влево. */
     var leftHanded by mutableStateOf(p.getBoolean("left", false))
+    /** Вспомогательная сетка редактора; не влияет на содержимое проекта и экспорт. */
+    var showGrid by mutableStateOf(p.getBoolean("show_grid", false))
+    var gridCells by mutableIntStateOf(com.vibetoon.domain.render.CanvasGrid.density(p.getInt("grid_cells", 16)))
+    fun saveGrid() { p.edit().putBoolean("show_grid", showGrid).putInt("grid_cells", gridCells).apply() }
+    var resetFrameAfterPause by mutableStateOf(p.getBoolean("reset_frame_after_pause", false))
+    var checkerThumbnails by mutableStateOf(p.getBoolean("checker_thumbnails", false))
+    // До появления настройки звук при скраббинге был включён всегда.
+    var audioWhileScrubbing by mutableStateOf(p.getBoolean("audio_while_scrubbing", true))
+    fun savePlaybackAndDisplay() { p.edit().putBoolean("reset_frame_after_pause", resetFrameAfterPause).putBoolean("checker_thumbnails", checkerThumbnails).putBoolean("audio_while_scrubbing", audioWhileScrubbing).apply() }
+    // Значения по умолчанию сохраняют прежнее поведение редактора.
+    var autoKeyframes by mutableStateOf(p.getBoolean("auto_keyframes", false))
+    var shapeAssist by mutableStateOf(p.getBoolean("shape_assist", false))
+    var touchDetection by mutableStateOf(p.getBoolean("touch_detection", false))
+    var doubleTapMultiSelect by mutableStateOf(p.getBoolean("double_tap_multi_select", false))
+    var manualSelectionClose by mutableStateOf(p.getBoolean("manual_selection_close", false))
+    var showMotionPath by mutableStateOf(p.getBoolean("show_motion_path", false))
+    var refocusButton by mutableStateOf(p.getBoolean("refocus_button", false))
+    var followCamera by mutableStateOf(p.getBoolean("follow_camera", false))
+    var longPressPicker by mutableStateOf(p.getBoolean("long_press_picker", false))
+    var fingerDrawing by mutableStateOf(p.getBoolean("finger_drawing", true))
+    var cursorEnabled by mutableStateOf(p.getBoolean("cursor_enabled", true))
+    var cursorHoverPreview by mutableStateOf(p.getBoolean("cursor_hover_preview", false))
+    var quickSelection by mutableStateOf(p.getBoolean("quick_selection", false))
+    var selectLayersOnCanvas by mutableStateOf(p.getBoolean("select_layers_canvas", true))
+    fun saveSprint68() { p.edit().putBoolean("shape_assist", shapeAssist).putBoolean("touch_detection", touchDetection).putBoolean("double_tap_multi_select", doubleTapMultiSelect).putBoolean("manual_selection_close", manualSelectionClose).putBoolean("show_motion_path", showMotionPath).putBoolean("refocus_button", refocusButton).putBoolean("follow_camera", followCamera).putBoolean("long_press_picker", longPressPicker).putBoolean("finger_drawing", fingerDrawing).putBoolean("cursor_enabled", cursorEnabled).putBoolean("cursor_hover_preview", cursorHoverPreview).putBoolean("select_layers_canvas", selectLayersOnCanvas).putBoolean("quick_selection", quickSelection).apply() }
+    var stepFrames by mutableStateOf(p.getBoolean("step_frames", true))
+    var quickDeleteDrawing by mutableStateOf(p.getBoolean("quick_delete_drawing", false))
+    var selectionMaskVisible by mutableStateOf(p.getBoolean("selection_mask_visible", true))
+    var boneColors by mutableStateOf(p.getBoolean("bone_colors", false))
+    fun saveSprint67() { p.edit().putBoolean("auto_keyframes", autoKeyframes).putBoolean("step_frames", stepFrames).putBoolean("quick_delete_drawing", quickDeleteDrawing).putBoolean("selection_mask_visible", selectionMaskVisible).putBoolean("bone_colors", boneColors).apply() }
     /** Касание двумя пальцами - Undo, тремя - Redo (по умолчанию выключено, чтобы не мешать жестам камеры). */
     var tap2Undo by mutableStateOf(p.getBoolean("tap2", false))
     var tap3Redo by mutableStateOf(p.getBoolean("tap3", false))

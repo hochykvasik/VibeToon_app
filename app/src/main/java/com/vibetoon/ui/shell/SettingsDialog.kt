@@ -62,7 +62,7 @@ private val RU: Map<String, String> = mapOf(
     "Layer Pivot Editing" to "Правка опорной точки слоя",
     "Temporary Pivots" to "Временные опорные точки",
     "Show Motion Path" to "Показывать траекторию движения",
-    "Quick Selection" to "Быстрое выделение",
+    "Quick Selection" to "Быстрый выбор слоя касанием",
     "Auto Pixel Edit Mode" to "Авто-режим правки пикселей",
     "Manually Close Selections" to "Замыкать выделение вручную",
     "Cursor Enabled" to "Курсор включён",
@@ -100,7 +100,7 @@ private fun ru(t: String) = RU[t] ?: t
 private val TABS: List<Pair<String, List<Item>>> = listOf(
     APPEARANCE to emptyList(),   // рабочая вкладка: язык, тема, акцентный цвет (остальные пункты - заготовки)
     "General" to toggles(
-        "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)", "Play Audio While Scrubbing",
+        "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)", "Show Grid", "Play Audio While Scrubbing",
         "Quick Layer Delete: рисунок (иначе анимация)", "Follow Camera", "Reset Frame After Pause",
         "Forward/Backward: кадры (иначе рисунки)", "Vector Workflow", "Auto-Add Keyframes"
     ),
@@ -131,11 +131,11 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
  * Окно настроек (каркас): вкладки General, Tools, Import, Appearance, Gestures, Keyboard, Backup, Project Info.
  * Значения пока не сохраняются и ничего не меняют: каждый пункт - заготовка под будущую логику.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
     val stub = LocalStub.current
     var tab by rememberSaveable { mutableStateOf(0) }
-    val state = remember { mutableStateMapOf<String, Boolean>() }
     var canvasDialog by remember { mutableStateOf(0) }
     if (vm != null && canvasDialog != 0) com.vibetoon.ui.CanvasDialog(vm, canvasDialog == 2) { canvasDialog = 0 }
     AlertDialog(
@@ -153,7 +153,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         com.vibetoon.ui.theme.LocalAppSettings.current?.let { st ->
                             com.vibetoon.ui.theme.AppearanceControls(st)
                             OutlinedButton(onClick = { st.reset() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Сбросить внешний вид", fontSize = 13.sp) }
-                            Text("Язык интерфейса меняется сразу. Туториалы и подсказки пока на русском.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), modifier = Modifier.padding(top = 4.dp))
+                            Text("Язык интерфейса меняется сразу.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), modifier = Modifier.padding(top = 4.dp))
                         }
                         return@Column
                     }
@@ -174,12 +174,54 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                     for (item in TABS[tab].second) {
                         when (item) {
                             is Toggle -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(ru(item.title), fontSize = 14.sp, modifier = Modifier.weight(1f))
                                 val st = com.vibetoon.ui.theme.LocalAppSettings.current
+                                val available = st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection")
+                                Column(Modifier.weight(1f)) {
+                                    Text(ru(item.title), fontSize = 14.sp)
+                                    if (!available) Text("В разработке", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    else when (item.title) {
+                                        "Quick Selection" -> Text("Касание выбирает слой под пальцем сразу, минуя группы; выделение пикселей не меняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Auto-Add Keyframes" -> Text("Слои, кости в режиме анимации и эффекты; ретайминг и деформации не поддерживаются", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Shape Assist" -> Text("Частично: прямые, овалы, прямоугольники и треугольники после удержания; без предпросмотра", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Touch Detection" -> Text("Защита от ладони: касания пальцем игнорируются во время касания пера и 1,2 секунды после него; наведение не блокирует палец", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Double Tap & Drag for Multi-select" -> Text("Transform: двойной тап и протяжка выбирают видимые незаблокированные слои по центру рамки; без костей", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Manually Close Selections" -> Text("Для растрового лассо: замкните у начала или продолжайте от конца; остальные способы выделения не меняются", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Show Motion Path" -> Text("Только корневой слой или кость: без родителя, камеры проекта и ретайминга; не экспортируется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Pinch to Refocus" -> Text("Двойной тап по кнопке фокуса на верхней панели; жест щипка не меняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Follow Camera" -> Text("При воспроизведении центрирует выбранный слой или кость; не меняет экспорт", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Pipette (Long Press)" -> Text("Удерживайте неподвижно в режиме Transform; при рисовании и деформации жест отключён", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Finger Drawing" -> Text("Кисть и ластик: при выключении рисует только перо; остальные растровые инструменты не меняются", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Cursor Enabled" -> Text("Круг кисти и инструментов деформации во время касания", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Cursor Hover Preview" -> Text("Превью пера над выбранным растровым слоем; зависит от поддержки наведения устройством", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Select Layers on Canvas" -> Text("Выбор слоёв касанием холста; кости и пипетка не затрагиваются", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
                                 if (item.title == "Left Handed" && st != null) Switch(checked = st.leftHanded, onCheckedChange = { st.leftHanded = it; st.save() })
+                                else if (item.title == "Show Grid" && st != null) Switch(checked = st.showGrid, onCheckedChange = { st.showGrid = it; st.saveGrid() })
+                                else if (item.title == "Play Audio While Scrubbing" && st != null) Switch(checked = st.audioWhileScrubbing, onCheckedChange = { st.audioWhileScrubbing = it; st.savePlaybackAndDisplay(); if (!it) vm?.stopScrubPreview() })
+                                else if (item.title == "Reset Frame After Pause" && st != null) Switch(checked = st.resetFrameAfterPause, onCheckedChange = { st.resetFrameAfterPause = it; st.savePlaybackAndDisplay() })
+                                else if (item.title == "Checker Pattern in Thumbnails" && st != null) Switch(checked = st.checkerThumbnails, onCheckedChange = { st.checkerThumbnails = it; st.savePlaybackAndDisplay() })
+                                else if (item.title == "Auto-Add Keyframes" && st != null) Switch(checked = st.autoKeyframes, onCheckedChange = { st.autoKeyframes = it; st.saveSprint67() })
+                                else if (item.title == "Shape Assist" && st != null) Switch(checked = st.shapeAssist, onCheckedChange = { st.shapeAssist = it; st.saveSprint68() })
+                                else if (item.title == "Touch Detection" && st != null) Switch(checked = st.touchDetection, onCheckedChange = { st.touchDetection = it; st.saveSprint68() })
+                                else if (item.title == "Double Tap & Drag for Multi-select" && st != null) Switch(checked = st.doubleTapMultiSelect, onCheckedChange = { st.doubleTapMultiSelect = it; st.saveSprint68() })
+                                else if (item.title == "Manually Close Selections" && st != null) Switch(checked = st.manualSelectionClose, onCheckedChange = { st.manualSelectionClose = it; st.saveSprint68() })
+                                else if (item.title == "Show Motion Path" && st != null) Switch(checked = st.showMotionPath, onCheckedChange = { st.showMotionPath = it; st.saveSprint68() })
+                                else if (item.title == "Pinch to Refocus" && st != null) Switch(checked = st.refocusButton, onCheckedChange = { st.refocusButton = it; st.saveSprint68() })
+                                else if (item.title == "Follow Camera" && st != null) Switch(checked = st.followCamera, onCheckedChange = { st.followCamera = it; st.saveSprint68() })
+                                else if (item.title == "Pipette (Long Press)" && st != null) Switch(checked = st.longPressPicker, onCheckedChange = { st.longPressPicker = it; st.saveSprint68() })
+                                else if (item.title == "Finger Drawing" && st != null) Switch(checked = st.fingerDrawing, onCheckedChange = { st.fingerDrawing = it; st.saveSprint68() })
+                                else if (item.title == "Cursor Enabled" && st != null) Switch(checked = st.cursorEnabled, onCheckedChange = { st.cursorEnabled = it; st.saveSprint68() })
+                                else if (item.title == "Cursor Hover Preview" && st != null) Switch(checked = st.cursorHoverPreview, onCheckedChange = { st.cursorHoverPreview = it; st.saveSprint68() })
+                                else if (item.title == "Quick Selection" && st != null) Switch(checked = st.quickSelection, onCheckedChange = { st.quickSelection = it; st.saveSprint68() })
+                                else if (item.title == "Select Layers on Canvas" && st != null) Switch(checked = st.selectLayersOnCanvas, onCheckedChange = { st.selectLayersOnCanvas = it; st.saveSprint68() })
+                                else if (item.title == "Forward/Backward: кадры (иначе рисунки)" && st != null) Switch(checked = st.stepFrames, onCheckedChange = { st.stepFrames = it; st.saveSprint67() })
+                                else if (item.title == "Quick Layer Delete: рисунок (иначе анимация)" && st != null) Switch(checked = st.quickDeleteDrawing, onCheckedChange = { st.quickDeleteDrawing = it; st.saveSprint67() })
+                                else if (item.title == "Selection Mask Visibility" && st != null) Switch(checked = st.selectionMaskVisible, onCheckedChange = { st.selectionMaskVisible = it; st.saveSprint67() })
+                                else if (item.title == "Bones Colors" && st != null) Switch(checked = st.boneColors, onCheckedChange = { st.boneColors = it; st.saveSprint67() })
                                 else if (item.title == "2 Finger Tap Undo" && st != null) Switch(checked = st.tap2Undo, onCheckedChange = { st.tap2Undo = it; st.saveGestures() })
                                 else if (item.title == "3 Finger Tap Redo" && st != null) Switch(checked = st.tap3Redo, onCheckedChange = { st.tap3Redo = it; st.saveGestures() })
-                                else Switch(checked = state[item.title] == true, onCheckedChange = { state[item.title] = it })
+                                else Switch(checked = false, onCheckedChange = null, enabled = false)
                             }
                             is Action -> OutlinedButton(onClick = { stub(item.title) }, modifier = Modifier.fillMaxWidth()) { Text(ru(item.title), fontSize = 13.sp) }
                             is Info -> Row(Modifier.fillMaxWidth()) {
@@ -188,8 +230,21 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                             }
                         }
                     }
+                    val gridSettings = com.vibetoon.ui.theme.LocalAppSettings.current
+                    if (TABS[tab].first in setOf("General", "Display") && gridSettings?.showGrid == true) {
+                        Text("Ячеек по ширине холста", fontSize = 13.sp)
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            com.vibetoon.domain.render.CanvasGrid.densityOptions.forEach { count ->
+                                androidx.compose.material3.FilterChip(
+                                    selected = gridSettings.gridCells == count,
+                                    onClick = { gridSettings.gridCells = count; gridSettings.saveGrid() },
+                                    label = { Text(count.toString(), fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                    }
                     Text(
-                        "Пункты пока заглушки: значения не сохраняются.",
+                        "Недоступные пункты помечены как находящиеся в разработке.",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                         modifier = Modifier.padding(top = 8.dp)
                     )

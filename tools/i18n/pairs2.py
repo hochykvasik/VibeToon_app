@@ -1,5 +1,122 @@
 # Сообщения, подсказки и туториалы. Шаблоны: {} - подставляемое значение (число или имя), порядок в EN тот же.
 PAIRS2 = """
+Линейка|Ruler
+Обычная линейка|Straight ruler
+Циркуль|Compass
+Линейка и циркуль работают только на растровом слое|Ruler and compass work only on raster layers
+Градиент|Gradient
+По альфе рисунка|Existing alpha
+Направляющие и градиент работают только на растровом слое|Guides and gradient work only on raster layers
+Градиент недоступен для деформированного слоя или текстуры больше 4 Мп|Gradient is unavailable on deformed layers or textures over 4 MP
+Не удалось применить градиент|Could not apply gradient
+Вставка на другой слой доступна только для трансформации; деформации и эффекты не изменены|Cross-layer paste supports transforms only; deformers and effects were not changed
+Ключи не вставлены: несовместимая дорожка|Keys not pasted: incompatible track
+Ключи не вставлены: занятый кадр или выход за границы|Keys not pasted: occupied frame or outside project
+Ключи не вставлены: слой удалён|Keys not pasted: layer was deleted
+Быстрый выбор слоя касанием|Quick layer selection by tap
+Отразить X|Flip X
+Отразить Y|Flip Y
+Частично: прямые, овалы, прямоугольники и треугольники после удержания; без предпросмотра|Partial: lines, ovals, rectangles and triangles after holding; no preview
+Касание выбирает слой под пальцем сразу, минуя группы; выделение пикселей не меняется|Tap selects the layer directly, bypassing groups; pixel selection is unchanged
+Повернуть −90°|Rotate −90°
+Повернуть +90°|Rotate +90°
+Операция не выполнена: граница слоя, предел 2048 или недостаточно памяти; пиксели не изменены|Operation cancelled: layer boundary, 2048 limit or insufficient memory; pixels unchanged
+Размер ½|Scale ½
+Размер ×2|Scale ×2
+Жест выделения отменён: недопустимый масштаб|Selection gesture cancelled: unsupported scale
+Два пальца: поворот и масштаб выделения|Two fingers: rotate and scale the selection
+{} КБ. Сохранено в папку проекта; копию в галерею создать не удалось.|{} KB. Saved in the project folder; the gallery copy could not be created.
+{}×{}, {} кадров|{}×{}, {} frames
+Копия .tsproj: {}|Backup .tsproj: {}
+  Маркеры  кадр {}|  Markers  frame {}
+ Ключ| Key
+Пин {}/{}|Pin {}/{}
+Не удалось подготовить холст|Could not prepare the canvas
+Слой изменился: восстановление отменено|Layer changed: restore cancelled
+Не удалось восстановить текстуру; история не изменена|Could not restore texture; history is unchanged
+Холст {}×{}: слои масштабированы. Отмена через Undo недоступна|Canvas {}×{}: layers scaled. Undo is unavailable
+Обрезка недоступна в проекте с PSD: используйте Resize|Crop is unavailable in PSD projects: use Resize
+Рамка выходит за холст или меньше {} px|Bounds are outside the canvas or smaller than {} px
+Холст обрезан до {}×{}. Отмена через Undo недоступна|Canvas cropped to {}×{}. Undo is unavailable
+Transform Layer «Transform {}»: привяжите к нему слои через «Родитель», двигайте и вращайте его в Свойствах|Transform Layer “Transform {}”: link layers via Parent, then move and rotate it in Properties
+Ожидался объект|Expected an object
+Проект создан в более новой версии приложения (v{})|Project was created by a newer app version (v{})
+Нет id проекта|Project ID is missing
+Проект не найден|Project not found
+Области деформации требуют формат версии 2|Deformation bounds require format version 2
+Некорректные области групп|Invalid group bounds
+Некорректный id группы|Invalid group ID
+Некорректная область группы|Invalid group bounds
+Некорректная координата области|Invalid bounds coordinate
+Размер сетки Warp требует формат версии 3|Warp grid dimensions require format version 3
+Некорректные размеры сетки Warp|Invalid Warp grid dimensions
+Некорректный id Warp|Invalid Warp ID
+Некорректный размер Warp|Invalid Warp grid size
+Плотный Warp требует формат версии 4|Dense Warp requires format version 4
+Некорректная сетка Warp|Invalid Warp grid
+Нет точек Warp|Warp points are missing
+Некорректное число точек Warp|Invalid number of Warp points
+Некорректная точка Warp|Invalid Warp point
+Повреждённый файл проекта: {}|Damaged project file: {}
+Лишние данные в позиции {}|Extra data at position {}
+{} (позиция {})|{} (position {})
+Неожиданный конец|Unexpected end
+Неожиданный символ '{}'|Unexpected character '{}'
+Ожидалось {}|Expected {}
+Неверное число|Invalid number
+Строка не закрыта|Unterminated string
+Обрыв экранирования|Incomplete escape
+Массив не закрыт|Unterminated array
+Ожидалась запятая или ]|Expected a comma or ]
+Ожидался ключ|Expected a key
+Ожидалось ':'|Expected ':'
+Объект не закрыт|Unterminated object
+Ожидалась запятая или }|Expected a comma or }
+Нет активного GL-контекста|No active GL context
+Отменено|Cancelled
+Кодек не выдал ни одного кадра|The codec produced no frames
+Нет EGL-конфига для кодека|No EGL configuration for the codec
+Кодек завис при завершении|The codec stalled while finishing
+Рендерер не готов|Renderer is not ready
+Не удалось создать изображение|Could not create image
+Не удалось записать GIF|Could not write GIF
+Не удалось записать ZIP|Could not write ZIP
+Не удалось записать PSD|Could not write PSD
+Не удалось записать аудио|Could not write audio
+Не удалось записать видео|Could not write video
+В проекте нет аудио или оно ещё декодируется: подождите пару секунд и повторите|The project has no audio or it is still decoding: wait a few seconds and try again
+Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость и реверс уже работают для звука; для видео они заработают вместе с воспроизведением видео. Скорость и Цикл меняют и время ключей анимации слоя.|Drag clip edges on the timeline, or drag the middle to move the selected clip. Speed and reverse work for audio; video support is in development. Speed and Loop also change the layer animation key timing.
+{} КБ. Сохранено в папку проекта.|{} KB. Saved in the project folder.
+{} КБ|{} KB
+{} МБ|{} MB
+{} ГБ|{} GB
+Цвет и толщина кисти|Brush color and width
+Сначала коснитесь узла выбранного незаблокированного слоя|First tap a node on the selected unlocked layer
+Цвет и толщина контура обновлены|Path color and width updated
+Подготовить область|Prepare bounds
+Включить для группы|Enable for group
+Деформация пропущена: неподдерживаемое содержимое или область|Deformation skipped: unsupported content or bounds
+Экспорт остановлен: неподдерживаемая деформация или область|Export stopped: unsupported deformation or bounds
+Раздел X|X divisions
+Плотный Warp: статический, FX выкл|Dense Warp: static, FX off
+Плотный Warp: только обычный слой и FX выкл|Dense Warp requires a regular layer and FX off
+Плотный Warp недоступен при ключах точек|Dense Warp is unavailable when control points have keys
+Плотный Warp несовместим с содержимым слоя|Dense Warp is incompatible with this layer
+Раздел Y|Y divisions
+Более 3 делений: в разработке|More than 3 divisions: in development
+Изменение сетки недоступно: есть временные правки точек|Grid change is unavailable: points have temporary edits
+Сетка не изменена: форма или ключи несовместимы|Grid unchanged: shape or keys are incompatible
+Экспорт остановлен: неподдерживаемая групповая деформация или область|Export stopped: unsupported group deformation or bounds
+Не удалось сохранить видео|Could not save video
+Сначала подготовьте область группы|Prepare group bounds first
+Сначала сбросьте деформации группы|Reset the group deformers first
+Групповая деформация недоступна для этого содержимого или области|Group deformation is unavailable for this content or bounds
+Групповая деформация пропущена: неподдерживаемое содержимое или область|Group deformation skipped: unsupported content or bounds
+Удалить область|Remove bounds
+Область группы удалена|Group bounds removed
+Область группы уже сохранена; деформация в разработке|Group bounds are already saved; deformation is in development
+Нет видимых непустых слоёв для области группы|No visible nonempty layers to define group bounds
+Область группы сохранена; деформация в разработке|Group bounds saved; deformation is in development
 Учебный проект|Tutorial project
 Кадр на плейхеде, полное разрешение холста. Копия сохраняется и в галерею (Pictures/VibeToon).|The frame under the playhead at full canvas resolution. A copy is also saved to the gallery (Pictures/VibeToon).
 GIF {}×{}, {} кадров|GIF {}×{}, {} frames
@@ -21,7 +138,7 @@ GIF {}×{}, {} кадров|GIF {}×{}, {} frames
 Не удалось добавить текст|Could not add text
 Не удалось передать изображение в графику|Could not send the image to the renderer
 Не удалось передать текст в графику|Could not send the text to the renderer
-Пипетка: коснитесь холста, чтобы взять цвет|Eyedropper: tap the canvas to pick a color
+Пипетка: коснитесь холста, чтобы взять цвет|Color Picker: tap the canvas to pick a color
 Цвет взят|Color picked
 Текст не отрисовался: {}|The text was not drawn: {}
 Шрифт добавлен: {}|Font added: {}
@@ -128,7 +245,7 @@ Liquify: выберите один слой (картинка или слой PS
 Выберите один слой, чтобы добавить эффект|Select one layer to add an effect
 Выберите один слой|Select one layer
 На слое не больше {} эффектов|No more than {} effects per layer
-Пипетка: коснитесь холста, чтобы взять цвет для эффекта|Eyedropper: tap the canvas to pick a color for the effect
+Пипетка: коснитесь холста, чтобы взять цвет для эффекта|Color Picker: tap the canvas to pick a color for the effect
 Сначала создайте сетку («Сгенерировать»)|Create a mesh first (“Generate”)
 Привязка к костям снята|Bone binding removed
 Нет костей: создайте скелет|No bones: create a skeleton
@@ -389,7 +506,7 @@ Hold: мгновенное переключение|Hold: instant switching
 Смазка|Smudge
 Заливка|Fill
 Выделение|Selection
-Пипетка: коснитесь холста, чтобы взять цвет|Eyedropper: tap the canvas to pick a color
+Пипетка: коснитесь холста, чтобы взять цвет|Color Picker: tap the canvas to pick a color
 Заливка: коснитесь замкнутой области (порог, расширение и зазор - в панели над холстом)|Fill: tap a closed area (threshold, expand and gap are in the bar above the canvas)
 Выделение: обведите область или коснитесь палочкой; внутри выделения тяните, чтобы перенести|Selection: outline an area or tap with the wand; drag inside the selection to move it
 Смазка: проведите по рисунку слоя-картинки|Smudge: drag across the drawing of an image layer
@@ -515,11 +632,239 @@ Transform Layer (null)|Transform Layer (null)
 Определение касаний|Touch Detection
 Касание двумя пальцами: отмена|2 Finger Tap Undo
 Касание тремя пальцами: повтор|3 Finger Tap Redo
-Пипетка (долгое нажатие)|Pipette (Long Press)
+Пипетка (долгое нажатие)|Color Picker (Long Press)
 Помощь с фигурами|Shape Assist
 Импортировать копию|Import Backup
 Резервная копия вручную|Manual Backup
 Мои работы|My projects
 Слой без анимации: правка действует на все кадры. Чтобы анимировать, поставьте ключ кнопкой ◎ на таймлайне|Layer has no animation: edits apply to all frames. To animate, add a key with the ◎ button on the timeline
 Нажмите «Назад» ещё раз, чтобы выйти в список проектов|Press Back again to return to the projects list
+Сначала обведите видимые слои лассо|First lasso visible layers
+Для привязки к кости выберите видимые слои|Select visible layers to bind to a bone
+Маркер|Marker
+Аэрограф|Airbrush
+Карандаш|Pencil
+Скринтон мелкий|Fine Screentone
+Квадратный маркер|Square Marker
+Ручка (Ink)|Ink Pen
+Плотный маркер|Dense Marker
+Скринтон крупный|Coarse Screentone
+Пиксельная|Pixel Brush
+Градиентная|Soft Brush
+Штриховка ═|Horizontal Hatching
+Штриховка ║|Vertical Hatching
+Жёсткий ластик|Hard Eraser
+Мягкий ластик|Soft Eraser
+Квадратный ластик|Square Eraser
+Сердце|Heart
+Звезда|Star
+Квадрат|Square
+Треугольник|Triangle
+Стрелка|Arrow
+Диалог|Speech Bubble
+Фигура: Круг|Shape: Circle
+Фигура: Сердце|Shape: Heart
+Фигура: Звезда|Shape: Star
+Фигура: Квадрат|Shape: Square
+Фигура: Треугольник|Shape: Triangle
+Фигура: Стрелка|Shape: Arrow
+Фигура: Диалог|Shape: Speech Bubble
+В разработке|Coming soon
+Недоступные пункты помечены как находящиеся в разработке.|Unavailable settings are marked as coming soon.
+Рекомендуем начать с учебного проекта|Start with the tutorial project
+Готовые фигуры и подсказки помогут освоить редактор.|Ready-made shapes and hints help you learn the editor.
+Начать урок|Start tutorial
+Не удалось создать учебный проект|Could not create the tutorial project
+Язык интерфейса меняется сразу.|The interface language changes immediately.
+Фигура «Круг» добавлена|Shape “Circle” added
+Фигура «Круг» добавлена в векторный слой|Shape “Circle” added to the vector layer
+Фигура «Квадрат» добавлена|Shape “Square” added
+Фигура «Квадрат» добавлена в векторный слой|Shape “Square” added to the vector layer
+Фигура «Треугольник» добавлена|Shape “Triangle” added
+Фигура «Треугольник» добавлена в векторный слой|Shape “Triangle” added to the vector layer
+Фигура «Звезда» добавлена|Shape “Star” added
+Фигура «Звезда» добавлена в векторный слой|Shape “Star” added to the vector layer
+Фигура «Стрелка» добавлена|Shape “Arrow” added
+Фигура «Стрелка» добавлена в векторный слой|Shape “Arrow” added to the vector layer
+Фигура «Сердце» добавлена|Shape “Heart” added
+Фигура «Сердце» добавлена в векторный слой|Shape “Heart” added to the vector layer
+Фигура «Диалог» добавлена|Shape “Speech Bubble” added
+Фигура «Диалог» добавлена в векторный слой|Shape “Speech Bubble” added to the vector layer
+Ячеек по ширине холста|Cells across the canvas width
+Хромакей|Chroma Key
+Допуск|Tolerance
+Мягкость|Softness
+Экспозиция (EV)|Exposure (EV)
+Тон, °|Hue, °
+Степень|Amount
+Размытие по Гауссу|Gaussian Blur
+Радиус|Radius
+Радиальное размытие|Zoom Blur
+Размытие в движении|Motion Blur
+Длина|Length
+Угол, °|Angle, °
+Пикселизация|Pixelate
+Размер пикселя|Pixel Size
+Плитки|Tiles
+Повторов|Repeats
+Зеркало|Mirror
+Режим (0 гор, 1 верт, 2 оба)|Mode (0 horizontal, 1 vertical, 2 both)
+Волна|Wave
+Амплитуда|Amplitude
+Длина волны|Wavelength
+Направление (0 / 1)|Direction (0 / 1)
+Свечение|Glow
+Тень|Drop Shadow
+Смещение X|Offset X
+Смещение Y|Offset Y
+Размытие|Blur
+Непрозрачность|Opacity
+Виньетка|Vignette
+Шум|Noise
+Размер зерна|Grain Size
+Частота, 1/с|Frequency, 1/s
+RGB-разрыв / Глитч|RGB Split / Glitch
+Сдвиг X|Shift X
+Сдвиг Y|Shift Y
+Глитч, px|Glitch, px
+Частота глитча, 1/с|Glitch Frequency, 1/s
+Пульсация|Pulse
+Масштаб ±|Scale ±
+Частота, Гц|Frequency, Hz
+Непрозр. ±|Opacity ±
+Центр X|Center X
+Центр Y|Center Y
+Карта смещения|Displacement Map
+Сила, px|Strength, px
+Масштаб карты, px|Map Scale, px
+Вращение|Rotation
+Скорость, °/с|Speed, °/s
+Шум и Движение|Noise and Motion
+Стилизация|Stylize
+Искажение|Distortion
+Добавлено: {}. Проект продлён до конца звука|Added: {}. Project extended to the end of the audio
+Добавлено: {}. Проект продлён до максимума, конец звука не поместился|Added: {}. Project extended to its maximum duration; the end of the audio does not fit
+Разрезано клипов: {}|Clips split: {}
+Поставьте плейхед внутри клипа каждого выбранного слоя|Place the playhead inside every selected layer’s clip
+Первый проект за 6 шагов|Your first project in 6 steps
+Попробуйте тестовый PSD|Try the test PSD
+Меню действий|Actions menu
+меню действий|actions menu
+Меню открыто, кнопка тестового PSD подсвечена. Нажмите её сами для эксперимента или закройте меню и продолжите другие уроки. Загрузка заменит текущий PSD и его анимацию.|The menu is open and Test PSD is highlighted. Tap it yourself to experiment, or close the menu and continue with other tutorials. Loading it replaces the current PSD and its animation.
+Камера: Pan и Zoom|Camera: Pan and Zoom
+Движение и приближение кадра|Move and zoom the frame
+Добавьте камеру|Add a camera
+В меню действий выберите «Камера (Pan & Zoom)». Камера — отдельный слой, её положение и масштаб можно анимировать ключами.|Choose “Camera (Pan & Zoom)” in the Actions menu. The camera is a separate layer; its position and scale can be animated with keys.
+Настройте движение|Set up motion
+Выберите камеру, измените X, Y или Scale в свойствах и поставьте ключи на таймлайне. Движение вида пальцами без выделения не меняет экспорт.|Select the camera, change X, Y or Scale in Properties, and add keys on the timeline. Moving the view with fingers without a selection does not change the export.
+Магнит таймлайна|Timeline magnet
+Привязка плейхеда|Playhead snapping
+Включите магнит|Enable snapping
+Нажмите «Магнит» на панели таймлайна. При перетаскивании плейхед притягивается к ключам, маркерам и краям клипов.|Tap “Magnet” on the timeline. The playhead snaps to keys, markers and clip edges when dragged.
+панель таймлайна|timeline bar
+Выключите магнит|Disable snapping
+Нажмите кнопку ещё раз, чтобы свободно перемещать плейхед.|Tap the button again to move the playhead freely.
+Функция в разработке|Feature coming soon
+Текущий статус|Current status
+Кнопка «Иерархия трансформаций» на таймлайне пока не реализована. Для группировки используйте доступные группы и связи слоёв.|The “Transform hierarchy” timeline button is not implemented yet. Use available groups and layer links for grouping.
+Ключи и траектория|Keys and motion path
+Ключи работают; траектория в разработке|Keys are available; motion path is coming soon
+Выберите слой и добавьте ключи на разных кадрах кнопкой Add Key. Перемещайте ключи выделением на таймлайне.|Select a layer and add keys on different frames using Add Key. Select keys on the timeline to move them.
+Кнопка «Режим ключей» и отображение траектории движения пока не реализованы.|The “Key mode” button and motion path display are not implemented yet.
+Кнопка в разработке|Button coming soon
+Кнопка «Расширить» пока не реализована. Границы клипа можно менять перетаскиванием его краёв на таймлайне.|The “Extend” button is not implemented yet. You can change clip boundaries by dragging their edges on the timeline.
+Подготовка аудио…|Preparing audio…
+Время подготовки аудио истекло|Audio preparation timed out
+Не удалось подготовить аудио|Could not prepare audio
+Не удалось подготовить волну аудио|Could not prepare the audio waveform
+Волна не появилась на таймлайне: откройте дорожку; импортированный файл сохранён|The waveform did not appear on the timeline: open the track; the imported file was saved
+Автоключ трансформации недоступен при ретайминге клипа|Automatic transform keys are unavailable when the clip is retimed
+Автоключ этого параметра эффекта недоступен|Automatic keys are unavailable for this effect parameter
+Слои, кости в режиме анимации и эффекты; ретайминг и деформации не поддерживаются|Layers, bones in animation mode, and effects; retiming and deformers are not supported
+Кисть и ластик: при выключении рисует только перо; остальные растровые инструменты не меняются|Brush and eraser: turning this off limits drawing to a stylus; other raster tools are unchanged
+Круг кисти и инструментов деформации во время касания|Brush and deformer cursor during touch
+Выбор слоёв касанием холста; кости и пипетка не затрагиваются|Select layers by tapping the canvas; bones and the Color Picker are unaffected
+Превью пера над выбранным растровым слоем; зависит от поддержки наведения устройством|Pen preview over the selected raster layer; requires device hover support
+Удерживайте неподвижно в режиме Transform; при рисовании и деформации жест отключён|Hold still in Transform mode; disabled while drawing or deforming
+Дважды нажмите, чтобы сбросить вид холста|Double-tap to reset the canvas view
+Двойной тап по кнопке фокуса на верхней панели; жест щипка не меняется|Double-tap the focus button in the top bar; pinch gestures are unchanged
+При воспроизведении центрирует выбранный слой или кость; не меняет экспорт|During playback, centers the selected layer or bone; export is unchanged
+Только корневой слой или кость: без родителя, камеры проекта и ретайминга; не экспортируется|Root layer or bone only: no parent, project camera or retiming; not exported
+Для растрового лассо: верните конец к отмеченному началу, прежде чем отпустить; остальные способы выделения не меняются|For raster lasso: return the end to the marked start before releasing; other selection methods are unchanged
+Лассо не замкнуто: верните конец к началу и отпустите|Lasso is not closed: return the end to the start and release
+Для растрового лассо: замкните у начала или продолжайте от конца; остальные способы выделения не меняются|For raster lasso: close at the start or continue from the end; other selection methods are unchanged
+Продолжите от конца контура или коснитесь начала; отмена — в панели инструмента|Continue from the end or tap the start; cancel from the tool panel
+Контур слишком длинный; начните заново|Contour is too long; start again
+Отменить контур|Cancel contour
+Transform: двойной тап и протяжка выбирают видимые незаблокированные слои по центру рамки; без костей|Transform: double-tap and drag selects visible unlocked layers by their center; bones excluded
+В рамке нет доступных слоёв|No available layers inside the marquee
+Выбрано слоёв: {}|Selected layers: {}
+Защита от ладони: касания пальцем игнорируются во время касания пера и 1,2 секунды после него; наведение не блокирует палец|Palm rejection: finger touches are ignored during pen contact and for 1.2 seconds afterward; hovering does not block touch
+Частично: только прямая растровой кистью после удержания и отпускания; овалы и прямоугольники — в разработке|Partial: straight lines with the raster brush after holding and releasing; ovals and rectangles are in development
+Вырезать в новый слой|Cut to new layer
+Копировать в новый слой|Copy to new layer
+Подготовка выделения|Preparing selection
+Создаём слой, пожалуйста, подождите|Creating layer, please wait
+Пока доступны только корневые PNG без анимации, трансформаций, эффектов и групп|Only root PNG layers without animation, transforms, effects or groups are supported for now
+Не удалось прочитать пиксели слоя|Could not read layer pixels
+Размер слоя изменился: выделите область заново|The layer size changed; make the selection again
+Под выделением пусто или слой слишком велик|The selection is empty or the layer is too large
+Не удалось сохранить выделение|Could not save the selection
+Слой изменился: повторите операцию|The layer changed; try again
+Выделение вырезано в новый слой|Selection cut to a new layer
+Выделение скопировано в новый слой|Selection copied to a new layer
+Общая кривая|Shared curve
+Фрагмент перенесён на отдельный слой без обрезки|Fragment moved to a separate layer without clipping
+На целевом кадре уже есть ключ: перенос отменён|A key already exists at the destination; move cancelled
+часть|part
+Перенос за границу слоя пока не поддерживается; пиксели не изменены|Moving beyond the layer bounds is not supported yet; pixels were not changed
+Частично: прямые, овалы и прямоугольники растровой кистью после удержания и отпускания; без предпросмотра|Partial: raster brush lines, ovals and rectangles after holding and releasing; no preview
+GL не ответил: восстановление отменено без изменений|GL did not respond; restore was cancelled without changes
+Перенос превышает безопасный предел размера или памяти; пиксели не изменены|Move exceeds the safe size or memory limit; pixels were not changed
+Не удалось безопасно восстановить текстуру; сохранение приостановлено|Could not safely restore the texture; saving is paused
+Не удалось сохранить рисунок; проект не сохранён|Could not save the drawing; the project was not saved
+Не удалось сохранить проект; повторите сохранение|Could not save the project; try saving again
+Выберите растровый слой|Select a raster layer
+Этот тип слоя пока не поддерживается|This layer type is not supported yet
+Слой должен быть видимым и находиться вне группы|The layer must be visible and outside a group
+Свойства слоя пока не поддерживаются для этой операции|Layer properties are not supported for this operation yet
+Связанные слои пока не поддерживаются|Linked layers are not supported yet
+Слой с изменённым клипом пока не поддерживается|A layer with a modified clip is not supported yet
+Слой с ключами анимации пока не поддерживается|A layer with animation keys is not supported yet
+Трансформация слоя пока не поддерживается|Layer transforms are not supported yet
+Деформация слоя пока не поддерживается|Layer deformation is not supported yet
+Эффекты слоя пока не поддерживаются|Layer effects are not supported yet
+Обтравочные слои в проекте пока не поддерживаются|Clipping layers in the project are not supported yet
+Выберите один слой PNG|Select one PNG layer
+Недостаточно запаса памяти для переноса; пиксели не изменены|Not enough memory for the move; pixels were not changed
+Размер после переноса превышает 2048 пикселей или выделение некорректно; пиксели не изменены|The result exceeds 2048 pixels or the selection is invalid; pixels were not changed
+Для переноса за границы нужен PNG; GIF и другие форматы пока не поддерживаются|Moving beyond the layer requires PNG; GIF and other formats are not supported yet
+Не удалось перенести: предел 2048 пикселей или недостаточно памяти; пиксели не изменены|Cannot move: 2048 pixel limit or insufficient memory; pixels were not changed
+Для отделения нужен PNG; GIF и другие форматы пока не поддерживаются|Separating requires PNG; GIF and other formats are not supported yet
+Подождите завершения операции|Please wait for the current operation to finish
+Остановите воспроизведение перед отделением|Stop playback before separating the selection
+Сначала замкните или отмените контур лассо|Close or cancel the lasso outline first
+Сначала выделите область|Select an area first
+Недостаточно запаса памяти для отделения; пиксели не изменены|Not enough memory to separate the selection; pixels were not changed
+Не удалось загрузить новый слой; пиксели не изменены|Could not load the new layer; pixels were not changed
+Не удалось отделить выделение; пиксели не изменены|Could not separate the selection; pixels were not changed
+Невозможно безопасно сохранить масштаб слоя; пиксели не изменены|Cannot safely preserve layer scale; pixels were not changed
+Ключи совпадают после изменения: операция отменена|Keyframes would collide; operation cancelled
+Слой и его группы должны быть видимы и разблокированы; группы PSD пока не поддерживаются|The layer and its groups must be visible and unlocked; PSD groups are not supported yet
+Перспектива для групп: в разработке|Perspective for groups: coming soon
+Warp для групп: в разработке|Warp for groups: coming soon
+Сетка 4×4 · плотность: в разработке|Grid 4×4 · density: coming soon
+Остановите воспроизведение перед редактированием эффектов группы|Stop playback before editing group effects
+Групповые эффекты с автоключом пока не поддерживаются|Group effects with auto-key are not supported yet
+Групповые эффекты недоступны: проверьте одинаковость цепочек, ключи, обтравку и блокировки|Group effects unavailable: check matching effect chains, keys, clipping and locks
+Группа: цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка|Group: chains differ or layers, keyframes, clipping or locks are unsupported
+Группа: статические эффекты применяются ко всем вложенным слоям; автоключ пока не поддерживается|Group: static effects apply to all nested layers; auto-key is not supported yet
+Группа: ключи эффектов создаются на вложенных слоях; ромба группы пока нет|Group: effect keys are created on child layers; no group diamond yet
+Ключи эффектов на вложенных слоях|Key effects on child layers
+Нельзя поставить групповые ключи: проверьте эффекты и совпадение дорожек|Cannot key group effects: check effects and matching tracks
+Ключи эффектов поставлены на вложенных слоях|Effect keys added to child layers
+Ключи группы нельзя сдвинуть: нет ключа, предел или совпадение кадров|Cannot move group keys: no key, boundary or frame collision
+Нет совпадающих ключей эффектов группы на этом кадре|No matching group effect keys on this frame
+Ключ −1|Key −1
+Ключ +1|Key +1
 """

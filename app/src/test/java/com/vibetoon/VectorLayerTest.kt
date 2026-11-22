@@ -50,6 +50,45 @@ class VectorLayerTest {
         assertTrue(VectorMath.withoutLast(emptyList()).isEmpty())
     }
 
+    @Test fun staleNodeSelectionCannotTargetAnotherPrimitive() {
+        val a = VectorShape(VecKind.LINE, listOf(1f, 2f, 3f, 4f))
+        val b = VectorShape(VecKind.LINE, listOf(5f, 6f, 7f, 8f))
+        val snapshot = listOf(a, b)
+        assertTrue(VectorMath.selectionStillValid(snapshot, listOf(a, b), 0, 1))
+        assertFalse(VectorMath.selectionStillValid(snapshot, listOf(b), 0, 1))
+        assertFalse(VectorMath.selectionStillValid(snapshot, listOf(b, a), 0, 1))
+        assertFalse(VectorMath.selectionStillValid(snapshot, snapshot, 0, -1))
+        assertFalse(VectorMath.selectionStillValid(null, snapshot, 0, 0))
+    }
+
+    @Test fun nodePreviewIsIsolatedAndInvalidEditsDoNotMutateOriginal() {
+        val a = VectorShape(VecKind.LINE, listOf(1f, 2f, 3f, 4f))
+        val b = VectorShape(VecKind.LINE, listOf(5f, 6f, 7f, 8f))
+        val original = listOf(a, b)
+        val preview = VectorMath.moveNode(original, 0, 1, 20f, 30f)!!
+        assertEquals(listOf(1f, 2f, 3f, 4f), original[0].pts)
+        assertEquals(listOf(1f, 2f, 20f, 30f), preview[0].pts)
+        assertEquals(b, preview[1])
+        assertNull(VectorMath.moveNode(original, 0, 2, 1f, 2f))
+        assertNull(VectorMath.moveNode(original, 0, 1, Float.NaN, 2f))
+        assertEquals(a, original[0])
+    }
+
+    @Test fun restylePreservesGeometryFillAndOtherPrimitives() {
+        val first = VectorShape(VecKind.POLYGON, listOf(1f, 2f, 5f, 6f, 10f, 2f), 0xff112233L, 0x66556677L, 3f)
+        val second = VectorShape(VecKind.LINE, listOf(0f, 0f, 4f, 5f))
+        val changed = VectorMath.restyle(first, 0xffaabbccL, 12f)!!
+        assertEquals(first.pts, changed.pts); assertEquals(first.kind, changed.kind); assertEquals(first.fill, changed.fill)
+        assertEquals(0xffaabbccL, changed.stroke); assertEquals(12f, changed.width, 0f)
+        assertEquals(second, listOf(changed, second)[1])
+        assertNull(VectorMath.restyle(first, 0L, Float.NaN))
+        assertNull(VectorMath.restyle(first, 0L, 0f))
+        assertNull(VectorMath.restyle(first, -1L, 5f))
+        val item = MediaItem(100001, MediaKind.IMAGE, "vector", "assets/a.png", 100, 100, 0f, 0f, 100f, 100f, vector = true, vectors = listOf(changed, second))
+        val saved = ProjectJson.decode(ProjectJson.encode(ProjectData(ProjectMeta("p", "n", 100, 100), media = listOf(item)))).getOrThrow()
+        assertEquals(listOf(changed, second), saved.media.single().vectors)
+    }
+
     @Test fun vectorLayerSurvivesJson() {
         val shapes = listOf(
             VectorShape(VecKind.PATH, listOf(1f, 2f, 3f, 4f, 5f, 9f), 0xFFAA0000L, 0L, 5f),
