@@ -56,7 +56,7 @@ object VideoExporter {
         return when {
             macroblocks * fps > 162_000 -> MediaCodecInfo.CodecProfileLevel.AVCLevel42
             macroblocks * fps > 81_920 -> MediaCodecInfo.CodecProfileLevel.AVCLevel41
-            macroblocks * fps > 40_960 -> MediaCodecInfo.CodecProfileLevel.AVCLevel40
+            macroblocks * fps > 40_960 -> MediaCodecInfo.CodecProfileLevel.AVCLevel4
             else -> MediaCodecInfo.CodecProfileLevel.AVCLevel31
         }
     }
