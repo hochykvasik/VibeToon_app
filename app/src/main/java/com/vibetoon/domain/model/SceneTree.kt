@@ -43,7 +43,7 @@ data class GroupNode(
 ) : Node
 
 object SceneTree {
-    fun build(layers: List<LayerInfo>): List<Node> {
+    fun build(layers: List<LayerInfo>, pivots: Map<Int, Pair<Float, Float>> = emptyMap()): List<Node> {
         val byParent = layers.groupBy { it.parentId }
         fun make(parent: Int): List<Node> = byParent[parent].orEmpty().mapNotNull { l ->
             when (l.kind) {
@@ -54,7 +54,7 @@ object SceneTree {
                 )
                 LayerKind.GROUP_OPEN, LayerKind.GROUP_CLOSED -> {
                     val kids = make(l.id)
-                    val (px, py) = pivotOf(kids)
+                    val (px, py) = pivots[l.id] ?: pivotOf(kids)
                     GroupNode(l.id, l.name, l.isVisible, l.opacity, l.blendMode, kids, px, py)
                 }
             }

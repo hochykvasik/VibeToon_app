@@ -176,7 +176,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         when (item) {
                             is Toggle -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 val st = com.vibetoon.ui.theme.LocalAppSettings.current
-                                val available = st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export")
+                                val available = st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers")
                                 Column(Modifier.weight(1f)) {
                                     Text(ru(item.title), fontSize = 14.sp)
                                     if (!available) Text("В разработке", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -195,6 +195,12 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                         "Cursor Enabled" -> Text("Круг кисти и инструментов деформации во время касания", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Cursor Hover Preview" -> Text("Превью пера над выбранным растровым слоем; зависит от поддержки наведения устройством", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Select Layers on Canvas" -> Text("Выбор слоёв касанием холста; кости и пипетка не затрагиваются", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Vector Workflow" -> Text("Кисть на векторном слое рисует примитивы (путь, линия, прямоугольник, эллипс); на растровом - пиксели", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Auto Pixel Edit Mode" -> Text("При выборе кисти/ластика слой выбирается или создаётся автоматически", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Only Erase/Smudge Selected Path Layers" -> Text("Ластик и смаз действуют только на выбранных слоях-контурах", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Temporary Pivots" -> Text("Пивот действует только на время перетаскивания и не сохраняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Rotate Canvas 2 Fingers" -> Text("Поворот после 8° двумя пальцами, снап к 0/90/180/270°; только вид, экспорт не меняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Layer Pivot Editing" -> Text("Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                                 if (item.title == "Left Handed" && st != null) Switch(checked = st.leftHanded, onCheckedChange = { st.leftHanded = it; st.save() })
@@ -221,6 +227,12 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                 else if (item.title == "Quick Layer Delete: рисунок (иначе анимация)" && st != null) Switch(checked = st.quickDeleteDrawing, onCheckedChange = { st.quickDeleteDrawing = it; st.saveSprint67() })
                                 else if (item.title == "Selection Mask Visibility" && st != null) Switch(checked = st.selectionMaskVisible, onCheckedChange = { st.selectionMaskVisible = it; st.saveSprint67() })
                                 else if (item.title == "Bones Colors" && st != null) Switch(checked = st.boneColors, onCheckedChange = { st.boneColors = it; st.saveSprint67() })
+                                else if (item.title == "Vector Workflow" && st != null) Switch(checked = st.vectorWorkflow, onCheckedChange = { st.vectorWorkflow = it; st.savePixelModes() })
+                                else if (item.title == "Auto Pixel Edit Mode" && st != null) Switch(checked = st.autoPixelEdit, onCheckedChange = { st.autoPixelEdit = it; st.savePixelModes() })
+                                else if (item.title == "Only Erase/Smudge Selected Path Layers" && st != null) Switch(checked = st.onlyEraseSelectedPaths, onCheckedChange = { st.onlyEraseSelectedPaths = it; st.savePixelModes() })
+                                else if (item.title == "Temporary Pivots" && st != null) Switch(checked = st.temporaryPivots, onCheckedChange = { st.temporaryPivots = it; st.savePixelModes() })
+                                else if (item.title == "Rotate Canvas 2 Fingers" && st != null) Switch(checked = st.rotateCanvas, onCheckedChange = { st.rotateCanvas = it; st.savePixelModes() })
+                                else if (item.title == "Layer Pivot Editing" && st != null) Switch(checked = st.pivotEditing, onCheckedChange = { st.pivotEditing = it; st.savePixelModes() })
                                 else if (item.title == "2 Finger Tap Undo" && st != null) Switch(checked = st.tap2Undo, onCheckedChange = { st.tap2Undo = it; st.saveGestures() })
                                 else if (item.title == "3 Finger Tap Redo" && st != null) Switch(checked = st.tap3Redo, onCheckedChange = { st.tap3Redo = it; st.saveGestures() })
                                 else Switch(checked = false, onCheckedChange = null, enabled = false)

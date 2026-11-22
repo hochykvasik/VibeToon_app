@@ -20,6 +20,24 @@ object SymbolMath {
     /** Кадр вложенной сцены: localFrame = globalFrame % symbolDuration (цикл). */
     fun localFrame(global: Int, duration: Int): Int = if (duration <= 0) 0 else Math.floorMod(global, duration)
 
+    /**
+     * Кадр символа без ключей времени: цикл только при настоящей анимации участников
+     * (дорожки/кадры/видео), иначе держим кадр 0 — символ не «шевелится» сам по себе.
+     * Клипы режима «Слои как кадры» сами по себе цикл не запускают.
+     */
+    fun defaultFrame(global: Int, duration: Int, animated: Boolean): Int =
+        if (animated) localFrame(global, duration) else 0
+
+    /** Дорожка действительно анимирует: минимум два ключа с разными значениями (один ключ или одинаковые - статика). */
+    fun trackMoves(keys: List<com.vibetoon.domain.anim.Keyframe>): Boolean {
+        if (keys.size < 2) return false
+        val k0 = keys.first()
+        return keys.any { it.dx != k0.dx || it.dy != k0.dy || it.scaleX != k0.scaleX || it.scaleY != k0.scaleY || it.rotation != k0.rotation || it.opacity != k0.opacity }
+    }
+
+    /** Ключи времени меняют кадр: минимум два ключа с разными внутренними кадрами. */
+    fun timeKeysMove(keys: List<TimeKey>): Boolean = keys.map { it.value }.distinct().size > 1
+
     /** Длительность символа: последний кадр с ключом/рисунком среди участников + 1; статичный символ - [fallback] (кадр проекта). */
     fun duration(lastFrames: List<Int>, fallback: Int): Int {
         val last = lastFrames.maxOrNull() ?: 0

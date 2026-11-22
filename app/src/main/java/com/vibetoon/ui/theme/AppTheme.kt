@@ -54,6 +54,18 @@ class AppSettings(context: Context) {
     var resetFrameAfterPause by mutableStateOf(p.getBoolean("reset_frame_after_pause", false))
     var compatibleVideoExport by mutableStateOf(p.getBoolean("compatible_video_export", false))
     fun saveExport() { p.edit().putBoolean("compatible_video_export", compatibleVideoExport).apply() }
+    /** Векторный режим работы: кисть/ластик автоматически выбирают или создают слой по типу инструмента. */
+    var vectorWorkflow by mutableStateOf(p.getBoolean("vector_workflow", false))
+    /** Авто-режим пиксельного редактирования: при выборе кисти/ластика слой выбирается или создаётся сам. */
+    var autoPixelEdit by mutableStateOf(p.getBoolean("auto_pixel_edit", false))
+    /** Ластик и смаз (smudge) действуют только на выбранных слоях с путями (векторных). */
+    var onlyEraseSelectedPaths by mutableStateOf(p.getBoolean("only_erase_selected_paths", false))
+    /** Временные опорные точки: пивот действует только на время жеста и не сохраняется в проект. */
+    var temporaryPivots by mutableStateOf(p.getBoolean("temporary_pivots", false))
+    /** Правка опорной точки слоя включена (пивот перетаскивается на холсте). */
+    var pivotEditing by mutableStateOf(p.getBoolean("pivot_editing", true))
+    var rotateCanvas by mutableStateOf(p.getBoolean("rotate_canvas_2f", true))
+    fun savePixelModes() { p.edit().putBoolean("rotate_canvas_2f", rotateCanvas).putBoolean("vector_workflow", vectorWorkflow).putBoolean("auto_pixel_edit", autoPixelEdit).putBoolean("only_erase_selected_paths", onlyEraseSelectedPaths).putBoolean("temporary_pivots", temporaryPivots).putBoolean("pivot_editing", pivotEditing).apply() }
     var checkerThumbnails by mutableStateOf(p.getBoolean("checker_thumbnails", false))
     // До появления настройки звук при скраббинге был включён всегда.
     var audioWhileScrubbing by mutableStateOf(p.getBoolean("audio_while_scrubbing", true))

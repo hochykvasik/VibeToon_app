@@ -135,7 +135,10 @@ data class InspectorState(
     val hasKey: Boolean,
     val easing: EasingType?,
     /** Сколько узлов выделено (мультивыделение): правка применяется ко всем. */
-    val count: Int = 1
+    val count: Int = 1,
+    /** Опорная точка (пивот) главного узла в координатах холста. */
+    val pivotX: Float = 0f,
+    val pivotY: Float = 0f
 )
 
 /** Цветокоррекция слоя (пока только значения в UI; шейдер позже). Диапазон каждого параметра -100..100. */
@@ -179,6 +182,8 @@ sealed interface UiState {
 
 /** Высота превью-текстур: холст уменьшается до ~2048 px по высоте (память!). */
 private const val PREVIEW_HEIGHT = 2048f
+private const val ROTATE_DEAD_ZONE = 8f
+private const val PIVOT_HIT_PX = 22f
 /** Консервативный предел стороны текстуры (ES 3.0 гарантирует >= 2048). */
 private const val MAX_TEX = 2048
 const val MAX_GRADIENT_STOPS = 5
@@ -294,15 +299,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val textureOp: com.vibetoon.domain.raster.ExpandedLayerHistory? = null,
         val groupAnchors: Map<Int, com.vibetoon.domain.project.GroupDeformationAnchor> = emptyMap(),
         val warpSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap(),
-        val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
+        val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap(),
+        val pivots: Map<Int, Pair<Float, Float>> = emptyMap()
     ) {
-        fun withPaint(op: PaintOp?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, op, textureOp, groupAnchors, warpSizes, denseWarps)
-        fun withTexture(op: com.vibetoon.domain.raster.ExpandedLayerHistory?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, paintOp, op, groupAnchors, warpSizes, denseWarps)
+        fun withPaint(op: PaintOp?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, op, textureOp, groupAnchors, warpSizes, denseWarps, pivots)
+        fun withTexture(op: com.vibetoon.domain.raster.ExpandedLayerHistory?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, paintOp, op, groupAnchors, warpSizes, denseWarps, pivots)
     }
     // Пока нет UI для создания рамки и она не активирует деформер.
     private var groupDeformationAnchors: Map<Int, com.vibetoon.domain.project.GroupDeformationAnchor> = emptyMap()
     private var warpGridSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap()
     private var denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
+    /** Переопределения опорных точек узлов (пивотов): id -> (x, y) в координатах холста. */
+    private var pivotOverrides: Map<Int, Pair<Float, Float>> = emptyMap()
     private val rasterTransactionGate = com.vibetoon.domain.raster.RasterTransactionGate()
     // При неизвестном исходе GL нельзя сохранять проект с потенциально рассогласованной текстурой.
     private var rasterRecoveryRequired = false
@@ -442,6 +450,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             groupDeformationAnchors = data.groupDeformationAnchors.toMap()
             warpGridSizes = data.warpGridSizes.toMap()
             denseWarps = data.denseWarps.toMap()
+            pivotOverrides = data.pivots.toMap()
             warpLayers = data.warps
             meshLayers = data.meshes
             perspLayers = data.persps
@@ -571,6 +580,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         groupDeformationAnchors = emptyMap()
         warpGridSizes = emptyMap()
         denseWarps = emptyMap()
+        pivotOverrides = emptyMap()
         warpLayers = emptySet()
         meshLayers = emptyMap()
         perspLayers = emptySet()
@@ -622,7 +632,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             com.vibetoon.domain.project.PaintSaveBarrier.save(
                 paint = { flushPaintSaves() },
                 metadata = {
-                    val data = ProjectData(m.copy(updatedAt = System.currentTimeMillis()), psdRef, HashMap(base), _animation.value.tracks, media.toList(), deletedPsd, _clips.value, _markers.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupDeformationAnchors.toMap(), warpGridSizes.toMap(), denseWarps.toMap())
+                    val data = ProjectData(m.copy(updatedAt = System.currentTimeMillis()), psdRef, HashMap(base), _animation.value.tracks, media.toList(), deletedPsd, _clips.value, _markers.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupDeformationAnchors.toMap(), warpGridSizes.toMap(), denseWarps.toMap(), pivotOverrides.toMap())
                     withContext(Dispatchers.IO) { projects.save(data) }
                     meta = data.meta
                     Log.i("VT/Project", "saved ${data.meta.id}: ${data.base.size} base, ${data.tracks.size} tracks")
@@ -723,7 +733,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             collapsed = LayerTree.defaultCollapsed(summary.layers)
             rebuildLayers()
             selectLayer(null)
-            val scene = SceneBuilder.buildTree(roots, canvasW, canvasH, transformsNow(), fit, textIds)
+            val scene = SceneBuilder.buildTree(roots, canvasW, canvasH, transformsNow(), fit, textIds, leafPivots = pivotOverrides)
             this@MainViewModel.scene = scene
             RenderHost.view?.setScene(scene)  // холст виден сразу, слои подгружаются по одному
 
@@ -790,7 +800,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             l.copy(name = p.name ?: l.name, opacity = p.opacity, blendMode = p.blend, isClipped = p.clip && l.kind == LayerKind.LAYER)
         }
         textIds = media.filter { it.isText }.map { it.id }.toSet()
-        roots = SceneTree.build(layers)
+        roots = SceneTree.build(layers, pivotOverrides)
         pivots = computePivots(roots)
         rebuildRows()
         val fps = _animation.value.settings.fps
@@ -811,6 +821,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * кадр видео декодируются (с уменьшением до 2048 px) и ставятся в центр холста как слой;
      * аудио становится невизуальной дорожкой на таймлайне.
      */
+    /** Импорт картинки как символа: картинка становится определением символа, на сцену ставится экземпляр. */
+    fun importMediaAsSymbol(uri: Uri) {
+        val pid = projectId ?: return
+        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        val id = nextMediaId()
+        _state.value = UiState.Loading
+        importJob = viewModelScope.launch {
+            try {
+                val item = withContext(decodeDispatcher) { importMediaBlocking(pid, id, MediaKind.IMAGE, uri) }
+                if (projectId != pid || closing) return@launch
+                checkpoint("add", force = true)
+                // картинка -> определение символа (группа с одним слоем), экземпляр на сцену
+                val gid = nextMediaId()
+                val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
+                media += MediaItem(gid, MediaKind.GROUP, "Символ $n", "", symDur = 1)
+                regroup = regroup + (item.id to gid)
+                media += item
+                val iid = nextMediaId()
+                media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid)
+                rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
+                _state.value = UiState.Message("Импортировано как символ «Символ $n»: двойной тап открывает редактирование")
+            } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+            catch (t: Throwable) {
+                Log.e("VT/Media", "import as symbol failed", t)
+                if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось импортировать")
+            }
+        }
+    }
+
     fun importMedia(kind: MediaKind, uri: Uri) {
         val pid = projectId ?: return
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
@@ -902,6 +941,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } catch (t: Throwable) {
             dest.delete()   // не оставляем в проекте файл, который не удалось обработать
             throw t
+        }
+    }
+
+    // ---------------------------------------------------------------- библиотека ассетов
+
+    /** Библиотека ассетов: файлы из папки assets проекта (картинки, импортированные ранее). */
+    fun assetLibrary(): List<Pair<String, String>> {
+        val pid = projectId ?: return emptyList()
+        val dir = projects.mediaDir(pid)
+        if (!dir.exists()) return emptyList()
+        return dir.listFiles()?.filter { it.isFile && it.extension.lowercase() in setOf("png", "jpg", "jpeg", "webp") }
+            ?.map { it.name to "assets/${it.name}" }?.sortedBy { it.first } ?: emptyList()
+    }
+
+    /** Вставка ассета из библиотеки как новый слой-картинку. */
+    fun insertAsset(relPath: String) {
+        val pid = projectId ?: return
+        val id = nextMediaId()
+        val ticket = RenderNative.textureUploadTicket(id)
+        viewModelScope.launch {
+            try {
+                val item = withContext(decodeDispatcher) {
+                    val decoded = importer.decodeImage(projects.fileOf(pid, relPath))
+                    val r = ProjectMath.fitInside(decoded.srcWidth, decoded.srcHeight, canvasW, canvasH)
+                    val ok = RenderNative.uploadBitmapIfCurrent(id, decoded.bitmap, ticket)
+                    decoded.bitmap.recycle()
+                    if (!ok) error("Не удалось передать изображение в графику")
+                    MediaItem(id, MediaKind.IMAGE, relPath.substringAfterLast('/'), relPath, decoded.srcWidth, decoded.srcHeight, r[0], r[1], r[2], r[3])
+                }
+                if (projectId != pid || closing) return@launch
+                checkpoint("add", force = true)
+                media += item
+                rebuildLayers(); pushScene(); selectLayer(item.id); markDirty()
+                _state.value = UiState.Message("Вставлено из библиотеки: ${item.name}")
+            } catch (t: Throwable) {
+                Log.e("VT/Media", "insert asset failed", t)
+                if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось вставить ассет")
+            }
         }
     }
 
@@ -1077,7 +1154,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _audioReadiness.value !is com.vibetoon.domain.project.AudioReadiness.Preparing && !_eyedropper.value && _paintTool.value == null && _rasterTool.value == null && !_boneMode.value &&
         !_meshMode.value && !_warpTool.value && !_perspTool.value && !_liquifyTool.value &&
         viewW > 0f && viewH > 0f && x in 0f..viewW && y in 0f..viewH &&
-        toCanvasX(x) in 0f..canvasW.toFloat() && toCanvasY(y) in 0f..canvasH.toFloat()
+        toCanvas(x, y).let { it.first in 0f..canvasW.toFloat() && it.second in 0f..canvasH.toFloat() }
 
     fun pickBrushOnLongPress(x: Float, y: Float) {
         if (!canPickOnLongPress(x, y)) return
@@ -1209,9 +1286,75 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onViewSize(w: Float, h: Float) { if (viewW != w || viewH != h) cancelPendingLasso(); viewW = w; viewH = h; refreshGridView(); refreshBoneOverlay(); refreshRasterOverlays() }
 
     /** Два пальца: zoom вокруг центра жеста + сдвиг. */
-    fun onTransform(gx: Float, gy: Float, dz: Float, dx: Float, dy: Float) {
+    fun onTransform(gx: Float, gy: Float, dz: Float, dx: Float, dy: Float, rotDeg: Float = 0f) {
         cancelPendingLasso()
-        camera = camera.transformed(gx, gy, viewW / 2f, viewH / 2f, dz, dx, dy)
+        // Мёртвая зона: поворот включается, когда за жест набралось больше 8°, иначе pinch-zoom дрожит углом.
+        var rot = 0f
+        if (rotDeg.isFinite() && rotDeg != 0f && appSettings()?.rotateCanvas != false) {
+            if (gestureRotating) rot = rotDeg
+            else {
+                gestureRotAcc += rotDeg
+                if (kotlin.math.abs(gestureRotAcc) >= ROTATE_DEAD_ZONE) { gestureRotating = true; rot = gestureRotAcc }
+            }
+        }
+        camera = camera.transformed(gx, gy, viewW / 2f, viewH / 2f, dz, dx, dy, rot)
+        refreshGridView()
+        RenderHost.view?.setCamera(camera)
+        refreshBoneOverlay()
+        refreshRasterOverlays()
+    }
+
+    /** Свободный поворот холста двумя пальцами: порог 8°, снап к 0/90/180/270° при отпускании. */
+    fun rotateCameraBy(deg: Float) {
+        if (kotlin.math.abs(deg) < 8f) return
+        camera = camera.copy(rotDeg = camera.rotDeg + deg)
+        refreshGridView()
+        RenderHost.view?.setCamera(camera)
+        refreshBoneOverlay()
+        refreshRasterOverlays()
+    }
+
+    private var gestureRotAcc = 0f
+    private var gestureRotating = false
+
+    fun snapCameraRotation() {
+        gestureRotAcc = 0f; gestureRotating = false
+        val snapped = camera.snappedRot()
+        if (snapped != camera.rotDeg) {
+            camera = camera.copy(rotDeg = snapped)
+            refreshGridView()
+            RenderHost.view?.setCamera(camera)
+            refreshBoneOverlay()
+            refreshRasterOverlays()
+        }
+    }
+
+    fun resetCameraRotation() {
+        camera = camera.copy(rotDeg = 0f)
+        refreshGridView()
+        RenderHost.view?.setCamera(camera)
+        refreshBoneOverlay()
+        refreshRasterOverlays()
+    }
+
+    fun rotateCamera90() {
+        camera = camera.copy(rotDeg = camera.rotDeg + 90f)
+        refreshGridView()
+        RenderHost.view?.setCamera(camera)
+        refreshBoneOverlay()
+        refreshRasterOverlays()
+    }
+
+    fun flipCameraX() {
+        camera = camera.copy(flipX = !camera.flipX)
+        refreshGridView()
+        RenderHost.view?.setCamera(camera)
+        refreshBoneOverlay()
+        refreshRasterOverlays()
+    }
+
+    fun flipCameraY() {
+        camera = camera.copy(flipY = !camera.flipY)
         refreshGridView()
         RenderHost.view?.setCamera(camera)
         refreshBoneOverlay()
@@ -1310,7 +1453,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .filter { layer ->
                 val q = sc.selectionQuads[layer.id] ?: return@filter false
                 if (q.size < 8) return@filter false
-                val screen = FloatArray(8) { i -> if (i % 2 == 0) toScreenX(q[i]) else toScreenY(q[i]) }
+                val screen = FloatArray(8) { i -> if (i % 2 == 0) toScreen(q[i], q[i + 1]).first else toScreen(q[i - 1], q[i]).second }
                 com.vibetoon.domain.input.MarqueePolicy.containsCenter(screen, r[0], r[1], r[2], r[3])
             }.map { it.id }.toCollection(LinkedHashSet())
         // Пустая рамка не уничтожает прежнее выделение.
@@ -1417,7 +1560,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val out = HashMap<Int, Pair<Float, Float>>()
         fun visit(n: com.vibetoon.domain.model.Node) {
             when (n) {
-                is LeafNode -> out[n.id] = (n.x + n.w / 2f) to (n.y + n.h / 2f)
+                is LeafNode -> out[n.id] = pivotOverrides[n.id] ?: ((n.x + n.w / 2f) to (n.y + n.h / 2f))
                 is GroupNode -> { out[n.id] = n.pivotX to n.pivotY; n.children.forEach(::visit) }
             }
         }
@@ -1445,7 +1588,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             opacityPct = t.opacity * 100f,
             hasKey = _animation.value.hasKey(id, _frame.value),
             easing = _animation.value.easingAt(id, _frame.value),
-            count = transformTargets().size.coerceAtLeast(1)
+            count = transformTargets().size.coerceAtLeast(1),
+            pivotX = px, pivotY = py
         )
     }
 
@@ -1584,7 +1728,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _frame.value, base, _animation.value, _fx.value, warpGridSizes)
         return SceneBuilder.buildTree(sceneRoots(), canvasW, canvasH, transformsNow(), fit, textIds, _links.value, boneHeads(), inputs.warps,
             independentBones(), meshesNow(), inputs.perspectives, boneTails(), effectiveSkins(), turbNow(), fxNow(), cameraIdNow(),
-            options.nullIds, options.depths, groupDeformations = if (useGroups) inputs.groups else emptyMap(), denseWarps = dense)
+            options.nullIds, options.depths, groupDeformations = if (useGroups) inputs.groups else emptyMap(), denseWarps = dense, leafPivots = pivotOverrides)
     }
 
     private fun pushScene() {
@@ -1660,8 +1804,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Сдвиг пальца: экран -> холст -> координаты РОДИТЕЛЯ каждого узла (родитель может быть повёрнут
         // или масштабирован), иначе вложенная группа убегала бы от пальца. Масштаб и поворот - вокруг
         // собственной опорной точки каждого выделенного узла; сдвиг одинаковый у всех.
-        val cx = dx / s
-        val cy = dy / s
+        // С поворотом/отражением вида сдвиг пальца переводится в холст обратной матрицей камеры.
+        val (o0x, o0y) = toCanvas(0f, 0f)
+        val (o1x, o1y) = toCanvas(dx, dy)
+        val cx = if (o1x.isFinite() && o0x.isFinite()) o1x - o0x else dx / s
+        val cy = if (o1y.isFinite() && o0y.isFinite()) o1y - o0y else dy / s
         for (id in ids) {
             val inv = scene?.parentWorlds?.get(id)?.inverse() ?: Affine2D.IDENTITY
             val lx = inv.a * cx + inv.c * cy
@@ -1704,6 +1851,147 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         Log.i("VT/Edit", "transform reset: $ids")
     }
 
+    // ---------------------------------------------------------------- пивоты (опорные точки)
+
+    /** Текущий пивот узла в координатах до трансформации (переопределение или центр по умолчанию). */
+    fun pivotOf(id: Int): Pair<Float, Float>? = pivots[id]
+
+    /** Пивот на холсте с учётом смещения узла и родителей. */
+    private fun pivotWorld(id: Int): Pair<Float, Float>? {
+        val (px, py) = pivots[id] ?: return null
+        val pw = scene?.parentWorlds?.get(id) ?: return null
+        return com.vibetoon.domain.render.PivotMath.world(pw, effective(id), px, py)
+    }
+
+    /** Пивот правится только в обычном режиме Transform (не кости/деформации/рисование). */
+    private fun pivotToolActive(): Boolean = appSettings()?.pivotEditing != false && !_boneMode.value && !_warpTool.value &&
+        !_meshMode.value && !_perspTool.value && !_liquifyTool.value && _paintTool.value == null && _rasterTool.value == null &&
+        _selected.value.let { it != null && it < BONE_ID_BASE }
+
+    /** Пивот в экранных координатах для оверлея. */
+    fun pivotScreen(id: Int): Pair<Float, Float>? {
+        if (!pivotToolActive()) return null
+        val (wx, wy) = pivotWorld(id) ?: return null
+        return toScreen(wx, wy)
+    }
+
+    /**
+     * Перенос пивота узла без скачка картинки: смещение base/ключей компенсируется (PivotMath).
+     * [keepOverride] = false снимает переопределение (пивот по умолчанию).
+     */
+    private fun applyPivot(id: Int, nx: Float, ny: Float, keepOverride: Boolean = true) {
+        if (!nx.isFinite() || !ny.isFinite()) return
+        val (ox, oy) = pivots[id] ?: return
+        val pm = com.vibetoon.domain.render.PivotMath
+        if (ox != nx || oy != ny) {
+            base[id]?.let { base[id] = pm.compensate(it, ox, oy, nx, ny) }
+            override[id]?.let { override[id] = pm.compensate(it, ox, oy, nx, ny) }
+            val anim = _animation.value
+            anim.tracks[id]?.let { tr ->
+                if (tr.keys.isNotEmpty()) _animation.value = anim.copy(tracks = anim.tracks + (id to com.vibetoon.domain.anim.AnimationTrack(id, tr.keys.map { pm.compensate(it, ox, oy, nx, ny) })))
+            }
+        }
+        pivotOverrides = if (keepOverride) pivotOverrides + (id to (nx to ny)) else pivotOverrides - id
+        rebuildLayers()
+        pushScene()
+        refreshInspector()
+        markDirty()
+    }
+
+    /** Пивот по умолчанию: центр рамки листа или центр рамки детей группы (без переопределения). */
+    private fun defaultPivot(id: Int): Pair<Float, Float>? {
+        if (id !in pivotOverrides) return pivots[id]
+        val saved = pivotOverrides
+        pivotOverrides = pivotOverrides - id
+        val p = computePivots(com.vibetoon.domain.model.SceneTree.build(layers, pivotOverrides))[id]
+        pivotOverrides = saved
+        return p
+    }
+
+    private var pivotDragId: Int? = null
+    private var pivotDragStart: Pair<Float, Float>? = null
+    private var pivotDragHadOverride = false
+    private var pivotChecked = false
+
+    /** Начало перетаскивания пивота: точка должна быть рядом с пивотом на экране. */
+    fun pivotDown(sx: Float, sy: Float): Boolean {
+        if (_playing.value || !pivotToolActive()) return false
+        val id = _selected.value ?: return false
+        val start = pivots[id] ?: return false
+        val (wx0, wy0) = pivotWorld(id) ?: return false
+        val sp = toScreen(wx0, wy0)
+        if (kotlin.math.hypot(sx - sp.first, sy - sp.second) > PIVOT_HIT_PX) return false
+        if (isLockedId(id)) { lockedNotice(); return false }
+        pivotChecked = false   // снимок истории - при первом сдвиге, тап по маркеру историю не засоряет
+        pivotDragId = id
+        pivotDragStart = start
+        pivotDragHadOverride = id in pivotOverrides
+        return true
+    }
+
+    /** Перетаскивание пивота. Снап (на холсте): центр холста и углы рамки узла, радиус 12 px экрана. */
+    fun pivotMove(sx: Float, sy: Float) {
+        val id = pivotDragId ?: return
+        val (px, py) = pivots[id] ?: return
+        if (!pivotChecked) { checkpoint("pivot", force = true); pivotChecked = true }
+        var (x, y) = toCanvas(sx, sy)
+        val snap = 12f / (Camera.fitScale(viewW, viewH, canvasW, canvasH) * camera.zoom).coerceAtLeast(1e-4f)
+        val q = scene?.selectionQuads?.get(id)
+        var snapped = false
+        if (q != null && q.size >= 8) {
+            val cxq = (q[0] + q[2] + q[4] + q[6]) / 4f; val cyq = (q[1] + q[3] + q[5] + q[7]) / 4f
+            val cands = listOf(q[0] to q[1], q[2] to q[3], q[4] to q[5], q[6] to q[7], cxq to cyq)
+            for ((qx, qy) in cands) if (kotlin.math.hypot(x - qx, y - qy) < snap) { x = qx; y = qy; snapped = true; break }
+        }
+        if (!snapped && kotlin.math.hypot(x - canvasW / 2f, y - canvasH / 2f) < snap) { x = canvasW / 2f; y = canvasH / 2f }
+        val pw = scene?.parentWorlds?.get(id) ?: return
+        val (lx, ly) = com.vibetoon.domain.render.PivotMath.toLocal(pw, effective(id), px, py, x, y) ?: return
+        applyPivot(id, lx, ly)
+    }
+
+    /** Отпускание пивота. Temporary Pivots: перенос откатывается (картинка на месте, пивот прежний). */
+    fun pivotUp() {
+        val id = pivotDragId ?: return
+        val start = pivotDragStart
+        pivotDragId = null
+        pivotDragStart = null
+        if (pivotChecked && appSettings()?.temporaryPivots == true && start != null) applyPivot(id, start.first, start.second, keepOverride = pivotDragHadOverride)
+    }
+
+    /** Пивот из полей инспектора: точное значение, Undo через checkpoint. */
+    fun setPivot(id: Int, x: Float, y: Float) {
+        if (_playing.value || !x.isFinite() || !y.isFinite()) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        checkpoint("pivotField:$id")
+        applyPivot(id, x, y)
+    }
+
+    /** «To center»: пивот в видимый центр рамки узла. */
+    fun pivotToCenter() {
+        val id = _selected.value ?: return
+        if (_playing.value) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        val q = scene?.selectionQuads?.get(id) ?: return
+        val (px, py) = pivots[id] ?: return
+        val pw = scene?.parentWorlds?.get(id) ?: return
+        val cx = (q[0] + q[2] + q[4] + q[6]) / 4f
+        val cy = (q[1] + q[3] + q[5] + q[7]) / 4f
+        val (lx, ly) = com.vibetoon.domain.render.PivotMath.toLocal(pw, effective(id), px, py, cx, cy) ?: return
+        checkpoint("pivotCenter", force = true)
+        applyPivot(id, lx, ly)
+    }
+
+    /** Сброс пивота к значению по умолчанию (центр рамки) без скачка картинки. */
+    fun pivotReset() {
+        val id = _selected.value ?: return
+        if (_playing.value) return
+        if (id !in pivotOverrides) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        val (dx, dy) = defaultPivot(id) ?: return
+        checkpoint("pivotReset", force = true)
+        applyPivot(id, dx, dy, keepOverride = false)
+    }
+
     /** Один палец без выделения: двигаем камеру. */
     fun onPan(dx: Float, dy: Float) = onTransform(viewW / 2f, viewH / 2f, 1f, dx, dy)
 
@@ -1742,7 +2030,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- Undo / Redo
 
-    private fun snapshot() = Snapshot(HashMap(base), _animation.value, media.toList(), deletedPsd, _clips.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupAnchors = groupDeformationAnchors.toMap(), warpSizes = warpGridSizes.toMap(), denseWarps = denseWarps.toMap())
+    private fun snapshot() = Snapshot(HashMap(base), _animation.value, media.toList(), deletedPsd, _clips.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupAnchors = groupDeformationAnchors.toMap(), warpSizes = warpGridSizes.toMap(), denseWarps = denseWarps.toMap(), pivots = pivotOverrides.toMap())
 
     private fun updateHistoryFlags() {
         _canUndo.value = undoStack.isNotEmpty()
@@ -1907,6 +2195,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         groupDeformationAnchors = snap.groupAnchors.toMap()
         warpGridSizes = snap.warpSizes.toMap()
         denseWarps = snap.denseWarps.toMap()
+        pivotOverrides = snap.pivots.toMap()
         warpLayers = snap.warps
         meshLayers = snap.meshes
         perspLayers = snap.persps
@@ -2292,19 +2581,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return 1 + inner
     }
 
-    /** Меняется ли вложенная сцена по времени: иначе её достаточно нарисовать один раз. */
-    private fun symbolAnimated(gid: Int, guard: Int = 0): Boolean {
+    /** Цикл без ключей времени — только при настоящей анимации участников (дорожки, покадровые слои, видео). */
+    private fun symbolCycles(gid: Int, guard: Int = 0): Boolean {
         if (guard > MAX_SYMBOL_DEPTH) return false
         val mem = symbolMembers(gid)
-        return _animation.value.tracks.keys.any { it in mem } || _clips.value.keys.any { it in mem } ||
-            media.any { m -> m.id in mem && (m.cells.size > 1 || (m.isText && m.fx.animated) || m.kind == MediaKind.VIDEO ||
-                (m.kind == MediaKind.SYMBOL && (m.timeKeys.isNotEmpty() || symbolAnimated(m.symRef, guard + 1)))) }
+        return _animation.value.tracks.any { (id, t) -> id in mem && SymbolMath.trackMoves(t.keys) } ||
+            media.any { m -> m.id in mem && (m.cells.size > 1 || m.kind == MediaKind.VIDEO ||
+                (m.kind == MediaKind.SYMBOL && (SymbolMath.timeKeysMove(m.timeKeys) || (m.timeKeys.isEmpty() && symbolCycles(m.symRef, guard + 1))))) }
     }
 
-    /** Внутренний кадр экземпляра на кадре сцены [f]: ключи времени (Hold) главнее, иначе цикл localFrame = f % длительность. */
+    /** Внутренний кадр экземпляра на кадре сцены [f]: ключи времени (Hold) главнее, иначе держим кадр 0 (без самопроизвольного цикла). */
     private fun symbolKey(inst: MediaItem, def: MediaItem, f: Int): Int =
         SymbolMath.timeAt(inst.timeKeys, f)?.coerceIn(0, maxOf(0, def.symDur - 1))
-            ?: if (symbolAnimated(def.id)) SymbolMath.localFrame(f, def.symDur) else 0
+            ?: SymbolMath.defaultFrame(f, def.symDur, symbolCycles(def.id))
 
     private fun computeSymbolDuration(gid: Int): Int {
         val mem = symbolMembers(gid)
@@ -2316,11 +2605,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val def = media.firstOrNull { it.id == gid }
         frames += def?.markers?.maxOfOrNull { it.frame } ?: 0
-        return SymbolMath.duration(frames, _animation.value.settings.durationFrames)
+        return SymbolMath.duration(frames, 1)
     }
 
     private fun symbolDims(): Pair<Int, Int> {
-        val k = minOf(1f, 4096f / maxOf(canvasW, canvasH))
+        // Суперсемплинг 2x: края символа сглаживаются GPU-мипмапами при отрисовке в размер экземпляра.
+        val k = minOf(2f, 8192f / maxOf(canvasW, canvasH))
         return maxOf(1, (canvasW * k).toInt()) to maxOf(1, (canvasH * k).toInt())
     }
 
@@ -2418,7 +2708,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val insts = top.filter { it.symRef == d.id }
             val n = d.symDur.coerceAtLeast(1)
             val keys: Collection<Int> = if (frame != null) insts.map { symbolKey(it, d, frame) }.toSet()
-                else if (symbolAnimated(d.id) || insts.any { it.timeKeys.isNotEmpty() }) (0 until n).toList() else listOf(0)
+                else if (symbolCycles(d.id)) (0 until n).toList()
+                else (insts.flatMap { i -> i.timeKeys.map { it.value.coerceIn(0, n - 1) } } + 0).toSet()   // статичный символ: только кадры ключей
             val list = MutableList<ByteArray?>(n) { null }
             for (k in keys) {
                 if (k !in list.indices) continue
@@ -2539,7 +2830,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun pickMarker(instId: Int, marker: FrameMarker) =
         editInstance(instId, "«${marker.name}» с кадра ${_frame.value + 1}") { it.copy(timeKeys = SymbolMath.withKey(it.timeKeys, TimeKey(_frame.value, marker.frame))) }
     fun removeTimeKey(instId: Int) = editInstance(instId, "Ключ времени удалён") { it.copy(timeKeys = SymbolMath.withoutKey(it.timeKeys, _frame.value)) }
-    fun clearTimeKeys(instId: Int) = editInstance(instId, "Ключи времени очищены: символ снова идёт по кругу") { it.copy(timeKeys = emptyList()) }
+    fun clearTimeKeys(instId: Int) = editInstance(instId, "Ключи времени очищены: символ держит первый кадр") { it.copy(timeKeys = emptyList()) }
 
     /** Миниатюры маркеров символа экземпляра [instId]: сначала из файлов проекта, недостающие дорисовываются в фоне. */
     fun loadMarkerThumbs(instId: Int) {
@@ -2585,7 +2876,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun addTimeKeyHere(instId: Int) {
         val inst = media.firstOrNull { it.id == instId && it.kind == MediaKind.SYMBOL } ?: return
         val def = media.firstOrNull { it.id == inst.symRef && it.symDur > 0 } ?: return
-        val v = SymbolMath.timeAt(inst.timeKeys, _frame.value) ?: SymbolMath.localFrame(_frame.value, def.symDur)
+        val v = SymbolMath.timeAt(inst.timeKeys, _frame.value) ?: SymbolMath.defaultFrame(_frame.value, def.symDur, symbolCycles(def.id))
         editInstance(instId, "Ключ времени (Hold) на кадре ${_frame.value + 1}") { it.copy(timeKeys = SymbolMath.withKey(it.timeKeys, TimeKey(_frame.value, v))) }
     }
 
@@ -3418,7 +3709,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (group.kind != LayerKind.GROUP_OPEN && group.kind != LayerKind.GROUP_CLOSED) return
         if (isLockedId(id)) { lockedNotice(); return }
         if (id in groupDeformationAnchors) {
-            _state.value = UiState.Message("Область группы уже сохранена; деформация в разработке")
+            _state.value = UiState.Message("Область группы уже сохранена")
             return
         }
         val bounds = scene?.groupLocalBounds?.get(id)
@@ -3431,7 +3722,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         checkpoint("group-deformation-anchor", force = true)
         groupDeformationAnchors = groupDeformationAnchors + (id to anchor)
         markDirty()
-        _state.value = UiState.Message("Область группы сохранена; деформация в разработке")
+        _state.value = UiState.Message("Область группы сохранена: теперь нажмите «Включить для группы»")
     }
 
     fun clearGroupDeformationAnchor() {
@@ -3474,7 +3765,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_playing.value) return
         val id = selectedDeformerGroup() ?: return
         if (isLockedId(id)) { lockedNotice(); return }
-        if (id !in groupDeformationAnchors) { _state.value = UiState.Message("Сначала подготовьте область группы"); return }
+        if (id !in groupDeformationAnchors) {
+            val bounds = scene?.groupLocalBounds?.get(id)
+            if (bounds == null) { _state.value = UiState.Message("Нет видимых непустых слоёв для области группы"); return }
+            val anchor = com.vibetoon.domain.project.GroupDeformationAnchor(bounds.x, bounds.y, bounds.w, bounds.h)
+            if (!anchor.valid()) { _state.value = UiState.Message("Некорректная область группы"); return }
+            groupDeformationAnchors = groupDeformationAnchors + (id to anchor)
+        }
         if (if (warp) id in warpLayers else id in perspLayers) return
         val nextWarp = if (warp) warpLayers + id else warpLayers
         val nextPersp = if (warp) perspLayers else perspLayers + id
@@ -3522,12 +3819,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Углы единичного квадрата слоя на холсте: p00, p10, p01 (афинное отображение) -> (u, v) по точке холста. */
-    private fun unitOf(q: FloatArray, cx: Float, cy: Float): Pair<Float, Float>? {
+    private fun unitOf(q: FloatArray, c: Pair<Float, Float>): Pair<Float, Float>? {
         val ex = q[2] - q[0]; val ey = q[3] - q[1]
         val fx = q[6] - q[0]; val fy = q[7] - q[1]
         val det = ex * fy - ey * fx
         if (kotlin.math.abs(det) < 1e-6f) return null
-        val px = cx - q[0]; val py = cy - q[1]
+        val px = c.first - q[0]; val py = c.second - q[1]
         return ((px * fy - py * fx) / det) to ((ex * py - ey * px) / det)
     }
 
@@ -3593,7 +3890,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val u = (k % grid.width).toFloat() / (grid.width - 1); val v = (k / grid.width).toFloat() / (grid.height - 1)
                 val b = com.vibetoon.domain.anim.WarpGridMath.evaluate(cubic, 4, u, v) ?: return
                 val x = u + b.first + grid.offsets[k * 2]; val y = v + b.second + grid.offsets[k * 2 + 1]
-                pts[k * 2] = toScreenX(q[0] + x * ex + y * fx); pts[k * 2 + 1] = toScreenY(q[1] + x * ey + y * fy)
+                toScreen(q[0] + x * ex + y * fx, q[1] + x * ey + y * fy).let { pts[k * 2] = it.first; pts[k * 2 + 1] = it.second }
             }
             _warpOverlay.value = WarpOverlay(pts.toList(), grid.width, grid.height); return
         }
@@ -3605,8 +3902,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         for (k in 0 until size.width * size.height) {
             val u = (k % size.width).toFloat() / (size.width - 1) + off[k * 2]
             val v = (k / size.width).toFloat() / (size.height - 1) + off[k * 2 + 1]
-            pts[k * 2] = toScreenX(q[0] + u * ex + v * fx)
-            pts[k * 2 + 1] = toScreenY(q[1] + u * ey + v * fy)
+            toScreen(q[0] + u * ex + v * fx, q[1] + u * ey + v * fy).let { pts[k * 2] = it.first; pts[k * 2 + 1] = it.second }
         }
         _warpOverlay.value = WarpOverlay(pts.toList(), size.width, size.height)
     }
@@ -3635,7 +3931,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val k = grab - 20
         val t = deformerTarget() ?: return
         val q = deformerQuad(t) ?: return
-        val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
         val grid = denseWarps[t]
         if (grid != null) {
             if (_fx.value) { _state.value = UiState.Message("Плотный Warp: только обычный слой и FX выкл"); return }
@@ -3742,8 +4038,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         for (k in 0 until 4) {
             val u = PerspectiveMath.cornerX(k) + off[k * 2]
             val v = PerspectiveMath.cornerY(k) + off[k * 2 + 1]
-            pts[k * 2] = toScreenX(q[0] + u * ex + v * fx)
-            pts[k * 2 + 1] = toScreenY(q[1] + u * ey + v * fy)
+            toScreen(q[0] + u * ex + v * fx, q[1] + u * ey + v * fy).let { pts[k * 2] = it.first; pts[k * 2 + 1] = it.second }
         }
         _perspOverlay.value = com.vibetoon.domain.anim.PerspectiveHandles.screenHandles(pts) ?: FloatArray(0)
     }
@@ -3763,7 +4058,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (best < 0) return false
         perspSideDrag = if (best >= 4) {
             val quad = deformerQuad(t)?.copyOf() ?: return false
-            val start = unitOf(quad, toCanvasX(sx), toCanvasY(sy)) ?: return false
+            val start = unitOf(quad, toCanvas(sx, sy)) ?: return false
             PerspSideDrag(t, _frame.value, _fx.value, quad, start, PerspectiveMath.offsets(t, _frame.value, base, _animation.value, _fx.value))
         } else null
         groupHandleCheckpointed = false
@@ -3776,7 +4071,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val k = grab - PERSP_GRAB
         val t = deformerTarget() ?: return
         val q = deformerQuad(t) ?: return
-        val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
         if (k >= com.vibetoon.domain.anim.PerspectiveHandles.CORNERS) {
             val drag = perspSideDrag ?: return
             if (drag.layer != t || drag.frame != _frame.value || drag.fx != _fx.value || !drag.quad.contentEquals(q)) return
@@ -3937,7 +4232,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val tg = liqTarget() ?: run { _state.value = UiState.Message("Liquify: выберите один слой (картинка или слой PSD)"); return false }
         val q = scene?.selectionQuads?.get(tg.id) ?: return false
         if (!liqPrepare(tg)) return false
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return false
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         liqLast = p
         liqDirty = false
         liqUndo.addLast(liqPx.copyOf())
@@ -3951,9 +4246,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun liquifyMove(sx: Float, sy: Float) {
         val q = scene?.selectionQuads?.get(liqLayer) ?: return
         val last = liqLast ?: return
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return
         // длина стороны слоя на экране -> радиус кисти в пикселях картинки
-        val ex = toScreenX(q[2]) - toScreenX(q[0]); val ey = toScreenY(q[3]) - toScreenY(q[1])
+        val ex = toScreen(q[2], q[3]).first - toScreen(q[0], q[1]).first; val ey = toScreen(q[2], q[3]).second - toScreen(q[0], q[1]).second
         val screenW = kotlin.math.hypot(ex, ey).coerceAtLeast(1f)
         val r = _liqRadius.value / screenW * liqW
         val dx = (p.first - last.first) * liqW
@@ -4082,7 +4377,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ?: com.vibetoon.domain.paint.ShapeAssist.closed(points, held, density)
             ?: com.vibetoon.domain.paint.ShapeAssist.triangle(points, held, density) ?: return null
         val ends = path.map { p ->
-            val u = unitOf(q, toCanvasX(p.x), toCanvasY(p.y)) ?: return null
+            val u = unitOf(q, toCanvas(p.x, p.y)) ?: return null
             Triple(u.first * strokeSize[0], u.second * strokeSize[1], p.pressure)
         }
         view.paintEnd(false) { }
@@ -4107,7 +4402,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _gradientMode.value = false
         _paintTool.value = t
         if (t != null) {
-            paintTargetId()?.let { requestPaintSize(it) }
+            ensurePixelTarget()?.let { requestPaintSize(it) }
             requestBrushPreviews()
             _state.value = UiState.Message(if (t == PaintTool.BRUSH) "Кисть: рисуйте на слое-картинке (или создайте «Новый слой»)" else "Ластик: стирает пиксели слоя-картинки")
         }
@@ -4194,6 +4489,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun paintPalmBlocked(): Boolean = stylusDown || SystemClock.uptimeMillis() - stylusLast < 1200
 
     /** Слой, на котором рисуем: выбранная картинка (в том числе созданная кнопкой «Новый слой») или слой PSD; текст и видео - нет. */
+    /** Снимок настроек пиксельных режимов из SharedPreferences (CompositionLocal во ViewModel недоступен). */
+    private class PixelModes(val vectorWorkflow: Boolean, val autoPixelEdit: Boolean, val onlyEraseSelectedPaths: Boolean,
+                             val temporaryPivots: Boolean, val pivotEditing: Boolean, val rotateCanvas: Boolean)
+    private fun appSettings(): PixelModes? = runCatching {
+        val p = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+        PixelModes(p.getBoolean("vector_workflow", false), p.getBoolean("auto_pixel_edit", false),
+            p.getBoolean("only_erase_selected_paths", false), p.getBoolean("temporary_pivots", false),
+            p.getBoolean("pivot_editing", true), p.getBoolean("rotate_canvas_2f", true))
+    }.getOrNull()
+
+    /** Авто-режим пиксельного редактирования: при выборе кисти/ластика слой выбирается или создаётся сам. */
+    private fun ensurePixelTarget(): Int? {
+        val st = appSettings() ?: return paintTargetId()
+        if (!st.autoPixelEdit) return paintTargetId()
+        val current = paintTargetId()
+        if (current != null) return current
+        // векторный режим: кисть на векторном слое - выбираем/создаём векторный
+        if (st.vectorWorkflow && _paintTool.value == PaintTool.BRUSH) {
+            val vec = media.firstOrNull { it.vector && it.kind == MediaKind.IMAGE }
+            if (vec != null) { selectLayer(vec.id); return null }
+            addVectorLayer()
+            return null
+        }
+        // пиксельный режим: верхний растровый слой или новый
+        val raster = media.lastOrNull { it.kind == MediaKind.IMAGE && !it.vector }
+        if (raster != null) { selectLayer(raster.id); return raster.id }
+        addBlankLayer("Слой")
+        return null
+    }
+
+    /** «Стирать/размазывать только выбранные слои-контуры»: ластик и смаз действуют только на выбранных векторных слоях. */
+    private fun onlyPathLayers(): Boolean = appSettings()?.onlyEraseSelectedPaths == true
+
     private fun paintTargetId(): Int? {
         val t = warpTarget() ?: return null
         if (isLockedId(t)) return null   // замок: по слою рисовать нельзя
@@ -4214,7 +4542,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun updatePaintCursor(sx: Float, sy: Float, q: FloatArray, params: BrushParams) {
         val w = strokeSize[0].coerceAtLeast(1)
-        val ex = toScreenX(q[2]) - toScreenX(q[0]); val ey = toScreenY(q[3]) - toScreenY(q[1])
+        val ex = toScreen(q[2], q[3]).first - toScreen(q[0], q[1]).first; val ey = toScreen(q[2], q[3]).second - toScreen(q[0], q[1]).second
         val scale = kotlin.math.hypot(ex, ey) / w
         _paintCursor.value = floatArrayOf(sx, sy, (params.size / 2f * scale).coerceAtLeast(2f))
     }
@@ -4225,9 +4553,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val id = paintTargetId() ?: run { clearPaintHover(); return }
         val size = paintSizes[id] ?: run { requestPaintSize(id); clearPaintHover(); return }
         val q = scene?.selectionQuads?.get(id) ?: run { clearPaintHover(); return }
-        val unit = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: run { clearPaintHover(); return }
+        val unit = unitOf(q, toCanvas(sx, sy)) ?: run { clearPaintHover(); return }
         if (unit.first !in 0f..1f || unit.second !in 0f..1f) { clearPaintHover(); return }
-        val ex = toScreenX(q[2]) - toScreenX(q[0]); val ey = toScreenY(q[3]) - toScreenY(q[1])
+        val ex = toScreen(q[2], q[3]).first - toScreen(q[0], q[1]).first; val ey = toScreen(q[2], q[3]).second - toScreen(q[0], q[1]).second
         val radius = com.vibetoon.domain.input.EditorInputPolicy.cursorRadius(paintParams().size, kotlin.math.hypot(ex, ey), size[0])
         _paintCursor.value = floatArrayOf(sx, sy, radius)
     }
@@ -4246,7 +4574,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (_paintTool.value == PaintTool.ERASER) { _state.value = UiState.Message("На векторном слое ластика нет: «Убрать последнюю» удаляет примитив"); return false }
             return vectorDown(vid, sx, sy)
         }
-        val id = paintTargetId() ?: run {
+        val id = ensurePixelTarget() ?: run {
             _state.value = UiState.Message("Рисовать можно на слое-картинке: выберите его или создайте «Новый слой»")
             return false
         }
@@ -4263,7 +4591,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val q = scene?.selectionQuads?.get(id) ?: return false
         val view = RenderHost.view ?: return false
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return false
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         val params = paintParams()
         strokeLayer = id
         strokeSize = size
@@ -4300,7 +4628,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (vecLayer >= 0) { vectorMove(sx, sy); return }
         val st = stroker ?: return
         val q = scene?.selectionQuads?.get(strokeLayer) ?: return
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return
         if (rulerQuad != null) {
             val g = _rulerGuide.value
             if (g.size == 4) _rulerGuide.value = listOf(g[0], g[1], sx, sy)
@@ -4323,7 +4651,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 camera == rulerCamera && viewW == rulerViewW && viewH == rulerViewH && scene?.selectionQuads?.get(layer)?.contentEquals(q) == true
             if (_gradientMode.value) {
                 if (!valid || guide.any { !it.isFinite() } || kotlin.math.hypot(guide[2] - guide[0], guide[3] - guide[1]) < 2f) { paintCancel(); return }
-                val screenQuad = FloatArray(8) { index -> if (index % 2 == 0) toScreenX(q[index]) else toScreenY(q[index]) }
+                val screenQuad = FloatArray(8) { index -> if (index % 2 == 0) toScreen(q[index], q[index + 1]).first else toScreen(q[index - 1], q[index]).second }
                 val geometry = com.vibetoon.domain.paint.GradientGeometry.create(screenQuad, guide[0], guide[1], guide[2], guide[3])
                     ?: run { paintCancel(); return }
                 clearRulerGesture(); clearShapeAssist(); stroker = null; _paintCursor.value = null
@@ -4342,7 +4670,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             val path = if (valid) com.vibetoon.domain.paint.RulerPath.path(_rulerMode.value,
                 com.vibetoon.domain.paint.RulerPath.Point(guide[0], guide[1]), com.vibetoon.domain.paint.RulerPath.Point(guide[2], guide[3])) else null
-            val mapped = path?.map { point -> unitOf(q, toCanvasX(point.x), toCanvasY(point.y)) }
+            val mapped = path?.map { point -> unitOf(q, toCanvas(point.x, point.y)) }
             if (mapped == null || mapped.any { it == null }) {
                 paintCancel(); return
             }
@@ -4673,7 +5001,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun vectorDown(id: Int, sx: Float, sy: Float): Boolean {
         val q = scene?.selectionQuads?.get(id) ?: return false
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return false
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         vecLayer = id
         vecPts.clear(); vecPts += p.first * canvasW; vecPts += p.second * canvasH
         swallowTap = true
@@ -4682,7 +5010,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun vectorMove(sx: Float, sy: Float) {
         val q = scene?.selectionQuads?.get(vecLayer) ?: return
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return
         vecPts += p.first * canvasW; vecPts += p.second * canvasH
         val now = SystemClock.uptimeMillis()
         if (now - vecPreviewAt < 70) return
@@ -4886,7 +5214,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         rasterCancel()
         _rasterTool.value = t
         if (t != null) {
-            paintTargetId()?.let { requestPaintSize(it) }
+            ensurePixelTarget()?.let { requestPaintSize(it) }
             _state.value = UiState.Message(when (t) {
                 RasterTool.FILL -> "Заливка: коснитесь замкнутой области (порог, расширение и зазор - в панели над холстом)"
                 RasterTool.PIPETTE -> "Пипетка: коснитесь холста, чтобы взять цвет"
@@ -4916,7 +5244,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun layerPoint(id: Int, sx: Float, sy: Float): Pair<Float, Float>? {
         val size = paintSizes[id] ?: return null
         val q = scene?.selectionQuads?.get(id) ?: return null
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return null
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return null
         return p.first * size[0] to p.second * size[1]
     }
 
@@ -4948,6 +5276,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return true
         }
         if (t == RasterTool.PATH) return penDown(sx, sy)
+        if (t == RasterTool.SMUDGE && onlyPathLayers()) {
+            _state.value = UiState.Message("Смаз действует только на выбранных слоях-контурах: выберите векторный слой")
+            return false
+        }
         val id = paintTargetId() ?: run {
             _state.value = UiState.Message("Инструмент работает на слое-картинке: выберите его или создайте «Новый слой»")
             return false
@@ -5412,9 +5744,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (s == null || bmp == null || _rasterTool.value != RasterTool.SELECT) { if (_selOverlay.value.bmp != null) _selOverlay.value = SelOverlay(); return }
         val q = scene?.selectionQuads?.get(s.id) ?: run { clearSelection(); return }   // слой удалён - выделение снимается
         val c = floatArrayOf(
-            toScreenX(q[0]) + selShiftX, toScreenY(q[1]) + selShiftY,
-            toScreenX(q[2]) + selShiftX, toScreenY(q[3]) + selShiftY,
-            toScreenX(q[6]) + selShiftX, toScreenY(q[7]) + selShiftY
+            toScreen(q[0], q[1]).first + selShiftX, toScreen(q[0], q[1]).second + selShiftY,
+            toScreen(q[2], q[3]).first + selShiftX, toScreen(q[2], q[3]).second + selShiftY,
+            toScreen(q[6], q[7]).first + selShiftX, toScreen(q[6], q[7]).second + selShiftY
         )
         _selOverlay.value = SelOverlay(bmp, c)
     }
@@ -5740,7 +6072,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun canvasToScreen(q: FloatArray, x: Float, y: Float): Pair<Float, Float> {
         val u = x / canvasW; val v = y / canvasH
-        return toScreenX(q[0] + u * (q[2] - q[0]) + v * (q[6] - q[0])) to toScreenY(q[1] + u * (q[3] - q[1]) + v * (q[7] - q[1]))
+        return toScreen(q[0] + u * (q[2] - q[0]) + v * (q[6] - q[0]), q[1] + u * (q[3] - q[1]) + v * (q[7] - q[1]))
     }
 
     private fun vecNodeAt(id: Int, sx: Float, sy: Float): Pair<Int, Int>? {
@@ -5776,7 +6108,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val shape = draft.getOrNull(nodeShape) ?: return
         if (nodePt !in 0 until shape.pts.size / 2) return
         val q = scene?.selectionQuads?.get(original.id) ?: return
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return
         nodeDraft = com.vibetoon.domain.vector.VectorMath.moveNode(draft, nodeShape, nodePt, p.first * canvasW, p.second * canvasH) ?: return
         refreshPenOverlay()
         val now = SystemClock.uptimeMillis()
@@ -5851,13 +6183,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (isLockedId(id)) { lockedNotice(); return false }
         val q = scene?.selectionQuads?.get(id) ?: return false
-        val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return false
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         swallowTap = true
         val cx = p.first * canvasW; val cy = p.second * canvasH
         if (penPts.size >= 6) {
             // тап по первой точке замыкает контур
-            val fx = toScreenX(q[0] + (penPts[0] / canvasW) * (q[2] - q[0]) + (penPts[1] / canvasH) * (q[6] - q[0]))
-            val fy = toScreenY(q[1] + (penPts[0] / canvasW) * (q[3] - q[1]) + (penPts[1] / canvasH) * (q[7] - q[1]))
+            val fxy = toScreen(q[0] + (penPts[0] / canvasW) * (q[2] - q[0]) + (penPts[1] / canvasH) * (q[6] - q[0]), q[1] + (penPts[0] / canvasW) * (q[3] - q[1]) + (penPts[1] / canvasH) * (q[7] - q[1]))
+            val fx = fxy.first; val fy = fxy.second
             if (kotlin.math.hypot(sx - fx, sy - fy) < 28f) { penFinish(true); return true }
         }
         penPts += cx; penPts += cy
@@ -5912,8 +6244,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val out = FloatArray(penPts.size)
         for (i in 0 until penPts.size / 2) {
             val u = penPts[i * 2] / canvasW; val v = penPts[i * 2 + 1] / canvasH
-            out[i * 2] = toScreenX(q[0] + u * (q[2] - q[0]) + v * (q[6] - q[0]))
-            out[i * 2 + 1] = toScreenY(q[1] + u * (q[3] - q[1]) + v * (q[7] - q[1]))
+            toScreen(q[0] + u * (q[2] - q[0]) + v * (q[6] - q[0]), q[1] + u * (q[3] - q[1]) + v * (q[7] - q[1])).let { out[i * 2] = it.first; out[i * 2 + 1] = it.second }
         }
         _toolDrag.value = ToolDrag(3, out)
     }
@@ -5977,13 +6308,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val ex = q[2] - q[0]; val ey = q[3] - q[1]
         val fx = q[6] - q[0]; val fy = q[7] - q[1]
         val (lw, _) = layerSize(t) ?: (1f to 1f)
-        val screenW = kotlin.math.hypot(toScreenX(q[2]) - toScreenX(q[0]), toScreenY(q[3]) - toScreenY(q[1]))
+        val screenW = kotlin.math.hypot(toScreen(q[2], q[3]).first - toScreen(q[0], q[1]).first, toScreen(q[2], q[3]).second - toScreen(q[0], q[1]).second)
         val pts = FloatArray(pins.size * 2)
         val rad = FloatArray(pins.size)
         for ((i, p) in pins.withIndex()) {
             val u = p.u + off[i * 2]; val v = p.v + off[i * 2 + 1]
-            pts[i * 2] = toScreenX(q[0] + u * ex + v * fx)
-            pts[i * 2 + 1] = toScreenY(q[1] + u * ey + v * fy)
+            toScreen(q[0] + u * ex + v * fx, q[1] + u * ey + v * fy).let { pts[i * 2] = it.first; pts[i * 2 + 1] = it.second }
             rad[i] = p.radius / lw * screenW
         }
         _pinOverlay.value = PinOverlay(pts, rad, BooleanArray(pins.size) { pins[it].stiff }, pinSel)
@@ -6026,7 +6356,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pins = pinLayers[t] ?: return
         val p = pins.getOrNull(k) ?: return
         val q = scene?.selectionQuads?.get(t) ?: return
-        val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
         // смещение, при котором пин оказывается под пальцем (в долях слоя), с защитой от «улёта»
         setPinOffset(t, k, (u - p.u).coerceIn(-1.5f, 1.5f), (v - p.v).coerceIn(-1.5f, 1.5f))
         pushScene()
@@ -6040,7 +6370,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = meshLayers[t]
         if (m == null) { generateMeshContour(); _state.value = UiState.Message("Сетка создана по контуру: тапните ещё раз, чтобы поставить пин"); swallowTap = true; return true }
         val q = scene?.selectionQuads?.get(t) ?: return false
-        val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return false
+        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return false
         if (u !in 0f..1f || v !in 0f..1f) return false
         val cur = pinLayers[t].orEmpty()
         if (cur.size >= PuppetMath.MAX_PINS) { _state.value = UiState.Message("Не больше ${PuppetMath.MAX_PINS} пинов"); return true }
@@ -6728,8 +7058,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         for (k in 0 until m.count) {
             val u = m.u(k) + off[k * 2]
             val v = m.v(k) + off[k * 2 + 1]
-            pts[k * 2] = toScreenX(q[0] + u * ex + v * fx)
-            pts[k * 2 + 1] = toScreenY(q[1] + u * ey + v * fy)
+            toScreen(q[0] + u * ex + v * fx, q[1] + u * ey + v * fy).let { pts[k * 2] = it.first; pts[k * 2 + 1] = it.second }
         }
         _meshOverlay.value = MeshOverlay(pts, meshEdges(m), meshActive)
     }
@@ -6749,7 +7078,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_meshTool.value == MeshTool.DELETE) { if (meshDeleteAt(t, m, ov.points, sx, sy)) { swallowTap = true; return true }; return false }
         if (_meshTool.value == MeshTool.CUT || _meshTool.value == MeshTool.SMUDGE) {
             val q = scene?.selectionQuads?.get(t) ?: return false
-            val p = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return false
+            val p = unitOf(q, toCanvas(sx, sy)) ?: return false
             meshLast = p
             cutRemoved.clear()
             grab = if (_meshTool.value == MeshTool.CUT) MESH_CUT else MESH_SMUDGE
@@ -6802,7 +7131,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val t = warpTarget() ?: return
         val m = meshLayers[t] ?: return
         val q = scene?.selectionQuads?.get(t) ?: return
-        val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
         val (pu, pv) = meshLast ?: return
         meshLast = u to v
         val off = MeshMath.offsets(t, m, _frame.value, base, _animation.value, _fx.value)
@@ -6903,12 +7232,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = meshLayers[t] ?: return
         val q = scene?.selectionQuads?.get(t) ?: return
         val l = layers.firstOrNull { it.id == t } ?: return
-        val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
         val (pu, pv) = meshLast ?: return
         meshLast = u to v
         _brushCircle.value = floatArrayOf(sx, sy, _brushRadius.value)
         val w = l.width.toFloat(); val h = l.height.toFloat()
-        val (ru, rv) = unitOf(q, toCanvasX(sx + _brushRadius.value), toCanvasY(sy)) ?: return
+        val (ru, rv) = unitOf(q, toCanvas(sx + _brushRadius.value, sy)) ?: return
         val radiusPx = kotlin.math.hypot((ru - u) * w, (rv - v) * h)
         val live = brushLive?.takeIf { it.first == t && it.second.size == m.count * 2 }
             ?: (t to MeshMath.offsets(t, m, _frame.value, base, _animation.value, _fx.value)).also { brushLive = it }
@@ -6980,7 +7309,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun meshAddAt(t: Int, m: Mesh, sx: Float, sy: Float): Boolean {
         val l = layers.firstOrNull { it.id == t } ?: return false
         val q = scene?.selectionQuads?.get(t) ?: return false
-        val (pu, pv) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return false
+        val (pu, pv) = unitOf(q, toCanvas(sx, sy)) ?: return false
         val cur = MeshMath.offsets(t, m, _frame.value, base, _animation.value, _fx.value)
         val bind = MeshMath.offsets(t, m, _frame.value, base, _animation.value, false)
         for (i in 0 until m.tris.size / 3) {
@@ -7021,7 +7350,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = meshLayers[t] ?: return
         if (k !in 0 until m.count) return
         val q = scene?.selectionQuads?.get(t) ?: return
-        val (u, v) = unitOf(q, toCanvasX(sx), toCanvasY(sy)) ?: return
+        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
         val ox = (u - m.u(k)).coerceIn(-1.5f, 1.5f)
         val oy = (v - m.v(k)).coerceIn(-1.5f, 1.5f)
         checkpoint("mesh$t-$k")
@@ -7104,12 +7433,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun selectedBone(): Bone? = _selected.value?.let { id -> _bones.value.firstOrNull { it.id == id } }
 
-    // экран <-> холст (те же формулы, что у камеры: экран = C + (p - C) * zoom + pan)
-    private fun fitS() = Camera.fitScale(viewW, viewH, canvasW, canvasH).coerceAtLeast(1e-4f)
-    private fun toScreenX(x: Float) = viewW / 2f + ((x - canvasW / 2f) * fitS()) * camera.zoom + camera.panX
-    private fun toScreenY(y: Float) = viewH / 2f + ((y - canvasH / 2f) * fitS()) * camera.zoom + camera.panY
-    private fun toCanvasX(sx: Float) = canvasW / 2f + ((sx - viewW / 2f - camera.panX) / camera.zoom) / fitS()
-    private fun toCanvasY(sy: Float) = canvasH / 2f + ((sy - viewH / 2f - camera.panY) / camera.zoom) / fitS()
+    // экран <-> холст (те же формулы, что у камеры, с поворотом/отражением вида)
+    private fun toScreen(x: Float, y: Float) = camera.toScreen(x, y, viewW, viewH, canvasW, canvasH)
+    private fun toCanvas(sx: Float, sy: Float) = camera.toCanvas(sx, sy, viewW, viewH, canvasW, canvasH)
 
     /** Положение кости на экране: в Bind Pose - по данным, в Animation - с учётом позы. */
     private fun shapes(): List<BoneShape> {
@@ -7119,8 +7445,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val d = if (rest) Affine2D.IDENTITY else scene?.boneDeltas?.get(b.id) ?: Affine2D.IDENTITY
             BoneShape(
                 b.id,
-                toScreenX(d.applyX(b.hx, b.hy)), toScreenY(d.applyY(b.hx, b.hy)),
-                toScreenX(d.applyX(b.tx, b.ty)), toScreenY(d.applyY(b.tx, b.ty)),
+                toScreen(d.applyX(b.hx, b.hy), d.applyY(b.hx, b.hy)).first, toScreen(d.applyX(b.hx, b.hy), d.applyY(b.hx, b.hy)).second,
+                toScreen(d.applyX(b.tx, b.ty), d.applyY(b.tx, b.ty)).first, toScreen(d.applyX(b.tx, b.ty), d.applyY(b.tx, b.ty)).second,
                 b.id == sel
             )
         }
@@ -7134,7 +7460,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (_boneOverlay.value.bones.isNotEmpty() || _boneOverlay.value.draft != null || _boneOverlay.value.lasso.isNotEmpty()) _boneOverlay.value = BoneOverlay()
             return
         }
-        val dr = draft?.let { floatArrayOf(toScreenX(it[0]), toScreenY(it[1]), toScreenX(it[2]), toScreenY(it[3])) }
+        val dr = draft?.let { val p0 = toScreen(it[0], it[1]); val p1 = toScreen(it[2], it[3]); floatArrayOf(p0.first, p0.second, p1.first, p1.second) }
         _boneOverlay.value = BoneOverlay(shapes(), dr, lassoPts.map { it })
     }
 
@@ -7183,8 +7509,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_meshMode.value && !_boneMode.value) return meshDown(sx, sy)
         if (_warpTool.value && !_boneMode.value) return warpDown(sx, sy)
         if (!_boneMode.value || _playing.value) return false
-        lastCx = toCanvasX(sx)
-        lastCy = toCanvasY(sy)
+        toCanvas(sx, sy).let { lastCx = it.first; lastCy = it.second }
         when (_boneTool.value) {
             BoneTool.ADD -> {
                 if (!_bindPose.value) return false
@@ -7192,7 +7517,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 var y = lastCy
                 // начало новой кости прилипает к концу выбранной (цепочка костей)
                 selectedBone()?.let { p ->
-                    if (kotlin.math.hypot(sx - toScreenX(p.tx), sy - toScreenY(p.ty)) < 40f) { x = p.tx; y = p.ty }
+                    if (kotlin.math.hypot(sx - toScreen(p.tx, p.ty).first, sy - toScreen(p.tx, p.ty).second) < 40f) { x = p.tx; y = p.ty }
                 }
                 draft = floatArrayOf(x, y, x, y)
                 grab = 3
@@ -7222,8 +7547,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (grab >= MESH_GRAB) { meshMove(sx, sy); return }
         if (grab >= 20) { warpMove(sx, sy); return }
         if (grab == 4) { lassoPts.add(sx); lassoPts.add(sy); refreshBoneOverlay(); return }
-        val cx = toCanvasX(sx)
-        val cy = toCanvasY(sy)
+        val (cx, cy) = toCanvas(sx, sy)
         if (grab == 3) {
             draft?.let { it[2] = cx; it[3] = cy }
             refreshBoneOverlay()
@@ -7244,7 +7568,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (grab == 4) { finishLasso(); grab = 0; return }
         val d = draft
         if (grab == 3 && d != null) {
-            val len = kotlin.math.hypot(toScreenX(d[2]) - toScreenX(d[0]), toScreenY(d[3]) - toScreenY(d[1]))
+            val len = kotlin.math.hypot(toScreen(d[2], d[3]).first - toScreen(d[0], d[1]).first, toScreen(d[2], d[3]).second - toScreen(d[0], d[1]).second)
             if (len >= 24f) createBone(d[0], d[1], d[2], d[3])
         }
         draft = null
@@ -7311,7 +7635,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val cq = contentQuad(id, q) ?: continue
                 val cx = (cq[0] + cq[2] + cq[4] + cq[6]) / 4f
                 val cy = (cq[1] + cq[3] + cq[5] + cq[7]) / 4f
-                if (pointInPolygon(toScreenX(cx), toScreenY(cy), poly)) picked += id
+                if (pointInPolygon(toScreen(cx, cy).first, toScreen(cx, cy).second, poly)) picked += id
             }
             _lassoLayers.value = picked
             updateSelectionFrame()
@@ -8097,7 +8421,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val cellLayers = media.filter { it.kind == MediaKind.IMAGE && it.cells.isNotEmpty() && (symMembers == null || it.id in symMembers) }
         val symInside = HashSet<Int>().also { st0 -> media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.forEach { st0 += symbolMembers(it.id) } }
         val symInst = if (symbol == null) media.filter { it.kind == MediaKind.SYMBOL && it.id !in symInside } else emptyList()
-        val symDefs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to (it.symDur to symbolAnimated(it.id)) }
+        val symDefs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to (it.symDur to symbolCycles(it.id)) }
         val symExp = HashMap<Int, Int>()
         val cellExp = HashMap<Int, String>()
         val pidExp = projectId
@@ -8116,7 +8440,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             for (si in symInst) {   // экземпляры символов: готовая картинка вложенной сцены на этом кадре
                 val frames = symCache[si.symRef] ?: continue
                 val def = symDefs[si.symRef] ?: continue
-                val key = (SymbolMath.timeAt(si.timeKeys, pf)?.coerceIn(0, maxOf(0, def.first - 1))) ?: if (def.second) SymbolMath.localFrame(pf, def.first) else 0
+                val key = (SymbolMath.timeAt(si.timeKeys, pf)?.coerceIn(0, maxOf(0, def.first - 1))) ?: SymbolMath.defaultFrame(pf, def.first, def.second)
                 if (symExp[si.id] == key) continue
                 val png = frames.getOrNull(key) ?: continue
                 runCatching {
@@ -8147,7 +8471,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     m to (if (ps != null && sz != null) PuppetMath.addTo(m, v, ps, PuppetMath.offsets(lid, ps.size, pf, baseCopy, anim, true), sz.first, sz.second) else v)
                 },
                 groupInputs.perspectives, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
-                fxRecords(fxl, adjCopy, anim, pf, st.fps), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp)
+                fxRecords(fxl, adjCopy, anim, pf, st.fps), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides)
             } catch (e: IllegalArgumentException) {
                 if (groupInputs.groups.isEmpty() && denseExp.isEmpty()) throw e
                 throw IllegalStateException("Экспорт остановлен: неподдерживаемая деформация или область", e)

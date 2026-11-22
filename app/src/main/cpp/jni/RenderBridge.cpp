@@ -134,8 +134,9 @@ Java_com_vibetoon_nativebridge_RenderNative_setMeshes(JNIEnv* env, jobject, jlon
 
 JNIEXPORT void JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_setCamera(JNIEnv*, jobject, jlong h, jfloat zoom,
-                                                       jfloat panX, jfloat panY) {
-    R(h)->setCamera(zoom, panX, panY);
+                                                       jfloat panX, jfloat panY, jfloat rotDeg,
+                                                       jboolean flipX, jboolean flipY) {
+    R(h)->setCamera(zoom, panX, panY, rotDeg, flipX == JNI_TRUE, flipY == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL

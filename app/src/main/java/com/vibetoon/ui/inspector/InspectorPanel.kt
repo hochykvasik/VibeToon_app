@@ -332,6 +332,19 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
             val depth = vm.layerPropsOf(s.id).depth
             NumberField("Глубина (параллакс)", depth, "", on, { vm.setDepth(s.id, it) }, Modifier.fillMaxWidth(), perPx = 0.02f, min = -0.5f, max = 5f)
         }
+        // Опорная точка (пивот): перетаскивается на холсте, здесь - координаты и быстрые действия
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            NumberField("Пивот X", s.pivotX, "px", on, { vm.setPivot(s.id, it, s.pivotY) }, Modifier.weight(1f), perPx = 1f)
+            NumberField("Пивот Y", s.pivotY, "px", on, { vm.setPivot(s.id, s.pivotX, it) }, Modifier.weight(1f), perPx = 1f)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = vm::pivotToCenter, enabled = on, modifier = Modifier.weight(1f).height(36.dp)) {
+                Text("Пивот в центр", fontSize = 12.sp, maxLines = 1)
+            }
+            OutlinedButton(onClick = vm::pivotReset, enabled = on, modifier = Modifier.weight(1f).height(36.dp)) {
+                Text("Пивот по умолчанию", fontSize = 12.sp, maxLines = 1)
+            }
+        }
         Text(
             "Совет: зажмите число и потяните вправо или влево",
             fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)

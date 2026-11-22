@@ -28,7 +28,7 @@ object RenderNative {
     /** Mesh: слои, [вершин, треугольников] на слой, по 4 float (u, v, dx, dy) на вершину, индексы треугольников. */
     external fun setMeshes(renderer: Long, ids: IntArray, counts: IntArray, verts: FloatArray, tris: IntArray)
     /** Камера: экран = C + (p - C)*zoom + pan (пиксели вида). */
-    external fun setCamera(renderer: Long, zoom: Float, panX: Float, panY: Float)
+    external fun setCamera(renderer: Long, zoom: Float, panX: Float, panY: Float, rotDeg: Float, flipX: Boolean, flipY: Boolean)
     /** Цвет фона холста в формате ARGB (альфа 0 = прозрачный, показывается серым). */
     external fun setBackground(renderer: Long, argb: Int)
     /**

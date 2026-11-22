@@ -13,7 +13,7 @@ import com.vibetoon.domain.render.LayerTransform
  * Неизвестные и отсутствующие поля не ломают чтение; версия новее известной - ошибка.
  */
 object ProjectJson {
-    const val VERSION = 4
+    const val VERSION = 5
     private const val LEGACY_VERSION = 1
     const val FORMAT = "vibetoon-project"
 
@@ -22,7 +22,7 @@ object ProjectJson {
         val root = LinkedHashMap<String, Any?>()
         root["format"] = FORMAT
         // Старые сборки обязаны отказаться от открытия, а не молча удалить новый формат.
-        root["version"] = if (d.denseWarps.isNotEmpty()) 4 else if (d.warpGridSizes.isNotEmpty()) 3 else if (d.groupDeformationAnchors.isNotEmpty()) 2 else LEGACY_VERSION
+        root["version"] = if (d.pivots.isNotEmpty()) 5 else if (d.denseWarps.isNotEmpty()) 4 else if (d.warpGridSizes.isNotEmpty()) 3 else if (d.groupDeformationAnchors.isNotEmpty()) 2 else LEGACY_VERSION
         root["id"] = m.id
         root["name"] = m.name
         root["width"] = m.width
@@ -64,6 +64,10 @@ object ProjectJson {
             root["groupDeformationAnchors"] = d.groupDeformationAnchors.toSortedMap().mapKeys { it.key.toString() }.mapValues { (_, a) ->
                 listOf(a.x.toDouble(), a.y.toDouble(), a.width.toDouble(), a.height.toDouble())
             }
+        }
+        if (d.pivots.isNotEmpty()) {
+            require(d.pivots.all { (id, p) -> id >= 0 && p.first.isFinite() && p.second.isFinite() }) { "Invalid pivot" }
+            root["pivots"] = d.pivots.toSortedMap().mapKeys { it.key.toString() }.mapValues { (_, p) -> listOf(p.first.toDouble(), p.second.toDouble()) }
         }
         if (d.pins.isNotEmpty()) root["pins"] = d.pins.entries.associate { (id, l) ->
             id.toString() to l.map { p -> linkedMapOf<String, Any?>("u" to p.u.toDouble(), "v" to p.v.toDouble(), "s" to p.stiff, "r" to p.radius.toDouble()) }
@@ -260,6 +264,19 @@ object ProjectJson {
                 }.take(com.vibetoon.domain.anim.EffectMath.MAX_PER_LAYER)
                 if (list.isNotEmpty()) fx[i] = com.vibetoon.domain.anim.EffectTracks.assignSlots(list)
             }
+            val pivots = HashMap<Int, Pair<Float, Float>>()
+            if (root.containsKey("pivots")) {
+                if (version < 5) throw JsonException("Опорные точки требуют формат версии 5")
+                val entries = root.obj("pivots") ?: throw JsonException("Некорректные опорные точки")
+                for ((key, value) in entries) {
+                    val id = key.toIntOrNull()?.takeIf { it >= 0 } ?: throw JsonException("Некорректный id пивота")
+                    val values = value as? List<*> ?: throw JsonException("Некорректная опорная точка")
+                    if (values.size != 2) throw JsonException("Некорректная опорная точка")
+                    val x = (values[0] as? Number)?.toFloat() ?: throw JsonException("Некорректная координата пивота")
+                    val y = (values[1] as? Number)?.toFloat() ?: throw JsonException("Некорректная координата пивота")
+                    if (!x.isFinite() || !y.isFinite() || pivots.put(id, x to y) != null) throw JsonException("Некорректная опорная точка")
+                }
+            }
             val pins = HashMap<Int, List<com.vibetoon.domain.anim.Pin>>()
             root.obj("pins")?.forEach { (key, v) ->
                 val i = key.toIntOrNull() ?: return@forEach
@@ -283,7 +300,7 @@ object ProjectJson {
                 ).normalized()
             }
             Result.success(ProjectData(meta, psd, base, tracks, media, deleted, clips, markers, links, bones, regroup, warps, meshes,
-                (root["persps"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.toSet(), skins, turbs, fx, pins, lprops, groupAnchors, warpSizes, dense))
+                (root["persps"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.toSet(), skins, turbs, fx, pins, lprops, groupAnchors, warpSizes, dense, pivots))
         }
     } catch (e: JsonException) {
         Result.failure(IllegalStateException("Повреждённый файл проекта: ${e.message}"))

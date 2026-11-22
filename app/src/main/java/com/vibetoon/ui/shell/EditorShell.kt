@@ -488,7 +488,9 @@ private fun TopBar(
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             BarIcon(Icons.Default.ArrowBack, "Проекты", onClick = onBack)
-            BarIcon(Icons.Default.PhotoLibrary, "Библиотека") { stub("Библиотека ассетов") }
+            var showLibrary by remember { mutableStateOf(false) }
+            BarIcon(Icons.Default.PhotoLibrary, "Библиотека") { showLibrary = true }
+            if (showLibrary) AssetLibraryDialog(vm) { showLibrary = false }
             Box {
                 BarIcon(Icons.Default.Menu, "Действия") { actions = true }
                 DropdownMenu(expanded = actions, onDismissRequest = { actions = false }) {
@@ -497,12 +499,17 @@ private fun TopBar(
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("PSD-файл") }, onClick = { actions = false; add.psd() })
                     DropdownMenuItem(text = { Text("Изображение (PNG, JPG)") }, onClick = { actions = false; add.image() })
+                    DropdownMenuItem(text = { Text("Изображение как символ") }, onClick = { actions = false; add.imageAsSymbol() })
                     DropdownMenuItem(text = { Text("Видео (MP4)") }, onClick = { actions = false; add.video() })
                     DropdownMenuItem(text = { Text("Аудио (MP3, WAV)") }, onClick = { actions = false; add.audio() })
                     DropdownMenuItem(text = { Text("Текст") }, onClick = { actions = false; add.text() })
                     DropdownMenuItem(text = { Text("Камера (Pan & Zoom)") }, onClick = { actions = false; vm.addCameraLayer() })
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("Сбросить вид холста") }, onClick = { actions = false; vm.resetCamera() })
+                    DropdownMenuItem(text = { Text("Повернуть холст на 90°") }, onClick = { actions = false; vm.rotateCamera90() })
+                    DropdownMenuItem(text = { Text("Сбросить поворот холста (0°)") }, onClick = { actions = false; vm.resetCameraRotation() })
+                    DropdownMenuItem(text = { Text("Отразить холст по горизонтали") }, onClick = { actions = false; vm.flipCameraX() })
+                    DropdownMenuItem(text = { Text("Отразить холст по вертикали") }, onClick = { actions = false; vm.flipCameraY() })
                     TestPsdMenuItem(highlight = coachTarget == "Тестовый PSD") { actions = false; vm.parseTestPsd() }
                 }
             }
@@ -738,6 +745,9 @@ private fun PaintToolRow(vm: MainViewModel, onColor: () -> Unit) {
             OutlinedButton(onClick = vm::clearVectors, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
                 Text("Очистить", fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
+            OutlinedButton(onClick = vm::restyleSelectedVector, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+                Text("Цвет/толщина", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
         }
         // выезжающая панель кистей: пресет с превью мазка
         val cur = com.vibetoon.domain.paint.BrushPresets.byId(p.presetId)
@@ -789,7 +799,7 @@ private fun PerspToolRow(vm: MainViewModel) {
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            if (overlay.isEmpty() && isGroup) "Перспектива для групп: в разработке" else if (overlay.isEmpty()) "Перспектива: выберите слой" else if (fx) "Перспектива · FX вкл: углы пишутся в ключи" else "Перспектива · FX выкл: базовая форма",
+            if (overlay.isEmpty() && isGroup) "Перспектива для группы: нажмите «Включить для группы»" else if (overlay.isEmpty()) "Перспектива: выберите слой" else if (fx) "Перспектива · FX вкл: углы пишутся в ключи" else "Перспектива · FX выкл: базовая форма",
             fontSize = 12.sp, maxLines = 1, softWrap = false
         )
         if (isGroup && overlay.isEmpty()) OutlinedButton(onClick = vm::enableGroupPerspective,
@@ -885,7 +895,7 @@ private fun WarpToolRow(vm: MainViewModel) {
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            if (overlay.points.isEmpty() && isGroup) "Warp для групп: в разработке" else if (overlay.points.isEmpty()) "Warp: выберите слой" else if (fx) "Warp · FX вкл: точки пишутся в ключи" else "Warp · FX выкл: базовая форма",
+            if (overlay.points.isEmpty() && isGroup) "Warp для группы: нажмите «Включить для группы»" else if (overlay.points.isEmpty()) "Warp: выберите слой" else if (fx) "Warp · FX вкл: точки пишутся в ключи" else "Warp · FX выкл: базовая форма",
             fontSize = 12.sp, maxLines = 1, softWrap = false
         )
         if (isGroup && overlay.points.isEmpty()) OutlinedButton(onClick = vm::enableGroupWarp,
@@ -1413,4 +1423,27 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
             Switch(checked = bone.independentRot, onCheckedChange = { vm.setBoneIndependent(bone.id, it) })
         }
     }
+}
+
+/** Библиотека ассетов: картинки из папки assets проекта; тап вставляет как новый слой. */
+@Composable
+private fun AssetLibraryDialog(vm: MainViewModel, onDismiss: () -> Unit) {
+    val assets = remember { vm.assetLibrary() }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Библиотека ассетов") },
+        text = {
+            if (assets.isEmpty()) Text("Пока пусто: импортированные картинки появятся здесь")
+            else androidx.compose.foundation.lazy.LazyColumn {
+                items(assets.size) { i ->
+                    val (name, rel) = assets[i]
+                    androidx.compose.material3.TextButton(
+                        onClick = { vm.insertAsset(rel); onDismiss() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(name, modifier = Modifier.fillMaxWidth()) }
+                }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Закрыть") } }
+    )
 }

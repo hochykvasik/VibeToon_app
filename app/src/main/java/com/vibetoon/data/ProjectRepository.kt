@@ -32,6 +32,9 @@ class ProjectRepository(context: Context) {
     /** Файл по относительному пути из project.json (например assets/m100000.png). */
     fun fileOf(id: String, relative: String): File = File(dir(id), relative)
 
+    /** Папка assets проекта (библиотека ассетов). */
+    fun mediaDir(id: String): File = File(dir(id), "assets").also { it.mkdirs() }
+
     /** Все проекты, новые правки сверху. Повреждённые проекты пропускаются. */
     fun list(): List<ProjectMeta> =
         (root.listFiles { f -> f.isDirectory }.orEmpty()).mapNotNull { d ->

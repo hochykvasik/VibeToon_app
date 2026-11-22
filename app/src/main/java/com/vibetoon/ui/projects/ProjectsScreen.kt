@@ -166,7 +166,7 @@ fun ProjectsScreen(app: AppViewModel) {
                         }
                     }
                     IconButton(onClick = { newFolder = true }) { Icon(Icons.Default.CreateNewFolder, "Создать папку") }
-                    IconButton(onClick = { stub("Справка") }) { Icon(Icons.Default.HelpOutline, "Справка") }
+                    IconButton(onClick = { article = TUTORIALS.firstOrNull() }) { Icon(Icons.Default.HelpOutline, "Справка") }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Настройки") }
                 }
             }

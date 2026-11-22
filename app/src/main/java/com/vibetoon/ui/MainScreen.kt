@@ -12,6 +12,8 @@ import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -66,6 +68,7 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -138,6 +141,9 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
     val openImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.IMAGE, uri)
     }
+    val openImageAsSymbol = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importMediaAsSymbol(uri)
+    }
     val openVideo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.VIDEO, uri)
     }
@@ -149,7 +155,8 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
         image = { openImage.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
         video = { openVideo.launch(arrayOf("video/mp4", "video/*")) },
         audio = { openAudio.launch(arrayOf("audio/mpeg", "audio/wav", "audio/x-wav", "audio/*")) },
-        text = { showTextDialog = true }
+        text = { showTextDialog = true },
+        imageAsSymbol = { openImageAsSymbol.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) }
     )
 
     com.vibetoon.ui.shell.EditorShell(vm, onBack, addActions) { showExport = true }
@@ -194,7 +201,8 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
 /** Что запускает меню "+" (системные диалоги выбора файла). */
 class AddActions(
     val psd: () -> Unit, val image: () -> Unit, val video: () -> Unit, val audio: () -> Unit,
-    val text: () -> Unit
+    val text: () -> Unit,
+    val imageAsSymbol: () -> Unit = {}
 )
 
 @Composable
@@ -303,6 +311,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         MeshOverlayLayer(vm)
         PinOverlayLayer(vm)
         BrushCircleLayer(vm)
+        CameraAngleBadge(vm)
+        PivotOverlay(vm)
         RulerGuideLayer(vm)
         PaintCursorLayer(vm)
         PerspOverlayLayer(vm)
@@ -501,7 +511,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                             multi = true
                         } else if (stylus) vm.paintStylus(false)
                     }
-                    var capture = if (multi) false else vm.boneDown(down.position.x, down.position.y)   // режим костей: жест забирает кость
+                    var pivotCapture = if (multi) false else vm.pivotDown(down.position.x, down.position.y)   // пивот: жест забирает пивот
+                    var capture = if (multi || pivotCapture) false else vm.boneDown(down.position.x, down.position.y)   // режим костей: жест забирает кость
                     var total = Offset.Zero
                     var moved = false
                     var lastUptime = down.uptimeMillis
@@ -537,14 +548,17 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                             } else {
                                 // Ничего не выделено: двигаем камеру
                                 val c = event.calculateCentroid()
-                                vm.onTransform(c.x, c.y, event.calculateZoom(), pan.x, pan.y)
+                                vm.onTransform(c.x, c.y, event.calculateZoom(), pan.x, pan.y, event.calculateRotation())
                             }
                             event.changes.forEach { it.consume() }
                         } else if (pressed.size == 1 && !multi) {
                             val d = pressed[0].positionChange()
                             total += d
                             if (!moved && total.getDistance() > slop) moved = true
-                            if (moved && capture) {
+                            if (moved && pivotCapture) {
+                                vm.pivotMove(pressed[0].position.x, pressed[0].position.y)
+                                pressed[0].consume()
+                            } else if (moved && capture) {
                                 vm.boneMove(pressed[0].position.x, pressed[0].position.y)
                                 pressed[0].consume()
                             } else if (moved) {
@@ -554,7 +568,9 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                             }
                         }
                     } while (event.changes.any { it.pressed })
+                    if (pivotCapture) vm.pivotUp()
                     if (capture) vm.boneUp()
+                    if (multi) vm.snapCameraRotation()
                     val longPressClaimed = vm.finishCanvasGesture()
                     if (!longPressClaimed && !moved && !multi && !(vm.paintToolActive() && down.type == PointerType.Touch && gs?.fingerDrawing == false)) {
                         vm.onTap(down.position.x, down.position.y, gs?.selectLayersOnCanvas != false)
@@ -596,10 +612,10 @@ private fun MotionPathLayer(vm: MainViewModel) {
         ?: return
     Canvas(Modifier.fillMaxSize().clipToBounds()) {
         if (view.width <= 0f || view.height <= 0f || view.canvasWidth <= 0 || view.canvasHeight <= 0) return@Canvas
-        val scale = com.vibetoon.domain.render.Camera.fitScale(view.width, view.height, view.canvasWidth, view.canvasHeight) * view.camera.zoom
-        fun screen(p: com.vibetoon.domain.anim.PathPoint): Offset = Offset(
-            view.width / 2f + (p.x - view.canvasWidth / 2f) * scale + view.camera.panX,
-            view.height / 2f + (p.y - view.canvasHeight / 2f) * scale + view.camera.panY)
+        fun screen(p: com.vibetoon.domain.anim.PathPoint): Offset {
+            val (sx, sy) = view.camera.toScreen(p.x, p.y, view.width, view.height, view.canvasWidth, view.canvasHeight)
+            return Offset(sx, sy)
+        }
         for (segment in path.segments) for ((a, b) in segment.zipWithNext()) {
             drawLine(Color.Black.copy(alpha = .55f), screen(a), screen(b), 4.dp.toPx())
             drawLine(Color(0xFF26C6DA), screen(a), screen(b), 2.dp.toPx())
@@ -617,9 +633,22 @@ private fun CanvasGridLayer(vm: MainViewModel) {
     val view by vm.gridView.collectAsStateWithLifecycle()
     val cells = com.vibetoon.ui.theme.LocalAppSettings.current?.gridCells ?: 16
     Canvas(Modifier.fillMaxSize().clipToBounds()) {
-        val grid = com.vibetoon.domain.render.CanvasGrid.lines(view.width, view.height, view.canvasWidth, view.canvasHeight, view.camera, cells) ?: return@Canvas
         val color = Color.Black.copy(alpha = 0.28f)
         val width = 1.dp.toPx()
+        val cam = view.camera
+        if (cam.rotDeg != 0f || cam.flipX || cam.flipY) {
+            // Повёрнутый/отражённый вид: линии строятся в координатах холста и переводятся камерой.
+            if (view.width <= 0f || view.height <= 0f || view.canvasWidth <= 0 || view.canvasHeight <= 0) return@Canvas
+            val cw = view.canvasWidth.toFloat(); val ch = view.canvasHeight.toFloat()
+            val step = cw / com.vibetoon.domain.render.CanvasGrid.density(cells)
+            fun pt(x: Float, y: Float): Offset { val (sx, sy) = cam.toScreen(x, y, view.width, view.height, view.canvasWidth, view.canvasHeight); return Offset(sx, sy) }
+            var x = step
+            while (x < cw - 0.5f) { drawLine(color, pt(x, 0f), pt(x, ch), width); x += step }
+            var y = step
+            while (y < ch - 0.5f) { drawLine(color, pt(0f, y), pt(cw, y), width); y += step }
+            return@Canvas
+        }
+        val grid = com.vibetoon.domain.render.CanvasGrid.lines(view.width, view.height, view.canvasWidth, view.canvasHeight, view.camera, cells) ?: return@Canvas
         for (x in grid.vertical) drawLine(color, Offset(x, grid.top), Offset(x, grid.bottom), width)
         for (y in grid.horizontal) drawLine(color, Offset(grid.left, y), Offset(grid.right, y), width)
     }
@@ -767,6 +796,53 @@ private fun RulerGuideLayer(vm: MainViewModel) {
             drawLine(Color.Black, a, b, strokeWidth = 4.dp.toPx())
             drawLine(color, a, b, strokeWidth = 2.dp.toPx())
         }
+    }
+}
+
+/** Бейдж угла поворота холста: виден при ненулевом повороте; тап сбрасывает в 0°, долгий тап — поворот на 90°. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.CameraAngleBadge(vm: MainViewModel) {
+    val view by vm.gridView.collectAsStateWithLifecycle()
+    val rot = view.camera.rotDeg
+    if (kotlin.math.abs(rot) < 0.5f) return
+    val shown = ((rot % 360f) + 360f) % 360f
+    Box(
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF20242B).copy(alpha = 0.85f))
+            .combinedClickable(onClick = { vm.resetCameraRotation() }, onLongClick = { vm.rotateCamera90() })
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("${shown.toInt()}°", color = Color.White, fontSize = 13.sp)
+    }
+}
+
+/** Маркер пивота выделенного узла: перетаскивается пальцем/пером, снап к центру и углам рамки. */
+@Composable
+private fun PivotOverlay(vm: MainViewModel) {
+    val id by vm.selected.collectAsStateWithLifecycle()
+    val inspector by vm.inspector.collectAsStateWithLifecycle()
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val view by vm.gridView.collectAsStateWithLifecycle()   // перерисовка при сдвиге/повороте вида
+    val frame by vm.frame.collectAsStateWithLifecycle()
+    val paintTool by vm.paintTool.collectAsStateWithLifecycle()
+    val rasterTool by vm.rasterTool.collectAsStateWithLifecycle()
+    val boneMode by vm.boneMode.collectAsStateWithLifecycle()
+    val warpTool by vm.warpTool.collectAsStateWithLifecycle()
+    val sel = id ?: return
+    if (paintTool != null || rasterTool != null || boneMode || warpTool) return
+    val info = inspector ?: return
+    if (view.width <= 0f || frame < 0) return
+    if (playing) return
+    val p = vm.pivotScreen(sel) ?: return
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        val c = Offset(p.first, p.second)
+        drawCircle(Color(0xFFFFC107), radius = 9.dp.toPx(), style = Stroke(2.dp.toPx()))
+        drawCircle(Color(0xFFFFC107), radius = 2.5.dp.toPx())
+        drawLine(Color(0xFFFFC107), c + Offset(-14.dp.toPx(), 0f), c + Offset(14.dp.toPx(), 0f), 1.5.dp.toPx())
+        drawLine(Color(0xFFFFC107), c + Offset(0f, -14.dp.toPx()), c + Offset(0f, 14.dp.toPx()), 1.5.dp.toPx())
     }
 }
 

@@ -18,7 +18,8 @@ private const val TAG = "VT/Export"
 
 /** Параметры экспорта: размер кадра, частота, число кадров готового видео. */
 data class ExportSpec(val width: Int, val height: Int, val fps: Int, val frames: Int, val file: File, val compatible: Boolean = false) {
-    val bitrate: Int get() = (width.toLong() * height * fps * 12 / 100).coerceIn(2_000_000L, 40_000_000L).toInt()
+    /** Битрейт H.264: 0.25 бит/пиксель/кадр (720p30 ≈ 6.9 Мбит/с) — без мыла на линиях и заливках. */
+    val bitrate: Int get() = (width.toLong() * height * fps * 25 / 100).coerceIn(4_000_000L, 40_000_000L).toInt()
 }
 
 /** Что экспортёру нужно от рендерера (реализует VtRenderer, всё в GL-потоке). */
@@ -47,6 +48,29 @@ object VideoExporter {
         if (direct.isSuccess || cancel.get()) return direct
         Log.w(TAG, "Surface encoder failed; retrying with RGBA/YUV readback", direct.exceptionOrNull())
         return encodeYuv(spec, hooks, onProgress, cancel)
+    }
+
+    /** Уровень H.264 по разрешению и частоте (High profile): 720p30 -> 4.1, 1080p60 -> 4.2. */
+    private fun avcLevel(width: Int, height: Int, fps: Int): Int {
+        val macroblocks = ((width + 15) / 16) * ((height + 15) / 16)
+        return when {
+            macroblocks * fps > 162_000 -> MediaCodecInfo.CodecProfileLevel.AVCLevel42
+            macroblocks * fps > 81_920 -> MediaCodecInfo.CodecProfileLevel.AVCLevel41
+            macroblocks * fps > 40_960 -> MediaCodecInfo.CodecProfileLevel.AVCLevel40
+            else -> MediaCodecInfo.CodecProfileLevel.AVCLevel31
+        }
+    }
+
+    /** High profile только если кодек его заявляет на нужном уровне; иначе остаётся профиль кодека по умолчанию. */
+    private fun highProfile(codec: MediaCodec, format: MediaFormat, spec: ExportSpec) {
+        runCatching {
+            val need = avcLevel(spec.width, spec.height, spec.fps)
+            val levels = codec.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).profileLevels
+            if (levels.any { it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh && it.level >= need }) {
+                format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+                format.setInteger(MediaFormat.KEY_LEVEL, need)
+            }
+        }
     }
 
     private fun encoder(spec: ExportSpec, color: Int): MediaCodec {
@@ -85,6 +109,7 @@ object VideoExporter {
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
             codec = encoder(spec, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            highProfile(codec, format, spec)
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             inputSurface = codec.createInputSurface()
             codec.start()
@@ -154,6 +179,7 @@ object VideoExporter {
                 setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT601_NTSC)
                 setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
             }
+            highProfile(codec, format, spec)
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()
             muxer = MediaMuxer(spec.file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)

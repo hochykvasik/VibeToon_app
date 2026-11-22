@@ -60,7 +60,7 @@ class VtRenderer(
         if (disposed || handle == 0L) return
         takeScene()?.let { lastScene = it; applyScene(it) }
         val p = frameParams()
-        RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY)
+        RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY, p.camera.rotDeg, p.camera.flipX, p.camera.flipY)
         RenderNative.setSelection(handle, p.selectionQuad)
         RenderNative.setBackground(handle, p.background)
         val more = RenderNative.drawFrame(handle)

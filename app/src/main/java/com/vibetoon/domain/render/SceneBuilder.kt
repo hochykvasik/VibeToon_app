@@ -80,8 +80,8 @@ data class LayerTransform(
 }
 
 object SceneBuilder {
-    /** Explicit opt-in, in fixed coordinates local to the group (not the current screen AABB).
-     * This API is not yet persisted or invoked by the editor/export UI. */
+    /** Деформация группы в фиксированных локальных координатах группы (не экранный AABB).
+     * Якорь сохраняется в проекте; вызывается из редактора и экспорта через GroupSceneInputs. */
     data class GroupDeformation(
         val bounds: GroupDeformationMesh.Bounds,
         val warp: FloatArray? = null,
@@ -177,7 +177,9 @@ object SceneBuilder {
         preparedGroupMeshes: Map<Int, GroupDeformationMesh.Result> = emptyMap(),
         /** Explicit group inputs; bounds live in group-local coordinates and must remain fixed. */
         groupDeformations: Map<Int, GroupDeformation> = emptyMap(),
-        denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
+        denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap(),
+        /** Переопределения опорных точек листьев: id -> (x, y) в координатах холста. */
+        leafPivots: Map<Int, Pair<Float, Float>> = emptyMap()
     ): SceneData {
         require(preparedGroupMeshes.keys.none { it in meshes || it in warps || it in persp || it in skins }) {
             "Group mesh conflicts with a leaf deformer"
@@ -253,7 +255,7 @@ object SceneBuilder {
                     val t = transforms[n.id] ?: LayerTransform()
                     val l = when (n) {
                         is GroupNode -> local(t, n.pivotX, n.pivotY)
-                        is LeafNode -> local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                        is LeafNode -> local(t, leafPivots[n.id]?.first ?: (n.x + n.w / 2f), leafPivots[n.id]?.second ?: (n.y + n.h / 2f))
                     }
                     pw0[n.id] = parentWorld
                     loc0[n.id] = l
@@ -357,7 +359,7 @@ object SceneBuilder {
                         if (n.id in nullIds) {
                             // Transform Layer: невидим, но у него есть рамка (для выбора и жестов) и своя трансформация для детей
                             val pwN = linkDelta(n.id) * parentWorld
-                            val worldN = pwN * local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                            val worldN = pwN * local(t, leafPivots[n.id]?.first ?: (n.x + n.w / 2f), leafPivots[n.id]?.second ?: (n.y + n.h / 2f))
                             parentWorlds[n.id] = pwN
                             val mN = worldN * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
                             val qN = cornersOf(mN)
@@ -374,7 +376,7 @@ object SceneBuilder {
                         if (!n.visible || (clipped && clipBaseVisible == false)) continue
                         val skinned = n.id in skins && n.id in meshes
                         val pw = (if (skinned) Affine2D.IDENTITY else linkDelta(n.id)) * parentWorld
-                        val world = pw * local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                        val world = pw * local(t, leafPivots[n.id]?.first ?: (n.x + n.w / 2f), leafPivots[n.id]?.second ?: (n.y + n.h / 2f))
                         parentWorlds[n.id] = pw
                         // единичный квадрат -> прямоугольник слоя -> мир
                         val m = world * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) *

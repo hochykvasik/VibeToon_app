@@ -470,9 +470,33 @@ void Renderer::setViewport(int width, int height) {
 void Renderer::beginExport(int width, int height) {
     savedW_ = width_; savedH_ = height_;
     savedZoom_ = zoom_; savedPanX_ = panX_; savedPanY_ = panY_;
+    savedRotDeg_ = rotDeg_; savedFlipX_ = flipX_; savedFlipY_ = flipY_;
     exportMode_ = true;
-    zoom_ = 1.f; panX_ = panY_ = 0.f;
+    zoom_ = 1.f; panX_ = panY_ = 0.f; rotDeg_ = 0.f; flipX_ = flipY_ = false;
+    releaseTargets();  // свежие FBO/подложка под размер экспорта: никаких stale-целей редактора
     setViewport(width, height);
+    // Экспорт в Surface кодека: рисуем в FBO (blit FBO->FBO надёжен), затем blit на поверхность.
+    // Blit ИЗ window surface ненадёжен на части драйверов и давал артефакт «мини-копия холста».
+    if (screenFbo_ == 0 && width > 0 && height > 0) {
+        glGenTextures(1, &exportTex_);
+        glBindTexture(GL_TEXTURE_2D, exportTex_);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenFramebuffers(1, &exportFbo_);
+        glBindFramebuffer(GL_FRAMEBUFFER, exportFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, exportTex_, 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            screenFbo_ = exportFbo_;
+            exportToSurface_ = true;
+        } else {
+            glDeleteFramebuffers(1, &exportFbo_); glDeleteTextures(1, &exportTex_);
+            exportFbo_ = exportTex_ = 0;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
 }
 
 bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out) {
@@ -504,8 +528,8 @@ bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
         ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         if (ok) {
+            screenFbo_ = fbo;  // до beginExport: снимок, не Surface-экспорт (без внутреннего FBO)
             beginExport(w, h);
-            screenFbo_ = fbo;
             transparentCapture_ = transparent;
             int guard = 0;
             while (drawFrame() && guard++ < 500) {}
@@ -535,7 +559,15 @@ bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>
 void Renderer::endExport() {
     if (!exportMode_) return;
     exportMode_ = false;
+    if (exportToSurface_) {
+        if (exportFbo_) glDeleteFramebuffers(1, &exportFbo_);
+        if (exportTex_) glDeleteTextures(1, &exportTex_);
+        exportFbo_ = exportTex_ = 0;
+        exportToSurface_ = false;
+        screenFbo_ = 0;
+    }
     zoom_ = savedZoom_; panX_ = savedPanX_; panY_ = savedPanY_;
+    rotDeg_ = savedRotDeg_; flipX_ = savedFlipX_; flipY_ = savedFlipY_;
     setViewport(savedW_, savedH_);
 }
 
@@ -619,10 +651,13 @@ void Renderer::setScene(const int* ops, const float* params, int n) {
     }
 }
 
-void Renderer::setCamera(float zoom, float panX, float panY) {
+void Renderer::setCamera(float zoom, float panX, float panY, float rotDeg, bool flipX, bool flipY) {
     zoom_ = zoom > 0.f ? zoom : 1.f;
     panX_ = panX;
     panY_ = panY;
+    rotDeg_ = rotDeg;
+    flipX_ = flipX;
+    flipY_ = flipY;
 }
 
 // Холст -> экран: сначала вписывание (поля 5%, по центру), затем камера (zoom вокруг центра + pan).
@@ -635,6 +670,26 @@ void Renderer::viewTransform(float& scale, float& ox, float& oy) const {
     scale = fit * zoom_;
     ox = cx + (fx - cx) * zoom_ + panX_;
     oy = cy + (fy - cy) * zoom_ + panY_;
+}
+
+// Холст -> экран: screen = (a0*x + a2*y + a4, a1*x + a3*y + a5). Поворот/отражение вида — только вид.
+void Renderer::viewAffine(float a[6]) const {
+    const float fit = (exportMode_ ? 1.0f : 0.95f) * std::min(static_cast<float>(width_) / canvasW_,
+                                       static_cast<float>(height_) / canvasH_);
+    const float fx = (width_ - canvasW_ * fit) * 0.5f;
+    const float fy = (height_ - canvasH_ * fit) * 0.5f;
+    const float cx = width_ * 0.5f, cy = height_ * 0.5f;
+    const float th = rotDeg_ * 0.01745329252f;
+    const float c = std::cos(th), s = std::sin(th);
+    const float sx = flipX_ ? -1.f : 1.f, sy = flipY_ ? -1.f : 1.f;
+    // A = R * F
+    const float a00 = c * sx, a01 = -s * sy, a10 = s * sx, a11 = c * sy;
+    const float k = zoom_ * fit;
+    a[0] = k * a00; a[1] = k * a10; a[2] = k * a01; a[3] = k * a11;
+    // t = C + zoom * A * (f - C) + pan
+    const float ex = fx - cx, ey = fy - cy;
+    a[4] = cx + zoom_ * (a00 * ex + a01 * ey) + panX_;
+    a[5] = cy + zoom_ * (a10 * ex + a11 * ey) + panY_;
 }
 
 void Renderer::setBackground(float r, float g, float b, float a) {
@@ -651,12 +706,17 @@ void Renderer::setSelection(const float* quads, int n) {
 //   canvas = (a*u + c*v + tx, b*u + d*v + ty)
 // затем холст -> экран (вписывание и камера) -> NDC (ось y экрана вниз). Матрица mat3 по столбцам.
 void Renderer::mvpFor(const float m[6], GLfloat o[9]) const {
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
-    o[0] = m[0] * scale / width_ * 2.f;   o[1] = -m[1] * scale / height_ * 2.f;  o[2] = 0.f;
-    o[3] = m[2] * scale / width_ * 2.f;   o[4] = -m[3] * scale / height_ * 2.f;  o[5] = 0.f;
-    o[6] = (ox + m[4] * scale) / width_ * 2.f - 1.f;
-    o[7] = 1.f - (oy + m[5] * scale) / height_ * 2.f;
+    float a[6];
+    viewAffine(a);
+    // screen = view * (layer -> canvas); NDC: x = sx/w*2-1, y = 1-sy/h*2 (столбцы mat3)
+    o[0] = (a[0] * m[0] + a[2] * m[1]) / width_ * 2.f;
+    o[1] = -(a[1] * m[0] + a[3] * m[1]) / height_ * 2.f;
+    o[2] = 0.f;
+    o[3] = (a[0] * m[2] + a[2] * m[3]) / width_ * 2.f;
+    o[4] = -(a[1] * m[2] + a[3] * m[3]) / height_ * 2.f;
+    o[5] = 0.f;
+    o[6] = (a[0] * m[4] + a[2] * m[5] + a[4]) / width_ * 2.f - 1.f;
+    o[7] = 1.f - (a[1] * m[4] + a[3] * m[5] + a[5]) / height_ * 2.f;
     o[8] = 1.f;
 }
 
@@ -748,10 +808,13 @@ bool Renderer::readLayerPixels(int layerId, std::vector<uint8_t>& out, int& w, i
 }
 
 int Renderer::hitTest(float sx, float sy) const {
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
-    const float px = (sx - ox) / scale;   // координаты на холсте
-    const float py = (sy - oy) / scale;
+    float a[6];
+    viewAffine(a);
+    const float det = a[0] * a[3] - a[2] * a[1];
+    if (std::fabs(det) < 1e-12f) return -1;
+    const float dx = sx - a[4], dy = sy - a[5];
+    const float px = (a[3] * dx - a[2] * dy) / det;   // координаты на холсте
+    const float py = (-a[1] * dx + a[0] * dy) / det;
     for (size_t i = scene_.size(); i-- > 0;) {
         const Item& it = scene_[i];
         if (it.op != kLayer || it.opacity < 0.01f) continue;
@@ -807,8 +870,8 @@ int Renderer::hitTest(float sx, float sy) const {
 // Рисуется в пространстве экрана, поэтому толщина одинакова при любом перекосе и масштабе.
 void Renderer::drawSelection() {
     if (selQuads_.empty()) return;
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
+    float a[6];
+    viewAffine(a);
     glUseProgram(progSolid_);
     glUniform4f(uSolidColor_, 1.f, 0.75f, 0.f, 1.f);
     GLfloat mvp[9];
@@ -816,8 +879,9 @@ void Renderer::drawSelection() {
     for (size_t q = 0; q + 8 <= selQuads_.size(); q += 8) {
     float sxp[4], syp[4];
     for (int i = 0; i < 4; ++i) {
-        sxp[i] = ox + selQuads_[q + i * 2] * scale;
-        syp[i] = oy + selQuads_[q + i * 2 + 1] * scale;
+        const float cx = selQuads_[q + i * 2], cy = selQuads_[q + i * 2 + 1];
+        sxp[i] = a[0] * cx + a[2] * cy + a[4];
+        syp[i] = a[1] * cx + a[3] * cy + a[5];
     }
     for (int i = 0; i < 4; ++i) {
         const int j = (i + 1) % 4;
@@ -1011,6 +1075,8 @@ void Renderer::ensureBackdrop() {
     glGenFramebuffers(1, &backdropFbo_);
     glBindFramebuffer(GL_FRAMEBUFFER, backdropFbo_);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, backdropTex_, 0);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    glClear(GL_COLOR_BUFFER_BIT);
     glBindFramebuffer(GL_FRAMEBUFFER, curFbo_);
 }
 
@@ -1099,8 +1165,10 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
 // Один проход эффекта: читает srcTex, пишет в текущую цель (она уже очищена и привязана).
 void Renderer::runEffect(GLuint srcTex, const float* e) {
     if (!progFx_) return;
-    float sc, ox, oy;
-    viewTransform(sc, ox, oy);
+    float va[6];
+    viewAffine(va);
+    const float sc = std::sqrt(va[0] * va[0] + va[1] * va[1]);
+    const float ox = va[4], oy = va[5];
     glUseProgram(progFx_);
     glDisable(GL_BLEND);
     glActiveTexture(GL_TEXTURE0);
@@ -1186,12 +1254,22 @@ bool Renderer::drawFrame() {
     // В редакторе содержимое монтажного стола видно на сером фоне; экспорт и capture обрезаны кадром.
     // Scissor действует и на очистку/композитинг FBO, поэтому внутри него группы считаются верно.
     if (clipSceneToCanvas(exportMode_)) {
-        float sc, ox, oy;
-        viewTransform(sc, ox, oy);
-        const int x0 = static_cast<int>(std::floor(ox));
-        const int x1 = static_cast<int>(std::ceil(ox + canvasW_ * sc));
-        const int y0 = static_cast<int>(std::floor(oy));
-        const int y1 = static_cast<int>(std::ceil(oy + canvasH_ * sc));
+        // При повороте/отражении вида холст - повёрнутый прямоугольник: scissor по его AABB.
+        float a[6];
+        viewAffine(a);
+        const float corners[4][2] = {{0.f, 0.f}, {static_cast<float>(canvasW_), 0.f},
+                                     {static_cast<float>(canvasW_), static_cast<float>(canvasH_)}, {0.f, static_cast<float>(canvasH_)}};
+        float minX = 1e30f, minY = 1e30f, maxX = -1e30f, maxY = -1e30f;
+        for (const auto& c : corners) {
+            const float sx = a[0] * c[0] + a[2] * c[1] + a[4];
+            const float sy = a[1] * c[0] + a[3] * c[1] + a[5];
+            minX = std::min(minX, sx); maxX = std::max(maxX, sx);
+            minY = std::min(minY, sy); maxY = std::max(maxY, sy);
+        }
+        const int x0 = static_cast<int>(std::floor(minX));
+        const int x1 = static_cast<int>(std::ceil(maxX));
+        const int y0 = static_cast<int>(std::floor(minY));
+        const int y1 = static_cast<int>(std::ceil(maxY));
         glEnable(GL_SCISSOR_TEST);
         glScissor(x0, height_ - y1, std::max(0, x1 - x0), std::max(0, y1 - y0));  // начало координат снизу
     }
@@ -1252,6 +1330,11 @@ bool Renderer::drawFrame() {
         }
     }
 
+    if (exportToSurface_) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, exportFbo_);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, width_, height_, 0, 0, width_, height_, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
     bindTarget(0);
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);

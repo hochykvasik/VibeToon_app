@@ -232,7 +232,9 @@ data class ProjectData(
     val groupDeformationAnchors: Map<Int, GroupDeformationAnchor> = emptyMap(),
     /** Only non-default 2..4-point grids; v1/v2 always mean 4x4. */
     val warpGridSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap(),
-    val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
+    val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap(),
+    /** Переопределения опорных точек (пивотов) узлов: id -> (x, y) в координатах холста. */
+    val pivots: Map<Int, Pair<Float, Float>> = emptyMap()
 ) {
     fun animation() = Animation(ProjectSettings(meta.fps, meta.durationFrames), tracks)
 }

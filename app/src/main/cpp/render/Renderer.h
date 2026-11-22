@@ -4,6 +4,7 @@
 #include <GLES3/gl3.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
@@ -24,7 +25,7 @@ public:
     void setScene(const int* ops, const float* params, int n);
     // Камера: экранные координаты = C + (p - C)*zoom + pan, C - центр экрана, p - положение
     // при вписывании холста. Одна матрица двигает и масштабирует весь холст.
-    void setCamera(float zoom, float panX, float panY);
+    void setCamera(float zoom, float panX, float panY, float rotDeg = 0.f, bool flipX = false, bool flipY = false);
     // Цвет фона холста (RGBA 0..1). Альфа 0 (прозрачный фон проекта) показывается светло-серым.
     void setBackground(float r, float g, float b, float a);
     // Warp: для слоёв из списка ids (n штук) 16 смещений контрольных точек сетки 4x4 (по 2 float, в долях
@@ -144,6 +145,7 @@ private:
 
     void uploadPending();                        // не более kUploadBytesPerFrame за кадр
     void viewTransform(float& scale, float& ox, float& oy) const;  // холст -> экран с камерой
+    void viewAffine(float a[6]) const;  // холст -> экран: аффинная матрица (поворот/отражение вида)
     void drawSelection();
     void mvpForRect(float x, float y, float w, float h, GLfloat out[9]) const;
     // Единичный квадрат -> холст по аффинной матрице m[6] -> экран (камера) -> NDC.
@@ -170,12 +172,18 @@ private:
     int width_ = 1, height_ = 1;
     int canvasW_ = 1, canvasH_ = 1;
     float zoom_ = 1.f, panX_ = 0.f, panY_ = 0.f;
+    float rotDeg_ = 0.f;
+    bool flipX_ = false, flipY_ = false;
     float bg_[4] = {0.85f, 0.85f, 0.85f, 1.f};
     bool exportMode_ = false;
     GLuint screenFbo_ = 0;            // куда рисует drawFrame (0 - экран; при снимке - внутренний FBO)
+    GLuint exportFbo_ = 0, exportTex_ = 0;  // экспорт в Surface кодека: кадр рисуется в FBO, затем blit на поверхность
+    bool exportToSurface_ = false;
     bool transparentCapture_ = false;
     int savedW_ = 1, savedH_ = 1;
     float savedZoom_ = 1.f, savedPanX_ = 0.f, savedPanY_ = 0.f;
+    float savedRotDeg_ = 0.f;
+    bool savedFlipX_ = false, savedFlipY_ = false;
     std::vector<float> selQuads_;   // по 8 float на рамку
 
     GLuint progSolid_ = 0, progTex_ = 0, progBlend_ = 0;

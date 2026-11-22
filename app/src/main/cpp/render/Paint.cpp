@@ -22,11 +22,13 @@ out vec2 vLocal;
 out vec2 vWorld;
 out float vOpacity;
 out float vRadius;
+out float vAngle;
 void main() {
     vec2 local = aQuad * 2.0 - 1.0;
     vLocal = local;
     vOpacity = aDab.w;
     vRadius = aDab.z;
+    vAngle = aRot;
     float cs = cos(aRot), sn = sin(aRot);
     vec2 off = local * (aDab.z + 1.5);
     vec2 p = aDab.xy + vec2(cs * off.x - sn * off.y, sn * off.x + cs * off.y);   // квад поворачивается, vLocal остаётся в осях штампа
@@ -47,6 +49,7 @@ in vec2 vLocal;
 in vec2 vWorld;
 in float vOpacity;
 in float vRadius;
+in float vAngle;
 uniform vec3 uColor;
 uniform float uHardness;
 uniform int uShape;
@@ -72,8 +75,14 @@ void main() {
         if (uCurve == 1) a = a * a * (3.0 - 2.0 * a);
     }
     if (uGrainMode != 0) {
-        // MOVING: зерно в пикселях штампа (едет и поворачивается вместе с ним); CANVAS: в координатах слоя
-        vec2 uv = uGrainMode == 1 ? vLocal * (vRadius + 1.5) / (uGrainSize * uGrainScale) + 0.5 : vWorld / (uGrainSize * uGrainScale);
+        // MOVING: зерно в пикселях штампа (едет и поворачивается вместе с ним);
+        // CANVAS: зерно на холсте, но штрихи идут вдоль направления (поворот UV на угол штампа).
+        vec2 guv = vWorld;
+        if (uGrainMode == 2) {
+            float cs = cos(vAngle), sn = sin(vAngle);
+            guv = vec2(cs * vWorld.x - sn * vWorld.y, sn * vWorld.x + cs * vWorld.y);
+        }
+        vec2 uv = uGrainMode == 1 ? vLocal * (vRadius + 1.5) / (uGrainSize * uGrainScale) + 0.5 : guv / (uGrainSize * uGrainScale);
         float g = texture(uGrain, uv).r;
         g = clamp((g - 0.5) * uGrainContrast + 0.5, 0.0, 1.0);
         a *= g;
