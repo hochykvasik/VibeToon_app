@@ -1,0 +1,922 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
+package com.vibetoon.ui.timeline
+
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.size
+import com.vibetoon.ui.shell.LocalStub
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.scrollBy
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import com.vibetoon.ui.i18n.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import com.vibetoon.ui.shell.coachTarget
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.State
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.vibetoon.domain.anim.EasingType
+import com.vibetoon.domain.anim.TrackGroups
+import com.vibetoon.domain.anim.TimeFormat
+import com.vibetoon.domain.project.Clip
+import com.vibetoon.ui.MainViewModel
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.roundToInt
+
+private val ROW_H = 28.dp
+private val RULER_H = 26.dp
+private val NAME_W = 156.dp
+private const val DEFAULT_FRAME_DP = 10f   // ширина одного кадра на линейке (меняется щипком)
+private const val MIN_FRAME_DP = 1.5f
+private const val MAX_FRAME_DP = 48f
+private val PLAYHEAD_GRAB_W = 26.dp  // ширина зоны захвата вокруг красной линии
+private val HANDLE_GRAB_W = 22.dp   // зона захвата края клипа
+private const val INDENT_DP = 12     // отступ на каждый уровень вложенности
+
+/**
+ * Нижняя панель: Play/Pause, поле кадра, Add/Delete Key, сброс трансформации, цепочка пропорций,
+ * линейка с playhead и дерево слоёв (группы сворачиваются) с ромбами ключей.
+ */
+@Composable
+fun TimelinePanel(
+    vm: MainViewModel, modifier: Modifier = Modifier, visibleRows: Int = 5,
+    /** true - строки слоёв занимают всю оставшуюся высоту панели (ландшафтная раскладка). */
+    fill: Boolean = false, collapsed: Boolean = false, onToggleCollapse: () -> Unit = {}
+) {
+    // Кадр читается только в draw/лямбдах: при скраббинге перерисовываются линейка и плейхед, а не вся панель со 100 строками
+    val frameS = vm.frame.collectAsStateWithLifecycle()
+    val frame by frameS
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val animation by vm.animation.collectAsStateWithLifecycle()
+    val selected by vm.selected.collectAsStateWithLifecycle()
+    val rows by vm.rows.collectAsStateWithLifecycle()
+    val hasKeyClip by vm.hasKeyClip.collectAsStateWithLifecycle()
+    val audio by vm.audioTracks.collectAsStateWithLifecycle()
+    val selection by vm.selection.collectAsStateWithLifecycle()
+    val clips by vm.clips.collectAsStateWithLifecycle()
+    val cellMap by vm.cellMap.collectAsStateWithLifecycle()
+    val symMarkers by vm.symMarkers.collectAsStateWithLifecycle()
+    val waves by vm.waveforms.collectAsStateWithLifecycle()
+    val timeKeyMap by vm.timeKeys.collectAsStateWithLifecycle()
+    val multi by vm.multiSelect.collectAsStateWithLifecycle()
+    val keySel by vm.keySelection.collectAsStateWithLifecycle()
+    val haptic = LocalHapticFeedback.current
+    // Порядок строк = порядок слоёв; выделение его не меняет (иначе ломается «Лесенка»)
+    val shownRows = rows
+    var showSettings by remember { mutableStateOf(false) }
+    val duration = animation.settings.durationFrames
+    val fps = animation.settings.fps
+
+    // Обычный тап: выбрать слой (группа - свернуть/развернуть); в режиме мультивыделения - добавить/убрать
+    fun tapRow(id: Int, isGroup: Boolean) {
+        when {
+            multi -> vm.toggleSelect(id)
+            isGroup -> vm.toggleGroup(id)
+            else -> vm.selectLayer(id)
+        }
+    }
+    // Долгое нажатие: войти в мультивыделение
+    fun longRow(id: Int) {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        vm.toggleSelect(id)
+    }
+    val markers by vm.markers.collectAsStateWithLifecycle()
+    // Масштаб таймлайна: dp на кадр; меняется щипком двумя пальцами
+    var frameDp by remember { mutableFloatStateOf(DEFAULT_FRAME_DP) }
+    val hScroll = rememberScrollState()
+    val density = LocalDensity.current
+    val frameWPx = with(density) { frameDp.dp.toPx() }
+    val frameW = frameDp.dp
+    val frameNow = frameS
+    var anchorX by remember { mutableFloatStateOf(0f) }
+    val hasKey by remember { derivedStateOf { selected?.let { animation.hasKey(it, frameS.value) } ?: false } }
+    val easing by remember { derivedStateOf { selected?.let { animation.easingAt(it, frameS.value) } } }
+    val markerHere by remember { derivedStateOf { frameS.value in markers } }
+    var easingMenu by remember { mutableStateOf(false) }
+    val compact = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize()
+            // Щипок двумя пальцами в любом месте панели: масштаб таймлайна вокруг playhead
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    var last = 0f
+                    while (true) {
+                        val ev = awaitPointerEvent(PointerEventPass.Initial)
+                        val down = ev.changes.filter { it.pressed }
+                        if (down.isEmpty()) break
+                        if (down.size >= 2) {
+                            val d = (down[0].position - down[1].position).getDistance()
+                            if (last > 0f && d > 0f) {
+                                val next = (frameDp * d / last).coerceIn(MIN_FRAME_DP, MAX_FRAME_DP)
+                                if (next != frameDp) {
+                                    anchorX = frameNow.value * frameDp.dp.toPx() - hScroll.value
+                                    frameDp = next
+                                }
+                            }
+                            last = d
+                            ev.changes.forEach { it.consume() }
+                        } else last = 0f
+                    }
+                }
+            }
+    ) {
+        val stub = LocalStub.current
+        val fx by vm.fx.collectAsStateWithLifecycle()
+        val onion by vm.onion.collectAsStateWithLifecycle()
+        val onionDepth by vm.onionDepth.collectAsStateWithLifecycle()
+        val onionAlpha by vm.onionAlpha.collectAsStateWithLifecycle()
+        var onionDialog by remember { mutableStateOf(false) }
+        val loop by vm.loop.collectAsStateWithLifecycle()
+        val magnet by vm.magnet.collectAsStateWithLifecycle()
+        var selectMode by remember { mutableStateOf(false) }
+        val phone = com.vibetoon.ui.shell.LocalPhone.current
+        var toolsOpen by remember { mutableStateOf(false) }
+        if (onionDialog) androidx.compose.material3.AlertDialog(
+            onDismissRequest = { onionDialog = false },
+            title = { Text("Калька (Onion Skin)") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Глубина: сколько рисунков назад и вперёд", fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (d in 1..3) androidx.compose.material3.FilterChip(selected = onionDepth == d, onClick = { vm.setOnionDepth(d) }, label = { Text("$d") })
+                    }
+                    Text("Прозрачность: ${(onionAlpha * 100).toInt()}%", fontSize = 12.sp)
+                    androidx.compose.material3.Slider(value = onionAlpha, onValueChange = { vm.setOnionAlpha(it) }, valueRange = 0.1f..0.9f)
+                    Text("Красный - предыдущий рисунок, зелёный - следующий. Работает на слое-картинке с кадрами (кнопка «Добавить пустой кадр»).", fontSize = 11.sp)
+                }
+            },
+            confirmButton = { androidx.compose.material3.TextButton({ onionDialog = false }) { Text("Готово") } }
+        )
+        // ---- Панель воспроизведения ----
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            TlIcon(Icons.Default.FirstPage, "В начало") { vm.goStart() }
+            TlIcon(Icons.Default.ChevronLeft, "Предыдущий кадр") { vm.scrubTo(frame - 1) }
+            FilledIconButton(onClick = vm::togglePlay, modifier = Modifier.size(40.dp).coachTarget("Играть")) {
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Пауза" else "Играть")
+            }
+            TlIcon(Icons.Default.ChevronRight, "Следующий кадр") { vm.scrubTo(frame + 1) }
+            TlIcon(Icons.Default.LastPage, "В конец") { vm.goEnd() }
+            FrameFieldHost(frameS, fps, duration - 1, vm::scrubTo)
+            Text("/ ${TimeFormat.format(duration, fps)}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            TlIcon(Icons.Default.AutoAwesome, "Эффекты (FX)", active = fx) { vm.toggleFx() }
+            TlIcon(Icons.Default.Layers, "Калька (Onion Skin)", active = onion, onLong = { onionDialog = true }) { vm.toggleOnion() }
+            TlIcon(Icons.Default.Repeat, "Зацикливание", active = loop) { vm.toggleLoop() }
+            if (!phone) AssistChip(onClick = { stub("Переключение сцен") }, label = { com.vibetoon.ui.DropText("Сцена 1") })
+            OutlinedButton(
+                onClick = vm::toggleKey,
+                enabled = selected != null && !playing,
+                contentPadding = compact
+            ) { Text(if (hasKey) "◇ Delete Key" else "◆ Add Key", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            TlIcon(Icons.Default.HighlightAlt, "Выделение ключей рамкой", active = selectMode) { selectMode = !selectMode; if (!selectMode) vm.clearKeySelection() }
+            if (phone) TlIcon(Icons.Default.MoreVert, "Ещё", active = toolsOpen) { toolsOpen = !toolsOpen }
+            TlIcon(Icons.Default.Eject, if (collapsed) "Развернуть таймлайн" else "Свернуть таймлайн", active = collapsed) { onToggleCollapse() }
+        }
+        // ---- Выделение ключей: копировать / вырезать / вставить / удалить пачкой ----
+        if (!collapsed && (selectMode || keySel.isNotEmpty() || hasKeyClip)) Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            Text(
+                if (keySel.isEmpty()) (if (selectMode) "Рамкой по ключам" else "Ключи") else "Выбрано: ${keySel.size}",
+                fontSize = 12.sp, maxLines = 1, softWrap = false
+            )
+            val keyBtn = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            OutlinedButton(onClick = vm::copySelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::cutSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вырезать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::pasteKeys, enabled = hasKeyClip && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { vm.stretchSelectedKeys(2f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Растянуть ×2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { vm.stretchSelectedKeys(0.5f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Сжать ÷2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::reverseSelectedKeys, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Реверс", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::deleteSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+        }
+        // ---- Панель инструментов таймлайна ----
+        if (!collapsed && (!phone || toolsOpen)) Row(
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            TlIcon(Icons.Default.Adjust, "Магнит", active = magnet) { vm.toggleMagnet() }
+            TlIcon(Icons.Default.AccountTree, "Иерархия трансформаций") { stub("Иерархия трансформаций") }
+            TlIcon(Icons.Default.Timeline, "Режим ключей") { stub("Режим ключей") }
+            // f(x): плавность сегмента от ключа выделенного слоя на текущем кадре
+            Box {
+                TlIcon(Icons.Default.ShowChart, "Кривые (Easing)", enabled = !playing) { vm.openCurveEditor(true) }
+                DropdownMenu(expanded = easingMenu, onDismissRequest = { easingMenu = false }) {
+                    val items = listOf(
+                        EasingType.LINEAR to "Линейно",
+                        EasingType.EASE_IN to "Плавное начало",
+                        EasingType.EASE_OUT to "Плавный конец",
+                        EasingType.EASE_IN_OUT to "Плавно и там и там",
+                        EasingType.STEP to "Ступенька (Hold)"
+                    )
+                    for ((type, title) in items) {
+                        DropdownMenuItem(
+                            text = { Text(title) },
+                            leadingIcon = { if (type == easing) Icon(Icons.Default.Check, null) },
+                            onClick = { vm.setEasing(type); easingMenu = false }
+                        )
+                    }
+                }
+            }
+            TlIcon(Icons.Default.Brush, "Добавить пустой кадр") { vm.addEmptyFrame() }
+            TlIcon(Icons.Default.ContentCopy, "Дублировать кадр") { vm.duplicateFrame() }
+            TlIcon(Icons.Default.DeleteSweep, "Удалить кадр") { vm.deleteFrame() }
+            TlIcon(Icons.Default.OpenInFull, "Расширить") { stub("Расширение клипа") }
+            // Ножницы: разрезать клип выделенного слоя на плейхеде на две независимые части
+            TlIcon(Icons.Default.ContentCut, "Разрезать клип", enabled = selected != null && !playing) { vm.splitSelected() }
+            TlIcon(Icons.Default.ContentCopy, "Дублировать слой", enabled = selected != null && !playing) { vm.duplicateSelected() }
+            // Лесенка: клипы выделенных слоёв встают со сдвигом на 1 кадр
+            TlIcon(Icons.Default.Stairs, "Лесенка", enabled = selection.size >= 2 && !playing) { vm.staggerSelected() }
+            // Маркеры кадров: перейти к предыдущему, поставить/убрать, перейти к следующему
+            TlIcon(Icons.Default.SkipPrevious, "Предыдущий маркер", enabled = markers.isNotEmpty()) { vm.jumpMarker(false) }
+            TlIcon(Icons.Default.Flag, "Маркер кадра", active = markerHere) { vm.toggleMarker() }
+            TlIcon(Icons.Default.SkipNext, "Следующий маркер", enabled = markers.isNotEmpty()) { vm.jumpMarker(true) }
+            TlIcon(Icons.Default.RestartAlt, "Сбросить трансформацию", enabled = selected != null && !playing) { vm.resetLayerTransform() }
+            // Шестерёнка: длительность проекта и FPS
+            TlIcon(Icons.Default.Settings, "Длительность и FPS") { showSettings = true }
+        }
+
+        if (!collapsed) {
+        // ---- Линейка и дерево слоёв ----
+        val vScroll = rememberScrollState()
+        val rowPxScroll = with(LocalDensity.current) { ROW_H.toPx() }
+        LaunchedEffect(selected) {
+            val i = shownRows.indexOfFirst { it.layer.id == selected }
+            if (i >= 0) vScroll.animateScrollTo((i * rowPxScroll).toInt().coerceAtMost(vScroll.maxValue))
+        }
+        val contentW = frameW * duration
+        val measurer = rememberTextMeasurer()
+        val lineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
+        val textColor = MaterialTheme.colorScheme.onSurface
+        val accent = MaterialTheme.colorScheme.primary
+        val playheadColor = Color(0xFFE53935)
+        val markerColor = Color(0xFFFB8C00)
+        val cellColor = Color(0xFF26C6DA)
+        var viewportPx by remember { mutableIntStateOf(0) }
+        val frameState = frameS
+        val frameWPxNow = rememberUpdatedState(frameWPx)
+
+        // После щипка playhead остаётся на том же месте экрана
+        LaunchedEffect(frameDp) {
+            if (anchorX != 0f || hScroll.value != 0) hScroll.scrollTo((frame * frameWPx - anchorX).toInt().coerceAtLeast(0))
+        }
+
+        // Автопрокрутка: playhead всегда в видимой части (при Play, перемотке и вводе кадра)
+        LaunchedEffect(viewportPx) {
+            snapshotFlow { frameS.value }.collect { f ->
+                val w = frameWPxNow.value
+                TimelineMath.autoScrollTarget(f * w, hScroll.value, viewportPx, (w * 3).toInt())
+                    ?.let { hScroll.scrollTo(it) }
+            }
+        }
+
+        Row {
+            Box(Modifier.width(NAME_W).height(RULER_H))
+            // Линейка не листается сама (enabled=false): тап и перетаскивание по ней - перемотка.
+            // Листает таймлайн жест по полосам слоёв ниже.
+            Box(
+                Modifier
+                    // размер измеряется ДО горизонтальной прокрутки: это ширина видимого окна, а не всего содержимого
+                    .onSizeChanged { viewportPx = it.width }
+                    .horizontalScroll(hScroll, enabled = false)
+            ) {
+                Canvas(
+                    Modifier
+                        .width(contentW)
+                        .height(RULER_H)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .pointerInput(frameWPx, duration, markers) {
+                            detectTapGestures { pt ->
+                                // тап рядом с маркером прыгает точно на него
+                                val snap = markers.minByOrNull { abs(it * frameWPx - pt.x) }?.takeIf { abs(it * frameWPx - pt.x) < 14.dp.toPx() }
+                                vm.scrubTo(snap ?: vm.snapFrame((pt.x / frameWPx).roundToInt(), (10.dp.toPx() / frameWPx).roundToInt().coerceAtLeast(1)))
+                            }
+                        }
+                        .pointerInput(frameWPx, duration) {
+                            // палец у края линейки: таймлайн сам прокручивается в эту сторону, пока палец удерживается
+                            kotlinx.coroutines.coroutineScope {
+                                val sc = this
+                                var lastX = 0f
+                                var job: Job? = null
+                                fun scrub() = vm.scrubTo(vm.snapFrame((lastX / frameWPx).roundToInt(), (10.dp.toPx() / frameWPx).roundToInt().coerceAtLeast(1)))
+                                detectHorizontalDragGestures(
+                                    onDragStart = { p ->
+                                        lastX = p.x
+                                        job = sc.edgeScroll(hScroll, { viewportPx }, 56.dp.toPx(), 22.dp.toPx(), { lastX }) { used -> lastX += used; scrub() }
+                                    },
+                                    onDragEnd = { job?.cancel() }, onDragCancel = { job?.cancel() }
+                                ) { change, _ ->
+                                    lastX = change.position.x
+                                    scrub()
+                                    change.consume()
+                                }
+                            }
+                        }
+                ) {
+                    // рисуем только видимую часть линейки (длинные проекты - тысячи кадров)
+                    val first = ((hScroll.value / frameWPx).toInt() - 2).coerceAtLeast(0)
+                    val last = (first + (viewportPx / frameWPx).toInt() + 5).coerceAtMost(duration - 1)
+                    // подписи секунд не чаще, чем раз в ~70dp; мелкие деления кадров - только при крупном масштабе
+                    val labelEvery = max(1, ceil(70.dp.toPx() / (fps * frameWPx)).toInt())
+                    for (f in first..last) {
+                        val x = f * frameWPx
+                        val major = f % fps == 0
+                        if (!major && frameDp < 5f) continue
+                        drawLine(lineColor, Offset(x, size.height * if (major) 0.4f else 0.75f), Offset(x, size.height))
+                        if (major && (f / fps) % labelEvery == 0) {
+                            drawText(
+                                measurer, TimeFormat.formatSeconds(f, fps),
+                                topLeft = Offset(x + 3f, 0f),
+                                style = TextStyle(fontSize = 10.sp, color = textColor)
+                            )
+                        }
+                    }
+                    for (m in markers) {
+                        val mx = m * frameWPx
+                        val flag = Path().apply { moveTo(mx, 0f); lineTo(mx + 9.dp.toPx(), 5.dp.toPx()); lineTo(mx, 10.dp.toPx()); close() }
+                        drawLine(markerColor, Offset(mx, 0f), Offset(mx, size.height), strokeWidth = 2f)
+                        drawPath(flag, markerColor)
+                    }
+                    drawPlayhead(frame * frameWPx, playheadColor)
+                }
+            }
+        }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .then(if (fill) Modifier.weight(1f) else Modifier.height(ROW_H * visibleRows))
+                .verticalScroll(vScroll)
+        ) {
+            // Дерево слоёв: отступы по вложенности, группы сворачиваются тапом, длинные имена обрезаются
+            Column(Modifier.width(NAME_W)) {
+                // Drag-and-drop порядка слоёв: тянем за ручку ≡ в конце строки, бросок на слой ставит на его место, на группу - внутрь
+                var dragId by remember { mutableStateOf<Int?>(null) }
+                var dragDy by remember { mutableFloatStateOf(0f) }
+                val rowsForDrag = rememberUpdatedState(shownRows)
+                val rowPx = with(density) { ROW_H.toPx() }
+                for (r in shownRows) {
+                    val l = r.layer
+                    Row(
+                        Modifier
+                            .width(NAME_W)
+                            .height(ROW_H)
+                            .graphicsLayer { translationY = if (dragId == l.id) dragDy else 0f; alpha = if (dragId == l.id) 0.6f else 1f }
+                            .background(if (l.id in selection) accent.copy(alpha = 0.25f) else Color.Transparent)
+                            .combinedClickable(onClick = { tapRow(l.id, r.isGroup) }, onLongClick = { longRow(l.id) })
+                            .padding(start = (4 + INDENT_DP * r.depth).dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (r.isGroup) Icon(if (r.expanded) Icons.Default.ExpandMore else Icons.Default.ChevronRight, null, Modifier.size(16.dp))
+                        else {
+                            // миниатюра слоя слева от имени: сразу видно, чей это клип
+                            val thumb = vm.thumbs[l.id]
+                            LaunchedEffect(l.id, thumb) {
+                                var tries = 0
+                                while (vm.thumbs[l.id] == null && tries < 40) { vm.requestThumb(l.id); kotlinx.coroutines.delay(800); tries++ }
+                            }
+                            Box(
+                                Modifier.padding(end = 4.dp).size(22.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                if (thumb != null) androidx.compose.foundation.Image(
+                                    thumb, null, modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                )
+                            }
+                        }
+                        Text(
+                            l.name,
+                            fontSize = 12.sp,
+                            fontWeight = if (r.isGroup) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                        Box(
+                            Modifier.width(36.dp).fillMaxHeight().pointerInput(l.id) {
+                                // нажатие на ручку забирается сразу: контекстное меню строки не открывается, порядок слоёв тянется с первого касания
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    down.consume()
+                                    dragId = l.id; dragDy = 0f
+                                    val lifted = drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() }
+                                    if (lifted) {
+                                        val list = rowsForDrag.value
+                                        val t = list.getOrNull(list.indexOfFirst { it.layer.id == l.id } + Math.round(dragDy / rowPx))
+                                        if (t != null && t.layer.id != l.id) vm.dropLayer(l.id, t.layer.id)
+                                    }
+                                    dragId = null; dragDy = 0f
+                                }
+                            },
+                            contentAlignment = Alignment.Center
+                        ) { Text("≡", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)) }
+                    }
+                }
+                // Аудио: невизуальные дорожки с именем файла (звук играет при Play)
+                for (a in audio) {
+                    Row(
+                        Modifier
+                            .width(NAME_W).height(ROW_H)
+                            .background(if (a.id in selection) accent.copy(alpha = 0.25f) else Color.Transparent)
+                            .combinedClickable(onClick = { if (multi) vm.toggleSelect(a.id) else vm.selectLayer(a.id) }, onLongClick = { longRow(a.id) })
+                            .padding(start = 4.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.MusicNote, null, Modifier.size(14.dp))
+                        Text(a.name, fontSize = 12.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    }
+                }
+            }
+            // Полосы слоёв с ромбами ключей; жест по ним листает таймлайн по горизонтали
+            val marquee = remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+            val rowsNow = rememberUpdatedState(shownRows)
+            val animNow = rememberUpdatedState(animation)
+            val keySelNow = rememberUpdatedState(keySel)
+            Box(Modifier.horizontalScroll(hScroll)) {
+                Column(
+                    Modifier.then(
+                        if (!selectMode) Modifier else Modifier.pointerInput(frameWPx) {
+                            val rowH = ROW_H.toPx()
+                            val grab = 14.dp.toPx()
+                            fun keysIn(r: androidx.compose.ui.geometry.Rect): Set<Pair<Int, Int>> {
+                                val out = HashSet<Pair<Int, Int>>()
+                                rowsNow.value.forEachIndexed { i, row ->
+                                    val cy = (i + 0.5f) * rowH
+                                    if (row.isGroup || cy < r.top || cy > r.bottom) return@forEachIndexed
+                                    TrackGroups.frames(row.layer.id, animNow.value.tracks).forEach { f ->
+                                        val kx = f * frameWPx
+                                        if (kx >= r.left && kx <= r.right) out += row.layer.id to f
+                                    }
+                                }
+                                return out
+                            }
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                val rowIdx = (down.position.y / rowH).toInt()
+                                val hit = rowsNow.value.getOrNull(rowIdx)?.takeIf { !it.isGroup }?.let { row ->
+                                    TrackGroups.frames(row.layer.id, animNow.value.tracks)
+                                        .minByOrNull { abs(it * frameWPx - down.position.x) }
+                                        ?.takeIf { abs(it * frameWPx - down.position.x) <= grab }
+                                        ?.let { row.layer.id to it }
+                                }
+                                val moving = hit != null
+                                if (hit != null && hit !in keySelNow.value) vm.selectKeys(setOf(hit))
+                                var applied = 0
+                                var dragged = false
+                                while (true) {
+                                    val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                    val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!c.pressed) break
+                                    val d = c.position - down.position
+                                    if (!dragged && d.getDistance() > viewConfiguration.touchSlop) dragged = true
+                                    if (dragged) {
+                                        c.consume()
+                                        if (moving) {
+                                            val target = (d.x / frameWPx).roundToInt()
+                                            if (target != applied) { vm.moveSelectedKeys(target - applied); applied = target }
+                                        } else {
+                                            marquee.value = androidx.compose.ui.geometry.Rect(
+                                                minOf(down.position.x, c.position.x), minOf(down.position.y, c.position.y),
+                                                maxOf(down.position.x, c.position.x), maxOf(down.position.y, c.position.y)
+                                            )
+                                        }
+                                    }
+                                }
+                                val m = marquee.value
+                                if (!moving) {
+                                    if (dragged && m != null) vm.selectKeys(keysIn(m)) else vm.clearKeySelection()
+                                }
+                                marquee.value = null
+                            }
+                        }
+                    )
+                ) {
+                    for (r in shownRows) {
+                        val l = r.layer
+                        val keys = if (r.isGroup) emptyList() else animation.tracks[l.id]?.keys.orEmpty()
+                        // ключи остальных дорожек слоя (Warp, вершины Mesh, пины, Perspective, Turbulent): бледные ромбы
+                        val groupFrames = if (r.isGroup) emptySet() else TrackGroups.frames(l.id, animation.tracks)
+                        val warpFrames = groupFrames - keys.mapTo(HashSet()) { it.frame }
+                        val isSel = l.id in selection
+                        val clip = clips[l.id] ?: vm.clipOf(l.id)
+                        val clipNow = rememberUpdatedState(clip)
+                        val isSelNow = rememberUpdatedState(isSel)
+                        Canvas(
+                            Modifier
+                                .width(contentW)
+                                .height(ROW_H)
+                                // Края полоски тянутся пальцем (начало/конец клипа), у выбранного слоя полоска целиком
+                                // переносится за середину: меняется время начала, длительность остаётся
+                                .clipGestures(l.id, frameWPx, clipNow, isSelNow, vm)
+                                .background(
+                                    when {
+                                        isSel -> accent.copy(alpha = 0.12f)
+                                        r.isGroup -> lineColor.copy(alpha = 0.08f)
+                                        else -> Color.Transparent
+                                    }
+                                )
+                                .combinedClickable(onClick = { tapRow(l.id, r.isGroup) }, onLongClick = { longRow(l.id) })
+                        ) {
+                            drawLine(lineColor, Offset(0f, size.height), Offset(size.width, size.height))
+                            for (m in markers) drawLine(markerColor.copy(alpha = 0.5f), Offset(m * frameWPx, 0f), Offset(m * frameWPx, size.height), strokeWidth = 1.5f)
+                            for (sm in symMarkers) drawLine(Color(0xFFAB47BC).copy(alpha = 0.6f), Offset(sm.frame * frameWPx, 0f), Offset(sm.frame * frameWPx, size.height), strokeWidth = 1.5f)   // маркеры кадров открытого символа
+                            // цветная полоска клипа с ручками по краям
+                            val bx0 = clip.start * frameWPx
+                            val bx1 = clip.end * frameWPx
+                            drawRoundRect(
+                                color = accent.copy(alpha = if (isSel) 0.38f else 0.2f),
+                                topLeft = Offset(bx0, size.height * 0.12f),
+                                size = androidx.compose.ui.geometry.Size((bx1 - bx0).coerceAtLeast(2f), size.height * 0.76f),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
+                            )
+                            val hw = 5.dp.toPx()
+                            drawRoundRect(accent, Offset(bx0, size.height * 0.12f), androidx.compose.ui.geometry.Size(hw, size.height * 0.76f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
+                            drawRoundRect(accent, Offset(bx1 - hw, size.height * 0.12f), androidx.compose.ui.geometry.Size(hw, size.height * 0.76f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
+                            // засечки рисунков покадрового слоя: квадрат на каждом кадре, где начинается рисунок, и полоска экспозиции до следующего
+                            val cs = cellMap[l.id]
+                            if (cs != null) {
+                                val sorted = cs.sorted()
+                                val cy = size.height * 0.3f
+                                val ch = size.height * 0.4f
+                                sorted.forEachIndexed { i, s ->
+                                    val end = (sorted.getOrNull(i + 1) ?: bx1.div(frameWPx).toInt()).toFloat()
+                                    val x0 = s * frameWPx
+                                    val xe = (end * frameWPx).coerceAtLeast(x0 + frameWPx)
+                                    drawRect(cellColor.copy(alpha = 0.25f), Offset(x0, cy), androidx.compose.ui.geometry.Size(xe - x0, ch))
+                                    drawRect(cellColor, Offset(x0, cy), androidx.compose.ui.geometry.Size(frameWPx.coerceAtLeast(6f), ch))
+                                    drawLine(cellColor, Offset(xe, cy), Offset(xe, cy + ch), strokeWidth = 1.5f)
+                                }
+                            }
+                            for (wf in warpFrames) {
+                                val pickedW = (l.id to wf) in keySel
+                                if (pickedW) drawCircle(Color(0xFFFB8C00).copy(alpha = 0.35f), size.height * 0.42f, Offset(wf * frameWPx, size.height / 2f))
+                                drawDiamond(wf * frameWPx, size.height / 2f, size.height * 0.2f, if (pickedW) Color(0xFFFB8C00) else Color(0xFFFFA726))
+                            }
+                            // ключ с плавностью рисуется кружком, линейный - ромбом
+                            for (k in keys) {
+                                val picked = (l.id to k.frame) in keySel
+                                val kc = if (picked) Color(0xFFFB8C00) else accent
+                                if (picked) drawCircle(kc.copy(alpha = 0.35f), size.height * 0.42f, Offset(k.frame * frameWPx, size.height / 2f))
+                                if (k.easing == EasingType.LINEAR) drawDiamond(k.frame * frameWPx, size.height / 2f, size.height * 0.28f, kc)
+                                else drawCircle(kc, size.height * 0.26f, Offset(k.frame * frameWPx, size.height / 2f))
+                            }
+                            drawPlayhead(frame * frameWPx, playheadColor)
+                            // ключи времени символа: рисуются поверх плейхеда и сдвинуты вправо от своего кадра, чтобы на 0-м кадре не прятаться под ним
+                            timeKeyMap[l.id]?.forEach { tf ->
+                                val tx = tf * frameWPx + 3.dp.toPx()
+                                drawRoundRect(Color(0xFFAB47BC), Offset(tx, size.height * 0.15f), androidx.compose.ui.geometry.Size(4.dp.toPx(), size.height * 0.7f), androidx.compose.ui.geometry.CornerRadius(2f, 2f))
+                            }
+                        }
+                    }
+                    // Полосы аудио: клип звука (по умолчанию длина файла), края и середина тянутся как у слоёв
+                    for (a in audio) {
+                        val aclip = clips[a.id] ?: vm.clipOf(a.id)
+                        val aclipNow = rememberUpdatedState(aclip)
+                        val aSelNow = rememberUpdatedState(a.id in selection)
+                        Canvas(
+                            Modifier
+                                .width(contentW).height(ROW_H)
+                                .clipGestures(a.id, frameWPx, aclipNow, aSelNow, vm)
+                                .background(if (a.id in selection) accent.copy(alpha = 0.12f) else Color.Transparent)
+                                .combinedClickable(onClick = { if (multi) vm.toggleSelect(a.id) else vm.selectLayer(a.id) }, onLongClick = { longRow(a.id) })
+                        ) {
+                            val x0 = aclip.start * frameWPx
+                            val x1 = aclip.end * frameWPx
+                            drawRoundRect(
+                                color = accent.copy(alpha = 0.35f),
+                                topLeft = Offset(x0, size.height * 0.2f),
+                                size = androidx.compose.ui.geometry.Size((x1 - x0).coerceAtLeast(2f), size.height * 0.6f),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
+                            )
+                            // волновая форма: симметричная гистограмма пиков громкости, строго по времени источника (зум, скорость, реверс)
+                            waves[a.id]?.let { pk ->
+                                val step = 2.dp.toPx()
+                                val vis0 = max(x0, hScroll.value.toFloat())
+                                val vis1 = kotlin.math.min(x1, (hScroll.value + viewportPx).toFloat())
+                                val mid = size.height / 2f
+                                val half = size.height * 0.3f
+                                var x = vis0
+                                while (x < vis1) {
+                                    val amp = com.vibetoon.domain.project.WaveformMath.amplitude(pk, aclip, fps, x / frameWPx, (x + step) / frameWPx)
+                                    val h = max(1f, amp * half)
+                                    drawLine(Color(0xFF26C6DA), Offset(x, mid - h), Offset(x, mid + h), strokeWidth = step * 0.75f)
+                                    x += step
+                                }
+                            }
+                            val hw = 5.dp.toPx()
+                            drawRoundRect(accent, Offset(x0, size.height * 0.2f), androidx.compose.ui.geometry.Size(hw, size.height * 0.6f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
+                            drawRoundRect(accent, Offset(x1 - hw, size.height * 0.2f), androidx.compose.ui.geometry.Size(hw, size.height * 0.6f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
+                            drawLine(lineColor, Offset(0f, size.height), Offset(size.width, size.height))
+                            drawPlayhead(frame * frameWPx, playheadColor)
+                        }
+                    }
+                }
+                // Зона захвата playhead: широкая полоса вдоль ВСЕЙ красной линии на всю высоту,
+                // перетаскивать можно в любом её месте, а не только за маркер.
+                Box(Modifier.matchParentSize()) {
+                    marquee.value?.let { m ->
+                        Canvas(Modifier.matchParentSize()) {
+                            drawRect(Color(0xFFFB8C00).copy(alpha = 0.18f), m.topLeft, m.size)
+                            drawRect(Color(0xFFFB8C00), m.topLeft, m.size, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+                        }
+                    }
+                    Box(
+                        Modifier
+                            .offset { IntOffset((frameWPx * frameS.value - PLAYHEAD_GRAB_W.toPx() / 2f).roundToInt(), 0) }
+                            .width(PLAYHEAD_GRAB_W)
+                            .fillMaxHeight()
+                            .pointerInput(frameWPx, duration) {
+                                // красная линия у правого (или левого) края: холст таймлайна плавно прокручивается, пока палец удерживается
+                                kotlinx.coroutines.coroutineScope {
+                                    val sc = this
+                                    var posPx = 0f
+                                    var job: Job? = null
+                                    fun scrub() = vm.scrubTo(vm.snapFrame((posPx / frameWPx).roundToInt(), (10.dp.toPx() / frameWPx).roundToInt().coerceAtLeast(1)))
+                                    detectHorizontalDragGestures(
+                                        onDragStart = {
+                                            posPx = frameState.value * frameWPx
+                                            job = sc.edgeScroll(hScroll, { viewportPx }, 56.dp.toPx(), 22.dp.toPx(), { posPx }) { used -> posPx += used; scrub() }
+                                        },
+                                        onDragEnd = { job?.cancel() }, onDragCancel = { job?.cancel() },
+                                        onHorizontalDrag = { change, dragX ->
+                                            change.consume()
+                                            posPx += dragX
+                                            scrub()
+                                        }
+                                    )
+                                }
+                            }
+                    )
+                }
+            }
+        }
+        }
+    }
+    if (showSettings) TimelineSettingsDialog(duration, fps, vm::setTimeline) { showSettings = false }
+}
+
+/**
+ * Автопрокрутка у края: пока позиция пальца [pos] (в координатах содержимого таймлайна) ближе [edgePx] к краю окна,
+ * таймлайн прокручивается в эту сторону со скоростью до [maxStepPx] за тик; [onMoved] получает реально пройденный путь.
+ */
+private fun CoroutineScope.edgeScroll(
+    hScroll: ScrollState, viewportPx: () -> Int, edgePx: Float, maxStepPx: Float, pos: () -> Float, onMoved: (Float) -> Unit
+): Job = launch {
+    while (true) {
+        delay(16)
+        val sx = pos() - hScroll.value
+        val vp = viewportPx()
+        val v = when {
+            vp > 0 && sx > vp - edgePx -> ((sx - (vp - edgePx)) / edgePx).coerceIn(0f, 1f) * maxStepPx
+            sx < edgePx && hScroll.value > 0 -> -((edgePx - sx) / edgePx).coerceIn(0f, 1f) * maxStepPx
+            else -> 0f
+        }
+        if (v != 0f) {
+            val used = hScroll.scrollBy(v)
+            if (used != 0f) onMoved(used)
+        }
+    }
+}
+
+/**
+ * Поле времени в формате ММ:СС:КК. Ввод как на калькуляторе: цифры выравниваются вправо
+ * ("106" -> 00:01:06), на кадр значение переводится по FPS проекта.
+ */
+/** Поле времени читает кадр сам: пересоздаётся оно одно, а не вся панель. */
+@Composable
+private fun FrameFieldHost(frame: State<Int>, fps: Int, max: Int, onFrame: (Int) -> Unit) = FrameField(frame.value, fps, max, onFrame)
+
+@Composable
+private fun FrameField(frame: Int, fps: Int, max: Int, onFrame: (Int) -> Unit) {
+    var text by remember(frame, fps) { mutableStateOf(TimeFormat.format(frame, fps)) }
+    androidx.compose.foundation.text.BasicTextField(
+        value = text,
+        onValueChange = { v ->
+            val f = TimeFormat.parseDigits(v.filter { it.isDigit() }, fps).coerceIn(0, max)
+            text = TimeFormat.format(f, fps)
+            onFrame(f)
+        },
+        singleLine = true,
+        textStyle = TextStyle(fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier
+            .width(92.dp)
+            .height(32.dp)
+            .border(1.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .padding(horizontal = 6.dp, vertical = 7.dp)
+    )
+}
+
+/** Настройки таймлайна: общая длительность (кадры) и FPS. */
+@Composable
+private fun TimelineSettingsDialog(duration: Int, fps: Int, onApply: (Int, Int) -> Unit, onDismiss: () -> Unit) {
+    var frames by remember { mutableStateOf(duration.toString()) }
+    var rate by remember { mutableStateOf(fps.toString()) }
+    val d = frames.toIntOrNull()?.coerceIn(1, TimeFormat.MAX_DURATION_FRAMES)
+    val f = rate.toIntOrNull()?.coerceIn(1, TimeFormat.MAX_FPS)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Настройки таймлайна") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = frames, onValueChange = { frames = it.filter(Char::isDigit).take(5) },
+                    label = { Text("Всего кадров (до ${TimeFormat.MAX_DURATION_FRAMES})") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                OutlinedTextField(
+                    value = rate, onValueChange = { rate = it.filter(Char::isDigit).take(3) },
+                    label = { Text("FPS (1-${TimeFormat.MAX_FPS})") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (o in listOf(12, 24, 30, 60)) {
+                        FilterChip(selected = rate == o.toString(), onClick = { rate = o.toString() }, label = { Text("$o") })
+                    }
+                }
+                Text(
+                    if (d != null && f != null) "Длительность: ${TimeFormat.format(d, f)} (мин:сек:кадры)" else "Введите числа",
+                    fontSize = 12.sp
+                )
+                Text("Ключи остаются на своих номерах кадров.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            }
+        },
+        confirmButton = { TextButton(onClick = { if (d != null && f != null) { onApply(d, f); onDismiss() } }, enabled = d != null && f != null) { Text("Применить") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
+    )
+}
+
+private fun DrawScope.drawPlayhead(x: Float, color: Color) {
+    drawLine(color, Offset(x, 0f), Offset(x, size.height), strokeWidth = 3f)
+}
+
+private fun DrawScope.drawDiamond(cx: Float, cy: Float, r: Float, color: Color) {
+    val p = Path().apply {
+        moveTo(cx, cy - r); lineTo(cx + r, cy); lineTo(cx, cy + r); lineTo(cx - r, cy); close()
+    }
+    drawPath(p, color)
+}
+
+/**
+ * Жесты по полоске клипа в строке таймлайна. Край (зона HANDLE_GRAB_W) меняет начало или конец клипа.
+ * Если слой выбран, перетаскивание за середину полоски сдвигает клип целиком; у невыбранного слоя
+ * жест остаётся прокруткой таймлайна, а тап - выбором слоя.
+ */
+private fun Modifier.clipGestures(id: Int, frameWPx: Float, clip: State<Clip>, selected: State<Boolean>, vm: MainViewModel): Modifier =
+    pointerInput(id, frameWPx) {
+        val grab = HANDLE_GRAB_W.toPx()
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val c0 = clip.value
+            val sx = c0.start * frameWPx
+            val ex = c0.end * frameWPx
+            val dl = abs(down.position.x - sx)
+            val dr = abs(down.position.x - ex)
+            val mode = when {
+                dl <= grab && dl <= dr -> 1                                              // левый край
+                dr <= grab -> 2                                                          // правый край
+                selected.value && down.position.x in sx..ex -> 3                         // середина выбранного клипа
+                else -> 0
+            }
+            if (mode == 0) return@awaitEachGesture
+            if (mode != 3) down.consume()
+            var pos = if (mode == 2) ex else sx
+            var moved = 0f
+            var dragging = mode != 3
+            while (true) {
+                val ev = awaitPointerEvent(PointerEventPass.Initial)
+                val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                if (!c.pressed) break
+                val dx = c.positionChange().x
+                if (!dragging) {
+                    moved += dx
+                    if (abs(moved) > viewConfiguration.touchSlop) dragging = true else continue
+                    pos += moved
+                } else {
+                    pos += dx
+                }
+                c.consume()
+                val f = (pos / frameWPx).roundToInt()
+                when (mode) {
+                    1 -> vm.setClip(id, f, clip.value.end)
+                    2 -> vm.setClip(id, clip.value.start, f)
+                    else -> vm.moveClipTo(id, f)
+                }
+            }
+        }
+    }
+
+/** Компактная иконка-кнопка панелей таймлайна; [active] подсвечивает включённый режим. */
+@Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun TlIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, enabled: Boolean = true, active: Boolean = false,
+    onLong: (() -> Unit)? = null, onClick: () -> Unit
+) {
+    Box(
+        Modifier.size(36.dp).coachTarget(desc).clip(androidx.compose.foundation.shape.CircleShape)
+            .combinedClickable(enabled = enabled, onClick = onClick, onLongClick = onLong),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon, desc, modifier = Modifier.size(20.dp),
+            tint = (if (active) MaterialTheme.colorScheme.primary else LocalContentColor.current).copy(alpha = if (enabled) 1f else 0.38f)
+        )
+    }
+}

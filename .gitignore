@@ -1,0 +1,9 @@
+.gradle/
+build/
+local.properties
+.idea/
+.cxx/
+*.iml
+app/src/main/cpp/third_party/psd_sdk/bin/
+app/src/main/cpp/third_party/psd_sdk/build/
+.claude/

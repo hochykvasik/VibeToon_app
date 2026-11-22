@@ -1,0 +1,407 @@
+package com.vibetoon.domain.render
+
+import com.vibetoon.domain.anim.BoneSeg
+import com.vibetoon.domain.anim.MeshMath
+import com.vibetoon.domain.anim.SkinMath
+import com.vibetoon.domain.model.Affine2D
+import com.vibetoon.domain.model.GroupNode
+import com.vibetoon.domain.model.LeafNode
+import com.vibetoon.domain.model.Node
+import com.vibetoon.domain.model.SceneTree
+import com.vibetoon.domain.project.MEDIA_ID_BASE
+import com.vibetoon.nativebridge.LayerInfo
+
+/**
+ * Сцена для рендерера: поток операций снизу вверх.
+ * ops: на операцию 4 int = [op, layerId, blend, flags];
+ * params: 8 float = [a, b, c, d, tx, ty, opacity, 0], где (a..ty) - аффинное преобразование
+ * "единичный квадрат -> холст" (для групп используется только opacity).
+ */
+class SceneData(
+    val canvasWidth: Int,
+    val canvasHeight: Int,
+    val ops: IntArray,
+    val params: FloatArray,
+    /** Слои, для которых нужны текстуры, в порядке отрисовки. */
+    val textureIds: IntArray,
+    /** Рамка выделения узла (слоя или группы) на холсте: 4 угла = 8 float. */
+    val selectionQuads: Map<Int, FloatArray> = emptyMap(),
+    /** Мировая матрица РОДИТЕЛЯ узла (для перевода сдвига жеста в локальные координаты). */
+    val parentWorlds: Map<Int, Affine2D> = emptyMap(),
+    /** Дельта позы каждой кости (в осях холста): куда сдвинулись её сустав и конец относительно Bind Pose. */
+    val boneDeltas: Map<Int, Affine2D> = emptyMap(),
+    /** Warp: слои с деформацией и по 32 числа смещений 16 контрольных точек на слой. */
+    val warpIds: IntArray = IntArray(0),
+    val warpData: FloatArray = FloatArray(0),
+    /** Mesh: слои с сеткой; на слой [число вершин, число треугольников]. */
+    val meshIds: IntArray = IntArray(0),
+    val meshCounts: IntArray = IntArray(0),
+    /** По 4 числа на вершину: u, v, dx, dy (подряд для всех сеток). */
+    val meshVerts: FloatArray = FloatArray(0),
+    /** Индексы вершин по три на треугольник (подряд для всех сеток). */
+    val meshTris: IntArray = IntArray(0),
+    /** Perspective: слои и по 9 чисел гомографии (по столбцам) на слой. */
+    val perspIds: IntArray = IntArray(0),
+    val perspData: FloatArray = FloatArray(0),
+    /** Turbulent Displace: слои и по 4 числа (intensity, size, complexity, seed) на слой. */
+    val turbIds: IntArray = IntArray(0),
+    val turbData: FloatArray = FloatArray(0),
+    /** Эффекты: слои, число эффектов на слой и по 10 float на эффект (тип, p0..p7, время). */
+    val fxIds: IntArray = IntArray(0),
+    val fxCounts: IntArray = IntArray(0),
+    val fxData: FloatArray = FloatArray(0)
+) {
+    companion object {
+        const val PARAM_STRIDE = 8
+    }
+}
+
+/**
+ * Локальная трансформация узла (слоя или группы): перенос, масштаб по осям и поворот
+ * вокруг опорной точки узла. Масштаб применяется в осях узла до поворота.
+ */
+data class LayerTransform(
+    val dx: Float = 0f,
+    val dy: Float = 0f,
+    val scaleX: Float = 1f,
+    val scaleY: Float = 1f,
+    val rotation: Float = 0f,  // радианы
+    /** Множитель прозрачности поверх прозрачности из файла: 1 = как в PSD. */
+    val opacity: Float = 1f
+) {
+    companion object {
+        const val MIN_SCALE = 0.05f
+        const val MAX_SCALE = 20f
+    }
+}
+
+object SceneBuilder {
+    const val OP_LAYER = 0
+    const val OP_BEGIN_GROUP = 1
+    const val OP_END_GROUP = 2
+
+    const val BLEND_NORMAL = 0
+    const val BLEND_MULTIPLY = 1
+    const val BLEND_SCREEN = 2
+    const val BLEND_OVERLAY = 3
+    const val BLEND_SOFT_LIGHT = 5
+    const val BLEND_PASS = 4
+    const val BLEND_ADD = 6
+    const val BLEND_DARKEN = 7
+    const val BLEND_LIGHTEN = 8
+    const val BLEND_COLOR_DODGE = 9
+    const val BLEND_COLOR_BURN = 10
+
+    const val FLAG_CLIPPED = 1
+    /** Слой выделяется тапом по всей рамке, а не только по непрозрачным пикселям (тонкий текст). */
+    const val FLAG_HIT_BBOX = 2
+
+    fun blendCode(key: String): Int = when (key) {
+        "norm" -> BLEND_NORMAL
+        "mul " -> BLEND_MULTIPLY
+        "scrn" -> BLEND_SCREEN
+        "over" -> BLEND_OVERLAY
+        "sLit" -> BLEND_SOFT_LIGHT
+        "lddg" -> BLEND_ADD
+        "dark" -> BLEND_DARKEN
+        "lite" -> BLEND_LIGHTEN
+        "div " -> BLEND_COLOR_DODGE
+        "idiv" -> BLEND_COLOR_BURN
+        "pass" -> BLEND_PASS
+        else -> BLEND_NORMAL // остальные режимы PSD пока рисуются как Normal
+    }
+
+    /** Удобная перегрузка: дерево строится из плоского списка записей PSD. */
+    fun build(
+        layers: List<LayerInfo>,
+        canvasWidth: Int,
+        canvasHeight: Int,
+        transforms: Map<Int, LayerTransform> = emptyMap()
+    ): SceneData = buildTree(SceneTree.build(layers), canvasWidth, canvasHeight, transforms)
+
+    /**
+     * Обходит дерево и считает мировые матрицы: world = parentWorld * local, где
+     * local = T(pivot + d) * R * S * T(-pivot). Поэтому трансформация группы двигает всех детей
+     * как единый объект (детей не трогаем), а у детей повёрнутой группы появляется корректный перекос.
+     * Скрытая группа вместе с содержимым в сцену не попадает.
+     */
+    fun buildTree(
+        roots: List<Node>,
+        canvasWidth: Int,
+        canvasHeight: Int,
+        transforms: Map<Int, LayerTransform> = emptyMap(),
+        /** Матрица мира для корней дерева: вписывание PSD в холст проекта. */
+        rootWorld0: Affine2D = Affine2D.IDENTITY,
+        /** Узлы, для которых hit-test по рамке (текст). */
+        bboxHitIds: Set<Int> = emptySet(),
+        /** Привязки "слой -> родитель" (любые узлы): ребёнок повторяет сдвиг/поворот/масштаб родителя. */
+        links: Map<Int, Int> = emptyMap(),
+        /** Кости: id -> сустав в позе привязки (координаты холста). Поза кости - LayerTransform под её id. */
+        bones: Map<Int, Pair<Float, Float>> = emptyMap(),
+        /** Warp: id слоя -> 32 смещения (16 точек). */
+        warps: Map<Int, FloatArray> = emptyMap(),
+        /** Кости с независимым поворотом (не наследуют угол родителя). */
+        independentBones: Set<Int> = emptySet(),
+        /** Mesh: id слоя -> сетка и смещения её вершин на кадре (2 числа на вершину). */
+        meshes: Map<Int, Pair<com.vibetoon.domain.anim.Mesh, FloatArray>> = emptyMap(),
+        /** Perspective: id слоя -> 9 чисел гомографии (см. PerspectiveMath.matrix). */
+        persp: Map<Int, FloatArray> = emptyMap(),
+        /** Концы костей в позе привязки (координаты холста), для весов скининга. */
+        boneTails: Map<Int, Pair<Float, Float>> = emptyMap(),
+        /** Скининг: id слоя с Mesh -> (id кости -> Strength). Такой слой не следует за links, его вершины двигают кости. */
+        skins: Map<Int, Map<Int, Float>> = emptyMap(),
+        /** Turbulent Displace: id слоя -> 4 числа (см. TurbMath.params). */
+        turbs: Map<Int, FloatArray> = emptyMap(),
+        /** Эффекты слоёв: id слоя -> записи по 10 float (см. EffectMath.records). */
+        fx: Map<Int, List<FloatArray>> = emptyMap(),
+        /** Слой-камера (или -1): его трансформация задаёт вид всего холста, сам слой не рисуется. */
+        cameraId: Int = -1,
+        /** Transform Layer (null-объект): не рисуется, только передаёт трансформацию дочерним слоям. */
+        nullIds: Set<Int> = emptySet(),
+        /** Глубина слоя (параллакс камеры): id -> число; не заданные - 0. */
+        depths: Map<Int, Float> = emptyMap()
+    ): SceneData {
+        // Камера: dx, dy - смещение центра кадра, scaleX - приближение, rotation - поворот вида
+        val cam = transforms[cameraId]
+        val camView = if (cam == null) Affine2D.IDENTITY else {
+            val cx = canvasWidth / 2f
+            val cy = canvasHeight / 2f
+            val z = cam.scaleX.coerceIn(LayerTransform.MIN_SCALE, LayerTransform.MAX_SCALE)
+            Affine2D.translate(cx, cy) * Affine2D.scale(z, z) * Affine2D.rotate(-cam.rotation) * Affine2D.translate(-(cx + cam.dx), -(cy + cam.dy))
+        }
+        // Параллакс: слой с глубиной d видит камеру ослабленной в 1/(1+d) раз: сдвиг и приближение (z-1) меньше, дальние слои "стоят" почти на месте
+        fun camViewFor(d: Float): Affine2D {
+            if (cam == null || d == 0f) return camView
+            val k = 1f / (1f + d)
+            val cx = canvasWidth / 2f; val cy = canvasHeight / 2f
+            val z = (1f + (cam.scaleX.coerceIn(LayerTransform.MIN_SCALE, LayerTransform.MAX_SCALE) - 1f) * k).coerceAtLeast(LayerTransform.MIN_SCALE)
+            return Affine2D.translate(cx, cy) * Affine2D.scale(z, z) * Affine2D.rotate(-cam.rotation) * Affine2D.translate(-(cx + cam.dx * k), -(cy + cam.dy * k))
+        }
+        val rootWorld = camView * rootWorld0
+        val skinRest = HashMap<Int, Affine2D>()
+        val ops = ArrayList<Int>()
+        val params = ArrayList<Float>()
+        val textureIds = ArrayList<Int>()
+        val quads = HashMap<Int, FloatArray>()
+        val parentWorlds = HashMap<Int, Affine2D>()
+
+        fun add(op: Int, id: Int, blend: Int, flags: Int, m: Affine2D, opacity: Float) {
+            ops += listOf(op, id, blend, flags)
+            params += listOf(m.a, m.b, m.c, m.d, m.tx, m.ty, opacity, 0f)
+        }
+
+        fun local(t: LayerTransform, px: Float, py: Float) =
+            Affine2D.translate(px + t.dx, py + t.dy) * Affine2D.rotate(t.rotation) *
+                Affine2D.scale(t.scaleX, t.scaleY) * Affine2D.translate(-px, -py)
+
+        fun cornersOf(m: Affine2D): FloatArray {
+            val xs = floatArrayOf(0f, 1f, 1f, 0f)
+            val ys = floatArrayOf(0f, 0f, 1f, 1f)
+            val out = FloatArray(8)
+            for (i in 0 until 4) {
+                out[i * 2] = m.applyX(xs[i], ys[i])
+                out[i * 2 + 1] = m.applyY(xs[i], ys[i])
+            }
+            return out
+        }
+
+        fun bounds(list: List<FloatArray>): FloatArray {
+            var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+            var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+            for (q in list) for (i in 0 until 4) {
+                minX = minOf(minX, q[i * 2]); maxX = maxOf(maxX, q[i * 2])
+                minY = minOf(minY, q[i * 2 + 1]); maxY = maxOf(maxY, q[i * 2 + 1])
+            }
+            return floatArrayOf(minX, minY, maxX, minY, maxX, maxY, minX, maxY)
+        }
+
+        // Предпроход: для каждого узла локальная матрица и мир его родителя в дереве (без привязок).
+        val pw0 = HashMap<Int, Affine2D>()
+        val loc0 = HashMap<Int, Affine2D>()
+        if (links.isNotEmpty() || bones.isNotEmpty()) {
+            fun pre(nodes: List<Node>, parentWorld: Affine2D) {
+                for (n in nodes) {
+                    val t = transforms[n.id] ?: LayerTransform()
+                    val l = when (n) {
+                        is GroupNode -> local(t, n.pivotX, n.pivotY)
+                        is LeafNode -> local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                    }
+                    pw0[n.id] = parentWorld
+                    loc0[n.id] = l
+                    if (n is GroupNode) pre(n.children, parentWorld * l)
+                }
+            }
+            val (m0, p0) = roots.partition { it.id >= MEDIA_ID_BASE }
+            pre(p0, rootWorld)
+            pre(m0, camView)
+            for ((id, h) in bones) {
+                pw0[id] = Affine2D.IDENTITY
+                loc0[id] = local(transforms[id] ?: LayerTransform(), h.first, h.second)
+            }
+        }
+        val deltaMemo = HashMap<Int, Affine2D>()
+        val inProgress = HashSet<Int>()
+
+        /** Изменение мира узла из-за его трансформации и трансформаций цепочки родителей (в осях холста). */
+        fun delta(id: Int): Affine2D {
+            deltaMemo[id]?.let { return it }
+            val loc = loc0[id] ?: return Affine2D.IDENTITY
+            if (!inProgress.add(id)) return Affine2D.IDENTITY   // цикл привязок
+            val pw = pw0.getValue(id)
+            var up = links[id]?.let { delta(it) } ?: Affine2D.IDENTITY
+            val parentId = links[id]
+            val head = bones[id]
+            if (id in independentBones && parentId != null && parentId in bones && head != null) {
+                // позиция и масштаб родителя наследуются, угол - нет: из линейной части дельты вычитается её поворот
+                val dp = delta(parentId)
+                val theta = Math.atan2(dp.b.toDouble(), dp.a.toDouble()).toFloat()
+                val lin = Affine2D(dp.a, dp.b, dp.c, dp.d, 0f, 0f) * Affine2D.rotate(-theta)
+                up = Affine2D.translate(dp.applyX(head.first, head.second), dp.applyY(head.first, head.second)) * lin *
+                    Affine2D.translate(-head.first, -head.second)
+            }
+            val d = up * pw * loc * (pw.inverse() ?: Affine2D.IDENTITY)
+            inProgress.remove(id)
+            deltaMemo[id] = d
+            return d
+        }
+        fun linkDelta(id: Int): Affine2D = links[id]?.let { delta(it) } ?: Affine2D.IDENTITY
+
+        /** Обход списка братьев; в [out] накапливаются рамки видимых слоёв (для рамки группы). */
+        fun walk(nodes: List<Node>, parentWorld: Affine2D, out: MutableList<FloatArray>) {
+            // Видима ли база текущей clipping-цепочки; null - базы-слоя нет (начало списка или
+            // между ними группа). Clipping к группе-базе пока не поддерживается: такой слой
+            // рисуется как обычный, а не пропадает.
+            var clipBaseVisible: Boolean? = null
+            for (n in nodes) {
+                val t = transforms[n.id] ?: LayerTransform()
+                when (n) {
+                    is GroupNode -> {
+                        if (!n.visible) continue
+                        clipBaseVisible = null
+                        val pw = linkDelta(n.id) * parentWorld
+                        val world = pw * local(t, n.pivotX, n.pivotY)
+                        parentWorlds[n.id] = pw
+                        add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
+                        val childQuads = ArrayList<FloatArray>()
+                        walk(n.children, world, childQuads)
+                        add(OP_END_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
+                        if (childQuads.isNotEmpty()) {
+                            quads[n.id] = bounds(childQuads)
+                            out += childQuads
+                        }
+                    }
+                    is LeafNode -> {
+                        if (n.id == cameraId) continue   // камера не рисуется
+                        if (n.id in nullIds) {
+                            // Transform Layer: невидим, но у него есть рамка (для выбора и жестов) и своя трансформация для детей
+                            val pwN = linkDelta(n.id) * parentWorld
+                            val worldN = pwN * local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                            parentWorlds[n.id] = pwN
+                            val mN = worldN * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
+                            val qN = cornersOf(mN)
+                            quads[n.id] = qN; out += qN
+                            continue
+                        }
+                        if (n.isEmpty) {
+                            if (!n.clipped) clipBaseVisible = false
+                            continue
+                        }
+                        if (!n.clipped) clipBaseVisible = n.visible
+                        val clipped = n.clipped && clipBaseVisible != null
+                        // Clipped-слой виден только если видима его база
+                        if (!n.visible || (clipped && clipBaseVisible == false)) continue
+                        val skinned = n.id in skins && n.id in meshes
+                        val pw = (if (skinned) Affine2D.IDENTITY else linkDelta(n.id)) * parentWorld
+                        val world = pw * local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                        parentWorlds[n.id] = pw
+                        // единичный квадрат -> прямоугольник слоя -> мир
+                        val m = world * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) *
+                            Affine2D.scale(n.w.toFloat(), n.h.toFloat())
+                        if (skinned) skinRest[n.id] = m
+                        add(
+                            OP_LAYER, n.id, blendCode(n.blend),
+                            (if (clipped) FLAG_CLIPPED else 0) or (if (n.id in bboxHitIds) FLAG_HIT_BBOX else 0),
+                            m, n.opacity * t.opacity
+                        )
+                        textureIds += n.id
+                        val q = cornersOf(m)
+                        quads[n.id] = q
+                        out += q
+                    }
+                }
+            }
+        }
+
+        // PSD вписывается в холст матрицей rootWorld; медиа-слои (id >= MEDIA_ID_BASE) заданы сразу в
+        // координатах холста и рисуются поверх PSD в порядке добавления.
+        val (media, psd) = roots.partition { it.id >= MEDIA_ID_BASE }
+        // подряд идущие корни с одинаковой глубиной обходятся вместе (цепочки обтравки не рвутся), у каждой группы глубин своя матрица камеры
+        fun walkByDepth(list: List<Node>, pre: Affine2D) {
+            var i = 0
+            while (i < list.size) {
+                val d = depths[list[i].id] ?: 0f
+                var j = i + 1
+                while (j < list.size && (depths[list[j].id] ?: 0f) == d) j++
+                walk(list.subList(i, j), camViewFor(d) * pre, ArrayList())
+                i = j
+            }
+        }
+        walkByDepth(psd, rootWorld0)
+        walkByDepth(media, Affine2D.IDENTITY)
+        val mIds = meshes.keys.toIntArray()
+        val mCounts = IntArray(mIds.size * 2)
+        val mVerts = ArrayList<Float>()
+        val mTris = ArrayList<Int>()
+        mIds.forEachIndexed { i, id ->
+            val (m, off0) = meshes.getValue(id)
+            var off = off0
+            val rest = skinRest[id]
+            val inv = rest?.inverse()
+            if (rest != null && inv != null) {
+                val segs = ArrayList<BoneSeg>()
+                val deltas = ArrayList<Affine2D>()
+                for ((bid, st) in skins.getValue(id)) {
+                    val h = bones[bid] ?: continue
+                    val tl = boneTails[bid] ?: continue
+                    segs += BoneSeg(bid, h.first, h.second, tl.first, tl.second, st)
+                    deltas += delta(bid)
+                }
+                if (segs.isNotEmpty()) {
+                    off = off0.copyOf()
+                    for (k in 0 until m.count) {
+                        val u = m.u(k) + off0[k * 2]
+                        val v = m.v(k) + off0[k * 2 + 1]
+                        // вес считается по позе привязки (u, v без смещения кадра), движение - от смещённой точки
+                        val bx = rest.applyX(m.u(k), m.v(k)); val by = rest.applyY(m.u(k), m.v(k))
+                        val px = rest.applyX(u, v); val py = rest.applyY(u, v)
+                        val w = SkinMath.weights(bx, by, segs)
+                        if (w.isEmpty()) continue
+                        var sx = 0f; var sy = 0f
+                        for ((bi, wi) in w) { sx += wi * deltas[bi].applyX(px, py); sy += wi * deltas[bi].applyY(px, py) }
+                        off[k * 2] = inv.applyX(sx, sy) - m.u(k)
+                        off[k * 2 + 1] = inv.applyY(sx, sy) - m.v(k)
+                    }
+                }
+            }
+            // плавная деформация: ребра делятся, смещение середин считается по правилу Loop (без заломов между точками)
+            val (rm, ro) = MeshMath.smooth(m, off, if (m.count <= 300) 2 else 1)
+            mCounts[i * 2] = rm.count
+            mCounts[i * 2 + 1] = rm.tris.size / 3
+            for (k in 0 until rm.count) {
+                // NaN/Inf и «улетевшие» смещения рисуют артефакты на весь экран: обрезаем
+                fun safe(x: Float) = if (x.isFinite()) x.coerceIn(-3f, 3f) else 0f
+                mVerts.add(rm.u(k)); mVerts.add(rm.v(k)); mVerts.add(safe(ro[k * 2])); mVerts.add(safe(ro[k * 2 + 1]))
+            }
+            for (t in rm.tris) mTris.add(t)
+        }
+        return SceneData(
+            canvasWidth, canvasHeight, ops.toIntArray(), params.toFloatArray(), textureIds.toIntArray(),
+            quads, parentWorlds, bones.keys.associateWith { delta(it) },
+            warps.keys.toIntArray(), warps.values.flatMap { it.asList() }.toFloatArray(),
+            mIds, mCounts, mVerts.toFloatArray(), mTris.toIntArray(),
+            persp.keys.toIntArray(), persp.values.flatMap { it.asList() }.toFloatArray(),
+            turbs.keys.toIntArray(), turbs.values.flatMap { it.asList() }.toFloatArray(),
+            fx.keys.toIntArray(), fx.values.map { it.size }.toIntArray(), fx.values.flatMap { l -> l.flatMap { it.asList() } }.toFloatArray()
+        )
+    }
+}
