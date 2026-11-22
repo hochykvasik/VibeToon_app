@@ -19,27 +19,27 @@ class VideoPixelsTest {
 
     @Test fun blackAndWhiteUseLimitedRange() {
         val black = VideoPixels.fromGlRgba(rgba(0xFF000000.toInt(), 0xFF000000.toInt(), 0xFF000000.toInt(), 0xFF000000.toInt()), 2, 2)
-        assertTrue(black.y.all { it.toInt() == 16 })
-        assertTrue(black.u.all { it.toInt() == 128 })
-        assertTrue(black.v.all { it.toInt() == 128 })
+        assertTrue(black.y.all { it.toInt() and 0xFF == 16 })
+        assertTrue(black.u.all { it.toInt() and 0xFF == 128 })
+        assertTrue(black.v.all { it.toInt() and 0xFF == 128 })
         val white = VideoPixels.fromGlRgba(rgba(0xFFFFFFFF.toInt(), 0xFFFFFFFF.toInt(), 0xFFFFFFFF.toInt(), 0xFFFFFFFF.toInt()), 2, 2)
-        assertTrue(white.y.all { it.toInt() == 235 })
-        assertTrue(white.u.all { it.toInt() == 128 })
-        assertTrue(white.v.all { it.toInt() == 128 })
+        assertTrue(white.y.all { it.toInt() and 0xFF == 235 })
+        assertTrue(white.u.all { it.toInt() and 0xFF == 128 })
+        assertTrue(white.v.all { it.toInt() and 0xFF == 128 })
     }
 
     @Test fun redConvertsToBt601() {
         val red = VideoPixels.fromGlRgba(rgba(0xFFFF0000.toInt(), 0xFFFF0000.toInt(), 0xFFFF0000.toInt(), 0xFFFF0000.toInt()), 2, 2)
-        assertEquals(82, red.y[0].toInt())
-        assertEquals(90, red.u[0].toInt())
-        assertEquals(240, red.v[0].toInt())
+        assertEquals(82, red.y[0].toInt() and 0xFF)
+        assertEquals(90, red.u[0].toInt() and 0xFF)
+        assertEquals(240, red.v[0].toInt() and 0xFF)
     }
 
     @Test fun glBottomRowBecomesTopRow() {
         // GL readback: first row is bottom. Bottom=red, top=blue.
         val img = VideoPixels.fromGlRgba(rgba(0xFFFF0000.toInt(), 0xFFFF0000.toInt(), 0xFF0000FF.toInt(), 0xFF0000FF.toInt()), 2, 2)
-        assertEquals(82, img.y[0].toInt())   // top row after flip = red
-        assertEquals(41, img.y[2].toInt())   // bottom row = blue
+        assertEquals(41, img.y[0].toInt() and 0xFF)   // top row after flip = blue (GL bottom row was red)
+        assertEquals(82, img.y[2].toInt() and 0xFF)   // bottom row = red
     }
 
     @Test fun rejectsOddOrMismatchedBuffers() {
