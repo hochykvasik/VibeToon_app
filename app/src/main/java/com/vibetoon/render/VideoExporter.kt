@@ -53,7 +53,7 @@ object VideoExporter {
         val info = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
             info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } && runCatching {
                 val caps = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-                color in caps.colorFormats && caps.videoCapabilities.isSizeAndRateSupported(spec.width, spec.height, spec.fps.toDouble())
+                color in caps.colorFormats && caps.videoCapabilities.isSizeSupported(spec.width, spec.height) && caps.videoCapabilities.isRateSupported(spec.fps.toDouble())
             }.getOrDefault(false)
         } ?: error("Нет совместимого кодека H.264")
         return MediaCodec.createByCodecName(info.name)
