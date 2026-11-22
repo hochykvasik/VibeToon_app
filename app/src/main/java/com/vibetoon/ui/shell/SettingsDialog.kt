@@ -18,6 +18,7 @@ import androidx.compose.material3.Tab
 import com.vibetoon.ui.i18n.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -97,6 +98,13 @@ private val RU: Map<String, String> = mapOf(
 )
 private fun ru(t: String) = RU[t] ?: t
 
+/** Переключатели, подключённые к логике (Sprint 6.8/6.9); остальные помечены «В разработке». */
+private val WIRED = setOf(
+    "Rotate Canvas 2 Fingers", "Layer Pivot Editing", "Temporary Pivots", "Auto Pixel Edit Mode",
+    "Only Erase/Smudge Selected Path Layers", "Vector Workflow", "Import Images as Symbols",
+    "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)"
+)
+
 private val TABS: List<Pair<String, List<Item>>> = listOf(
     APPEARANCE to emptyList(),   // рабочая вкладка: язык, тема, акцентный цвет (остальные пункты - заготовки)
     "General" to toggles(
@@ -128,8 +136,8 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
 )
 
 /**
- * Окно настроек (каркас): вкладки General, Tools, Import, Appearance, Gestures, Keyboard, Backup, Project Info.
- * Значения пока не сохраняются и ничего не меняют: каждый пункт - заготовка под будущую логику.
+ * Окно настроек: вкладки General, Tools, Import, Appearance, Gestures, Keyboard, Backup, Project Info.
+ * Подключённые пункты ([WIRED], левша, жесты Undo/Redo) сохраняются в AppSettings; прочие - «В разработке».
  */
 @Composable
 fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
@@ -137,6 +145,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(0) }
     val state = remember { mutableStateMapOf<String, Boolean>() }
     var canvasDialog by remember { mutableStateOf(0) }
+    val flip = vm?.viewFlip?.collectAsState()?.value ?: (false to false)
     if (vm != null && canvasDialog != 0) com.vibetoon.ui.CanvasDialog(vm, canvasDialog == 2) { canvasDialog = 0 }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -179,7 +188,38 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                 if (item.title == "Left Handed" && st != null) Switch(checked = st.leftHanded, onCheckedChange = { st.leftHanded = it; st.save() })
                                 else if (item.title == "2 Finger Tap Undo" && st != null) Switch(checked = st.tap2Undo, onCheckedChange = { st.tap2Undo = it; st.saveGestures() })
                                 else if (item.title == "3 Finger Tap Redo" && st != null) Switch(checked = st.tap3Redo, onCheckedChange = { st.tap3Redo = it; st.saveGestures() })
-                                else Switch(checked = state[item.title] == true, onCheckedChange = { state[item.title] = it })
+                                else if (st != null && item.title in WIRED) {
+                                    val on = when (item.title) {
+                                        "Rotate Canvas 2 Fingers" -> st.rotateCanvas
+                                        "Layer Pivot Editing" -> st.pivotEditing
+                                        "Temporary Pivots" -> st.temporaryPivots
+                                        "Auto Pixel Edit Mode" -> st.autoPixelEdit
+                                        "Only Erase/Smudge Selected Path Layers" -> st.onlySelectedPath
+                                        "Vector Workflow" -> st.vectorWorkflow
+                                        "Import Images as Symbols" -> st.importAsSymbols
+                                        "Flip Canvas (горизонтально)" -> flip.first
+                                        "Flip Canvas (вертикально)" -> flip.second
+                                        else -> false
+                                    }
+                                    Switch(checked = on, onCheckedChange = { v ->
+                                        when (item.title) {
+                                            "Rotate Canvas 2 Fingers" -> st.rotateCanvas = v
+                                            "Layer Pivot Editing" -> st.pivotEditing = v
+                                            "Temporary Pivots" -> st.temporaryPivots = v
+                                            "Auto Pixel Edit Mode" -> st.autoPixelEdit = v
+                                            "Only Erase/Smudge Selected Path Layers" -> st.onlySelectedPath = v
+                                            "Vector Workflow" -> st.vectorWorkflow = v
+                                            "Import Images as Symbols" -> st.importAsSymbols = v
+                                            "Flip Canvas (горизонтально)" -> vm?.toggleViewFlipX()
+                                            "Flip Canvas (вертикально)" -> vm?.toggleViewFlipY()
+                                        }
+                                        st.saveEditor()
+                                    })
+                                }
+                                else Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("В разработке", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f), modifier = Modifier.padding(end = 6.dp))
+                                    Switch(checked = state[item.title] == true, onCheckedChange = { state[item.title] = it }, enabled = false)
+                                }
                             }
                             is Action -> OutlinedButton(onClick = { stub(item.title) }, modifier = Modifier.fillMaxWidth()) { Text(ru(item.title), fontSize = 13.sp) }
                             is Info -> Row(Modifier.fillMaxWidth()) {
@@ -189,7 +229,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         }
                     }
                     Text(
-                        "Пункты пока заглушки: значения не сохраняются.",
+                        "Пункты с пометкой «В разработке» пока не действуют; остальные сохраняются и работают сразу.",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                         modifier = Modifier.padding(top = 8.dp)
                     )

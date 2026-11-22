@@ -27,8 +27,11 @@ object RenderNative {
     external fun setEffects(renderer: Long, ids: IntArray, counts: IntArray, data: FloatArray)
     /** Mesh: слои, [вершин, треугольников] на слой, по 4 float (u, v, dx, dy) на вершину, индексы треугольников. */
     external fun setMeshes(renderer: Long, ids: IntArray, counts: IntArray, verts: FloatArray, tris: IntArray)
-    /** Камера: экран = C + (p - C)*zoom + pan (пиксели вида). */
-    external fun setCamera(renderer: Long, zoom: Float, panX: Float, panY: Float)
+    /**
+     * Камера вида: zoom, pan (пиксели вида), поворот вида [rotation] (радианы, по часовой) и отражения.
+     * Центр холста стоит в (центр вида + pan), поворот/отражение - вокруг него. На экспорт не влияет.
+     */
+    external fun setCamera(renderer: Long, zoom: Float, panX: Float, panY: Float, rotation: Float, flipX: Boolean, flipY: Boolean)
     /** Цвет фона холста в формате ARGB (альфа 0 = прозрачный, показывается серым). */
     external fun setBackground(renderer: Long, argb: Int)
     /**

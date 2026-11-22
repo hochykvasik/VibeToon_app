@@ -39,7 +39,24 @@ android {
         }
     }
 
+    // Подпись debug-сборки. Если задан VT_DEBUG_KEYSTORE (CI: секрет DEBUG_KEYSTORE_BASE64), подписываем общим
+    // ключом проекта, чтобы debug-APK из CI ставился поверх предыдущего на планшете. Иначе - стандартный ~/.android/debug.keystore.
+    signingConfigs {
+        getByName("debug") {
+            val ks = System.getenv("VT_DEBUG_KEYSTORE")?.let { file(it) }
+            if (ks != null && ks.exists()) {
+                storeFile = ks
+                storePassword = System.getenv("VT_DEBUG_STORE_PASSWORD") ?: "android"
+                keyAlias = System.getenv("VT_DEBUG_KEY_ALIAS") ?: "androiddebugkey"
+                keyPassword = System.getenv("VT_DEBUG_KEY_PASSWORD") ?: "android"
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -53,6 +70,9 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
 }
+
+// Имя APK: vibetoon-debug.apk / vibetoon-release.apk (CI выкладывает vibetoon-debug.apk артефактом)
+base { archivesName.set("vibetoon") }
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
@@ -76,7 +96,7 @@ val exportDocs = tasks.register<Copy>("exportDocs") {
 }
 val exportDebugApk = tasks.register<Copy>("exportDebugApk") {
     dependsOn("assembleDebug")
-    from(layout.buildDirectory.dir("outputs/apk/debug")) { include("app-debug.apk") }
+    from(layout.buildDirectory.dir("outputs/apk/debug")) { include("vibetoon-debug.apk") }
     into(File(exportRoot, "apk"))
     rename { "VibeToon-" + SimpleDateFormat("yyyyMMdd-HHmm").format(Date()) + "-debug.apk" }
     finalizedBy(exportDocs)

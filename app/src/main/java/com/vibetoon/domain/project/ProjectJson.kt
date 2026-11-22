@@ -64,6 +64,7 @@ object ProjectJson {
                 if (p.locked) m["lk"] = true
                 if (p.name != null) m["n"] = p.name
                 if (p.depth != 0f) m["dp"] = p.depth.toDouble()
+                if (p.hasPivot) { m["px"] = p.pivotX.toDouble(); m["py"] = p.pivotY.toDouble() }
             }
         }
         if (d.skins.isNotEmpty()) root["skins"] = d.skins.entries.associate { (id, m) ->
@@ -216,7 +217,8 @@ object ProjectJson {
                     (o["ex"] as? Number)?.toFloat() ?: 0f, (o["ct"] as? Number)?.toFloat() ?: 0f,
                     (o["sa"] as? Number)?.toFloat() ?: 0f, (o["hu"] as? Number)?.toFloat() ?: 0f,
                     visible = o["vis"] != false, locked = o["lk"] == true, name = o["n"] as? String,
-                    depth = (o["dp"] as? Number)?.toFloat() ?: 0f
+                    depth = (o["dp"] as? Number)?.toFloat() ?: 0f,
+                    pivotX = (o["px"] as? Number)?.toFloat() ?: 0f, pivotY = (o["py"] as? Number)?.toFloat() ?: 0f
                 ).normalized()
             }
             Result.success(ProjectData(meta, psd, base, tracks, media, deleted, clips, markers, links, bones, regroup, warps, meshes,

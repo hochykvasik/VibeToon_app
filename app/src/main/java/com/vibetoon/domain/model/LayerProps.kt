@@ -22,14 +22,20 @@ data class LayerProps(
     /** Своё имя слоя (null - имя из файла). */
     val name: String? = null,
     /** Глубина для параллакса камеры: 0 - на плоскости камеры (двигается 1:1), больше - дальше (смещается и увеличивается медленнее), меньше нуля - ближе. */
-    val depth: Float = 0f
+    val depth: Float = 0f,
+    /** Сдвиг опорной точки (pivot) от центра рамки слоя, пиксели в координатах родителя; 0, 0 - по центру. */
+    val pivotX: Float = 0f,
+    val pivotY: Float = 0f
 ) {
+    val hasPivot get() = pivotX != 0f || pivotY != 0f
     private fun c(v: Float) = if (v.isFinite()) v.coerceIn(-100f, 100f) else 0f
     fun normalized() = copy(
         opacity = if (opacity.isFinite()) opacity.coerceIn(0f, 1f) else 1f, blend = if (blend in LayerBlend.keys) blend else "norm",
         exposure = c(exposure), contrast = c(contrast), saturation = c(saturation), hue = c(hue),
         name = name?.trim()?.take(80)?.ifEmpty { null },
-        depth = if (depth.isFinite()) depth.coerceIn(-0.5f, 5f) else 0f
+        depth = if (depth.isFinite()) depth.coerceIn(-0.5f, 5f) else 0f,
+        pivotX = if (pivotX.isFinite()) pivotX.coerceIn(-100_000f, 100_000f) else 0f,
+        pivotY = if (pivotY.isFinite()) pivotY.coerceIn(-100_000f, 100_000f) else 0f
     )
     val hasColor get() = exposure != 0f || contrast != 0f || saturation != 0f || hue != 0f
 }

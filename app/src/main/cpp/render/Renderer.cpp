@@ -169,7 +169,8 @@ precision highp float;
 uniform sampler2D uTex;
 uniform vec2 uSize;        // размер цели в пикселях экрана
 uniform vec2 uCanvas;      // размер холста в пикселях холста
-uniform vec4 uView;        // масштаб холста, ox, oy (верх-лево холста на экране, y вниз), время в секундах
+uniform vec4 uView;        // масштаб холста k, ox, oy (начало холста на экране, y вниз), время в секундах
+uniform vec4 uLin;         // поворот/отражение вида: L по столбцам (a, b, c, d); экран = O + k * L * холст
 uniform int uMode;
 uniform vec4 uP0;
 uniform vec4 uP1;
@@ -180,6 +181,12 @@ vec4 tx(vec2 uv) {
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec4(0.0);
     return texture(uTex, uv);
 }
+// Холст (y вниз) <-> экран (y вниз) с учётом поворота вида; uv - экран с y вверх в долях цели.
+vec2 linMul(vec2 p) { return vec2(uLin.x * p.x + uLin.z * p.y, uLin.y * p.x + uLin.w * p.y); }
+vec2 linInv(vec2 s) { return vec2(uLin.x * s.x + uLin.y * s.y, uLin.z * s.x + uLin.w * s.y); }
+vec2 toCanvas(vec2 s) { return linInv((s - uView.yz) / uView.x); }
+vec2 uvOf(vec2 q) { vec2 s = uView.yz + linMul(q) * uView.x; return vec2(s.x, uSize.y - s.y) / uSize; }
+vec2 dirUv(vec2 dq) { vec2 r = linMul(dq) * uView.x; return vec2(r.x, -r.y) / uSize; }   // смещение на холсте -> смещение uv
 vec3 unpre(vec4 c) { return c.a > 0.0001 ? c.rgb / c.a : vec3(0.0); }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -208,7 +215,7 @@ vec4 blurAt(vec2 uv, float rpx) {
 void main() {
     vec2 uv = vUv;
     vec2 px = uv * uSize;                           // пиксель экрана, y вверх
-    vec2 q = vec2(px.x - uView.y, (uSize.y - px.y) - uView.z) / uView.x;   // холст, y вниз
+    vec2 q = toCanvas(vec2(px.x, uSize.y - px.y));   // холст, y вниз
     float k = uView.x;
     vec4 c = tx(uv);
     vec4 o = c;
@@ -236,13 +243,12 @@ void main() {
         float b = max(uP0.x, 1.0);
         vec2 cell = floor(q / b);
         vec2 ctr = (cell + 0.5) * b;
-        vec2 p2 = vec2(ctr.x * k + uView.y, uSize.y - (ctr.y * k + uView.z));
-        o = tx(p2 / uSize);
+        o = tx(uvOf(ctr));
     } else if (uMode == 4) {                        // Glow: сила, радиус
         vec4 g = blurAt(uv, uP0.y * k);
         o = min(c + g * uP0.x, vec4(1.0));
     } else if (uMode == 5) {                        // Drop Shadow: dx, dy, радиус, непрозрачность, цвет rgb
-        vec2 off = vec2(uP0.x, -uP0.y) * k / uSize;
+        vec2 off = dirUv(vec2(uP0.x, uP0.y));
         float a = blurAt(uv - off, uP0.z * k).a * uP0.w;
         vec4 sh = vec4(uP1.xyz * a, a);
         o = c + sh * (1.0 - c.a);
@@ -268,33 +274,32 @@ void main() {
         o = c + vec4(uP0.yzw * sa, sa);
     } else if (uMode == 9) {                        // Wave: амплитуда, длина волны, скорость, направление (0 гориз, 1 верт)
         float ph = (uP1.x < 0.5 ? q.y : q.x) / max(uP0.y, 1.0) * 6.2831853 + uView.w * uP0.z;
-        vec2 d = vec2(sin(ph) * uP0.x * k);
-        o = uP1.x < 0.5 ? tx(uv + vec2(d.x, 0.0) / uSize) : tx(uv + vec2(0.0, d.y) / uSize);
+        float a = sin(ph) * uP0.x;
+        o = uP1.x < 0.5 ? tx(uv + dirUv(vec2(a, 0.0))) : tx(uv + dirUv(vec2(0.0, -a)));
     } else if (uMode == 10) {                       // Mirror: 0 по горизонтали, 1 по вертикали, 2 оба
-        vec2 ctr = vec2(uView.y + uCanvas.x * k * 0.5, uSize.y - (uView.z + uCanvas.y * k * 0.5));
-        vec2 p2 = px;
-        if (uP0.x < 0.5 || uP0.x > 1.5) p2.x = ctr.x - abs(px.x - ctr.x);
-        if (uP0.x > 0.5) p2.y = ctr.y - abs(px.y - ctr.y);
-        o = tx(p2 / uSize);
+        vec2 cc = uCanvas * 0.5;                    // зеркало в осях холста: работает и при повороте вида
+        vec2 q2 = q;
+        if (uP0.x < 0.5 || uP0.x > 1.5) q2.x = cc.x - abs(q.x - cc.x);
+        if (uP0.x > 0.5) q2.y = cc.y + abs(q.y - cc.y);
+        o = tx(uvOf(q2));
     } else if (uMode == 11) {                       // Tiles: число повторов
         vec2 f = fract(q / uCanvas * max(uP0.x, 1.0));
-        vec2 p2 = vec2(f.x * uCanvas.x * k + uView.y, uSize.y - (f.y * uCanvas.y * k + uView.z));
-        o = tx(p2 / uSize);
+        o = tx(uvOf(f * uCanvas));
     } else if (uMode == 12) {                       // Noise: сила, размер зерна
-        float n = hash(floor(px / max(uP0.y * k, 1.0)) + floor(uView.w * 24.0));
+        float n = hash(floor(q * k / max(uP0.y * k, 1.0)) + floor(uView.w * 24.0));
         o = vec4(c.rgb + (n - 0.5) * uP0.x * c.a, c.a);
     } else if (uMode == 13) {                       // Shake: амплитуда, частота (смен в секунду)
         float seed = floor(uView.w * max(uP0.y, 0.1));
-        vec2 d = (vec2(hash(vec2(seed, 1.0)), hash(vec2(seed, 7.0))) - 0.5) * 2.0 * uP0.x * k;
-        o = tx(uv - vec2(d.x, -d.y) / uSize);
+        vec2 d = (vec2(hash(vec2(seed, 1.0)), hash(vec2(seed, 7.0))) - 0.5) * 2.0 * uP0.x;
+        o = tx(uv - dirUv(d));
     } else if (uMode == 14) {                       // Motion Blur: длина, угол (градусы)
         float a = radians(uP0.y);
-        vec2 dir = vec2(cos(a), -sin(a)) * uP0.x * k / uSize;
+        vec2 dir = dirUv(vec2(cos(a), sin(a)) * uP0.x);
         vec4 acc = vec4(0.0);
         for (int i = 0; i < 24; ++i) acc += tx(uv + dir * (float(i) / 23.0 - 0.5));
         o = acc / 24.0;
     } else if (uMode == 15) {                       // Zoom Blur: сила
-        vec2 ctr = vec2(uView.y + uCanvas.x * k * 0.5, uSize.y - (uView.z + uCanvas.y * k * 0.5)) / uSize;
+        vec2 ctr = uvOf(uCanvas * 0.5);
         vec4 acc = vec4(0.0);
         for (int i = 0; i < 24; ++i) {
             float s = 1.0 - uP0.x * (float(i) / 23.0);
@@ -302,23 +307,23 @@ void main() {
         }
         o = acc / 24.0;
     } else if (uMode == 17) {                       // RGB Split / Glitch: сдвиг X, сдвиг Y (px), глитч-дёрганье (px), частота
-        vec2 sh = vec2(uP0.x, -uP0.y) * k / uSize;
+        vec2 sh = dirUv(vec2(uP0.x, uP0.y));
         float seed = floor(uView.w * max(uP1.x, 0.1));
         float band = floor(q.y / 24.0);
-        float g = (hash(vec2(band, seed)) > 0.8) ? (hash(vec2(seed, band)) - 0.5) * 2.0 * uP0.z * k / uSize.x : 0.0;
-        vec2 gv = vec2(g, 0.0);
+        float g = (hash(vec2(band, seed)) > 0.8) ? (hash(vec2(seed, band)) - 0.5) * 2.0 * uP0.z : 0.0;
+        vec2 gv = dirUv(vec2(g, 0.0));
         vec4 cr = tx(uv + sh + gv), cg = tx(uv + gv), cb = tx(uv - sh + gv);
         o = vec4(cr.r, cg.g, cb.b, max(cr.a, max(cg.a, cb.a)));
     } else if (uMode == 18) {                       // Pulse: амплитуда масштаба, частота (Гц), амплитуда непрозрачности, центр x, y (доли холста)
         float s = sin(uView.w * uP0.y * 6.2831853);
         float sc = 1.0 + uP0.x * s;
-        vec2 ctr = vec2(uView.y + uCanvas.x * k * uP1.x, uSize.y - (uView.z + uCanvas.y * k * uP1.y)) / uSize;
+        vec2 ctr = uvOf(vec2(uCanvas.x * uP1.x, uCanvas.y * uP1.y));
         o = tx(ctr + (uv - ctr) / max(sc, 0.05));
         o *= clamp(1.0 + uP0.z * s, 0.0, 1.0);
     } else if (uMode == 19) {                       // Displacement: сила (px), масштаб карты (px), скорость
         vec2 m = q / max(uP0.y, 4.0) + vec2(uView.w * uP0.z, -uView.w * uP0.z * 0.7);
         vec2 d = vec2(vnoise(m), vnoise(m + 17.3)) - 0.5;
-        o = tx(uv + vec2(d.x, -d.y) * 2.0 * uP0.x * k / uSize);
+        o = tx(uv + dirUv(d * 2.0 * uP0.x));
     }
     outColor = o;
 }
@@ -347,6 +352,7 @@ int Renderer::initGL() {
         uFxSize_ = glGetUniformLocation(progFx_, "uSize");
         uFxCanvas_ = glGetUniformLocation(progFx_, "uCanvas");
         uFxView_ = glGetUniformLocation(progFx_, "uView");
+        uFxLin_ = glGetUniformLocation(progFx_, "uLin");
         uFxMode_ = glGetUniformLocation(progFx_, "uMode");
         uFxP0_ = glGetUniformLocation(progFx_, "uP0");
         uFxP1_ = glGetUniformLocation(progFx_, "uP1");
@@ -463,8 +469,10 @@ void Renderer::setViewport(int width, int height) {
 void Renderer::beginExport(int width, int height) {
     savedW_ = width_; savedH_ = height_;
     savedZoom_ = zoom_; savedPanX_ = panX_; savedPanY_ = panY_;
+    savedRot_ = rot_; savedFlipX_ = flipX_; savedFlipY_ = flipY_;
     exportMode_ = true;
-    zoom_ = 1.f; panX_ = panY_ = 0.f;
+    // экспорт и снимки всегда без поворота и отражения вида: поворот холста не искажает результат
+    zoom_ = 1.f; panX_ = panY_ = 0.f; rot_ = 0.f; flipX_ = flipY_ = false;
     setViewport(width, height);
 }
 
@@ -502,6 +510,7 @@ void Renderer::endExport() {
     if (!exportMode_) return;
     exportMode_ = false;
     zoom_ = savedZoom_; panX_ = savedPanX_; panY_ = savedPanY_;
+    rot_ = savedRot_; flipX_ = savedFlipX_; flipY_ = savedFlipY_;
     setViewport(savedW_, savedH_);
 }
 
@@ -584,22 +593,19 @@ void Renderer::setScene(const int* ops, const float* params, int n) {
     }
 }
 
-void Renderer::setCamera(float zoom, float panX, float panY) {
+void Renderer::setCamera(float zoom, float panX, float panY, float rotation, bool flipX, bool flipY) {
+    if (exportMode_) return;   // во время экспорта вид зафиксирован
     zoom_ = zoom > 0.f ? zoom : 1.f;
     panX_ = panX;
     panY_ = panY;
+    rot_ = std::isfinite(rotation) ? rotation : 0.f;
+    flipX_ = flipX;
+    flipY_ = flipY;
 }
 
-// Холст -> экран: сначала вписывание (поля 5%, по центру), затем камера (zoom вокруг центра + pan).
-void Renderer::viewTransform(float& scale, float& ox, float& oy) const {
-    const float fit = (exportMode_ ? 1.0f : 0.95f) * std::min(static_cast<float>(width_) / canvasW_,
-                                       static_cast<float>(height_) / canvasH_);
-    const float fx = (width_ - canvasW_ * fit) * 0.5f;
-    const float fy = (height_ - canvasH_ * fit) * 0.5f;
-    const float cx = width_ * 0.5f, cy = height_ * 0.5f;
-    scale = fit * zoom_;
-    ox = cx + (fx - cx) * zoom_ + panX_;
-    oy = cy + (fy - cy) * zoom_ + panY_;
+// Холст -> экран: вписывание (поля 5%, по центру), камера (zoom, pan), поворот и отражения вида вокруг центра холста.
+ViewAffine Renderer::view() const {
+    return makeView(width_, height_, canvasW_, canvasH_, exportMode_ ? 1.0f : 0.95f, zoom_, panX_, panY_, rot_, flipX_, flipY_);
 }
 
 void Renderer::setBackground(float r, float g, float b, float a) {
@@ -616,13 +622,7 @@ void Renderer::setSelection(const float* quads, int n) {
 //   canvas = (a*u + c*v + tx, b*u + d*v + ty)
 // затем холст -> экран (вписывание и камера) -> NDC (ось y экрана вниз). Матрица mat3 по столбцам.
 void Renderer::mvpFor(const float m[6], GLfloat o[9]) const {
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
-    o[0] = m[0] * scale / width_ * 2.f;   o[1] = -m[1] * scale / height_ * 2.f;  o[2] = 0.f;
-    o[3] = m[2] * scale / width_ * 2.f;   o[4] = -m[3] * scale / height_ * 2.f;  o[5] = 0.f;
-    o[6] = (ox + m[4] * scale) / width_ * 2.f - 1.f;
-    o[7] = 1.f - (oy + m[5] * scale) / height_ * 2.f;
-    o[8] = 1.f;
+    composeMvp(view(), m, width_, height_, o);
 }
 
 void Renderer::mvpForRect(float x, float y, float w, float h, GLfloat o[9]) const {
@@ -713,10 +713,8 @@ bool Renderer::readLayerPixels(int layerId, std::vector<uint8_t>& out, int& w, i
 }
 
 int Renderer::hitTest(float sx, float sy) const {
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
-    const float px = (sx - ox) / scale;   // координаты на холсте
-    const float py = (sy - oy) / scale;
+    float px, py;   // координаты на холсте (с учётом поворота и отражения вида)
+    view().invert(sx, sy, px, py);
     for (size_t i = scene_.size(); i-- > 0;) {
         const Item& it = scene_[i];
         if (it.op != kLayer || it.opacity < 0.01f) continue;
@@ -772,8 +770,7 @@ int Renderer::hitTest(float sx, float sy) const {
 // Рисуется в пространстве экрана, поэтому толщина одинакова при любом перекосе и масштабе.
 void Renderer::drawSelection() {
     if (selQuads_.empty()) return;
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
+    const ViewAffine v = view();
     glUseProgram(progSolid_);
     glUniform4f(uSolidColor_, 1.f, 0.75f, 0.f, 1.f);
     GLfloat mvp[9];
@@ -781,8 +778,7 @@ void Renderer::drawSelection() {
     for (size_t q = 0; q + 8 <= selQuads_.size(); q += 8) {
     float sxp[4], syp[4];
     for (int i = 0; i < 4; ++i) {
-        sxp[i] = ox + selQuads_[q + i * 2] * scale;
-        syp[i] = oy + selQuads_[q + i * 2 + 1] * scale;
+        v.apply(selQuads_[q + i * 2], selQuads_[q + i * 2 + 1], sxp[i], syp[i]);
     }
     for (int i = 0; i < 4; ++i) {
         const int j = (i + 1) % 4;
@@ -995,8 +991,7 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
 // Один проход эффекта: читает srcTex, пишет в текущую цель (она уже очищена и привязана).
 void Renderer::runEffect(GLuint srcTex, const float* e) {
     if (!progFx_) return;
-    float sc, ox, oy;
-    viewTransform(sc, ox, oy);
+    const ViewAffine v = view();
     glUseProgram(progFx_);
     glDisable(GL_BLEND);
     glActiveTexture(GL_TEXTURE0);
@@ -1005,7 +1000,8 @@ void Renderer::runEffect(GLuint srcTex, const float* e) {
     glUniformMatrix3fv(uFxMvp_, 1, GL_FALSE, kFullscreen);
     glUniform2f(uFxSize_, static_cast<float>(width_), static_cast<float>(height_));
     glUniform2f(uFxCanvas_, static_cast<float>(canvasW_), static_cast<float>(canvasH_));
-    glUniform4f(uFxView_, sc, ox, oy, e[9]);
+    glUniform4f(uFxView_, v.k, v.ox, v.oy, e[9]);
+    glUniform4f(uFxLin_, v.la, v.lb, v.lc, v.ld);
     glUniform1i(uFxMode_, static_cast<int>(e[0]));
     glUniform4f(uFxP0_, e[1], e[2], e[3], e[4]);
     glUniform4f(uFxP1_, e[5], e[6], e[7], e[8]);
@@ -1081,13 +1077,15 @@ bool Renderer::drawFrame() {
 
     // Всё, что вылезает за границы холста (слои с координатами вне PSD), обрезается, как в Photoshop.
     // Scissor действует и на очистку/композитинг FBO, поэтому внутри него группы считаются верно.
+    // При повороте вида scissor режет по описанной рамке, а углы за холстом закрашивает drawOutsideCanvas().
+    const bool rotatedView = !view().axisAligned();
     {
-        float sc, ox, oy;
-        viewTransform(sc, ox, oy);
-        const int x0 = static_cast<int>(std::floor(ox));
-        const int x1 = static_cast<int>(std::ceil(ox + canvasW_ * sc));
-        const int y0 = static_cast<int>(std::floor(oy));
-        const int y1 = static_cast<int>(std::ceil(oy + canvasH_ * sc));
+        float bb[4];
+        canvasScreenBounds(view(), canvasW_, canvasH_, bb);
+        const int x0 = static_cast<int>(std::floor(bb[0]));
+        const int x1 = static_cast<int>(std::ceil(bb[2]));
+        const int y0 = static_cast<int>(std::floor(bb[1]));
+        const int y1 = static_cast<int>(std::ceil(bb[3]));
         glEnable(GL_SCISSOR_TEST);
         glScissor(x0, height_ - y1, std::max(0, x1 - x0), std::max(0, y1 - y0));  // начало координат снизу
     }
@@ -1148,14 +1146,40 @@ bool Renderer::drawFrame() {
         }
     }
 
-    bindTarget(0);
+    bindTarget(screenFbo_);
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    if (rotatedView && !exportMode_ && !transparentCapture_) drawOutsideCanvas();
+    bindTarget(0);
     glDisable(GL_SCISSOR_TEST);   // рамка выделения может выходить за холст
     if (!exportMode_) drawSelection();
     glBindVertexArray(0);
     checkGl("drawFrame");
     return !uploadQueue::empty();
+}
+
+// Повёрнутый вид: слои, вылезающие за холст, закрываются четырьмя полосами цвета фона редактора
+// (в координатах холста, поэтому полосы поворачиваются вместе с ним). Scissor уже ограничил их рамкой.
+void Renderer::drawOutsideCanvas() {
+    if (!progSolid_) return;
+    const ViewAffine v = view();
+    const float cw = static_cast<float>(canvasW_), ch = static_cast<float>(canvasH_);
+    const float big = std::hypot(static_cast<float>(width_), static_cast<float>(height_)) / std::max(v.k, 1e-6f) + std::max(cw, ch);
+    const float rects[4][4] = {
+        {-big, -big, big, ch + 2.f * big},   // слева
+        {cw, -big, big, ch + 2.f * big},     // справа
+        {0.f, -big, cw, big},                // сверху
+        {0.f, ch, cw, big}                   // снизу
+    };
+    glUseProgram(progSolid_);
+    glUniform4f(uSolidColor_, 0.2f, 0.2f, 0.22f, 1.f);
+    glBindVertexArray(vao_);
+    GLfloat mvp[9];
+    for (const auto& r : rects) {
+        mvpForRect(r[0], r[1], r[2], r[3], mvp);
+        glUniformMatrix3fv(uSolidMvp_, 1, GL_FALSE, mvp);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
 }
 
 int Renderer::readPixel(int x, int y) const {

@@ -51,6 +51,25 @@ class AppSettings(context: Context) {
     var tap2Undo by mutableStateOf(p.getBoolean("tap2", false))
     var tap3Redo by mutableStateOf(p.getBoolean("tap3", false))
     fun saveGestures() { p.edit().putBoolean("tap2", tap2Undo).putBoolean("tap3", tap3Redo).apply() }
+    /** Поворот холста двумя пальцами (только вид, на экспорт не влияет). */
+    var rotateCanvas by mutableStateOf(p.getBoolean("rot2", true))
+    /** Layer Pivot Editing: на выделенном слое видна опорная точка, её можно перетащить. */
+    var pivotEditing by mutableStateOf(p.getBoolean("pivEdit", true))
+    /** Temporary Pivots: масштаб/поворот двумя пальцами вокруг точки между пальцами, а не вокруг опорной точки слоя. */
+    var temporaryPivots by mutableStateOf(p.getBoolean("pivTemp", false))
+    /** Auto Pixel Edit Mode: выбор кисти/ластика сам переключает на пиксельный слой (выбирает или создаёт). */
+    var autoPixelEdit by mutableStateOf(p.getBoolean("autoPx", true))
+    /** Only Erase/Smudge Selected Path Layers: ластик/палец векторного режима трогают только выделенные контуры. */
+    var onlySelectedPath by mutableStateOf(p.getBoolean("onlySelPath", false))
+    /** Vector Workflow: Auto Pixel Edit Mode для кисти выбирает/создаёт векторный слой, а не пиксельный. */
+    var vectorWorkflow by mutableStateOf(p.getBoolean("vecFlow", false))
+    /** Import Images as Symbols: импортированная картинка сразу становится символом (префабом). */
+    var importAsSymbols by mutableStateOf(p.getBoolean("impSym", false))
+    fun saveEditor() {
+        p.edit().putBoolean("rot2", rotateCanvas).putBoolean("pivEdit", pivotEditing).putBoolean("pivTemp", temporaryPivots)
+            .putBoolean("autoPx", autoPixelEdit).putBoolean("onlySelPath", onlySelectedPath)
+            .putBoolean("vecFlow", vectorWorkflow).putBoolean("impSym", importAsSymbols).apply()
+    }
     /** Свои клавиши: действие -> код клавиши Android (только отличающиеся от умолчания). */
     val hotkeys = androidx.compose.runtime.mutableStateMapOf<com.vibetoon.domain.HotkeyAction, Int>().also { m ->
         for (a in com.vibetoon.domain.HotkeyAction.values()) p.getInt("hk_" + a.name, -1).takeIf { it >= 0 }?.let { m[a] = it }

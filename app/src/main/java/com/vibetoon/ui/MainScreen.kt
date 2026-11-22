@@ -277,7 +277,12 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         PaintCursorLayer(vm)
         PerspOverlayLayer(vm)
         RasterOverlayLayer(vm)
+        PivotOverlayLayer(vm)
         val gs = com.vibetoon.ui.theme.LocalAppSettings.current
+        // переключатели настроек, влияющие на логику редактора (поворот холста, опорные точки, Auto Pixel, контуры, импорт)
+        if (gs != null) LaunchedEffect(gs.rotateCanvas, gs.pivotEditing, gs.temporaryPivots, gs.autoPixelEdit, gs.onlySelectedPath, gs.vectorWorkflow, gs.importAsSymbols) {
+            vm.setEditorPrefs(MainViewModel.EditorPrefs(gs.rotateCanvas, gs.pivotEditing, gs.temporaryPivots, gs.autoPixelEdit, gs.onlySelectedPath, gs.vectorWorkflow, gs.importAsSymbols))
+        }
         Box(
             modifier = Modifier.matchParentSize().onSizeChanged { vm.onViewSize(it.width.toFloat(), it.height.toFloat()) }
             // касание 2 пальцами (Undo) и 3 пальцами (Redo): только наблюдение за событиями (Initial, ничего не потребляется), решение при отпускании
@@ -361,6 +366,9 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                     }
                     var capture = if (multi) false else vm.boneDown(down.position.x, down.position.y)   // режим костей: жест забирает кость
                     var total = Offset.Zero
+                    // поворот холста: пока пальцы не повернулись на порог, вид только масштабируется (щипок без случайного поворота)
+                    var rotAcc = 0f
+                    var rotating = false
                     var moved = false
                     do {
                         val event: PointerEvent = awaitPointerEvent()
@@ -376,11 +384,21 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                                 val zoom = event.calculateZoom()
                                 val (zx, zy) = if (vm.uniformScale.value) zoom to zoom
                                 else axisRatios(pressed[0], pressed[1])
-                                vm.onTransformLayer(zx, zy, event.calculateRotation(), pan.x, pan.y)
+                                val gc = event.calculateCentroid()
+                                vm.onTransformLayer(zx, zy, event.calculateRotation(), pan.x, pan.y, gc.x, gc.y)
                             } else {
-                                // Ничего не выделено: двигаем камеру
+                                // Ничего не выделено: двигаем камеру (и поворачиваем вид, если включено «Поворот холста двумя пальцами»)
                                 val c = event.calculateCentroid()
-                                vm.onTransform(c.x, c.y, event.calculateZoom(), pan.x, pan.y)
+                                var dr = 0f
+                                if (gs?.rotateCanvas != false) {
+                                    val r = event.calculateRotation()
+                                    if (rotating) dr = r
+                                    else {
+                                        rotAcc += r
+                                        if (kotlin.math.abs(rotAcc) >= com.vibetoon.domain.render.Camera.ROTATE_DEADZONE_DEG) { rotating = true; dr = rotAcc }
+                                    }
+                                }
+                                vm.onTransform(c.x, c.y, event.calculateZoom(), pan.x, pan.y, dr)
                             }
                             event.changes.forEach { it.consume() }
                         } else if (pressed.size == 1 && !multi) {
@@ -402,6 +420,56 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                 }
             }
         ) {}
+        ViewRotationBadge(vm, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
+    }
+}
+
+/**
+ * Индикатор поворота вида (Canvas Rotation): «37°» и значок отражения; виден, пока вид повёрнут или отражён.
+ * Тап по углу - мгновенный сброс в 0°, кнопки ±90°, ⇋ - отражение (только вид, экспорт не меняется).
+ */
+@Composable
+private fun ViewRotationBadge(vm: MainViewModel, modifier: Modifier) {
+    val deg by vm.viewRotation.collectAsStateWithLifecycle()
+    val flip by vm.viewFlip.collectAsStateWithLifecycle()
+    if (kotlin.math.abs(deg) < 0.05f && !flip.first && !flip.second) return
+    Surface(modifier, shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.6f), contentColor = Color.White) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
+            TextButton(onClick = { vm.rotateViewBy(-90f) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) { Text("⟲", color = Color.White, fontSize = 16.sp) }
+            TextButton(onClick = { vm.resetViewRotation() }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
+                Text("${kotlin.math.round(deg).toInt()}°" + if (flip.first || flip.second) " ⇋" else "", color = Color.White, fontSize = 14.sp)
+            }
+            TextButton(onClick = { vm.rotateViewBy(90f) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) { Text("⟳", color = Color.White, fontSize = 16.sp) }
+            if (flip.first || flip.second) TextButton(onClick = { if (flip.first) vm.toggleViewFlipX(); if (flip.second) vm.toggleViewFlipY() }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) {
+                Text("Без отражения", color = Color.White, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/** Опорная точка выделенного слоя (Layer Pivot Editing): перекрестие в кружке; тащится пальцем, притягивается к углам и центру. */
+@Composable
+private fun PivotOverlayLayer(vm: MainViewModel) {
+    val p by vm.pivotOverlay.collectAsStateWithLifecycle()
+    val bone by vm.boneMode.collectAsStateWithLifecycle()
+    val warp by vm.warpTool.collectAsStateWithLifecycle()
+    val mesh by vm.meshMode.collectAsStateWithLifecycle()
+    val persp by vm.perspTool.collectAsStateWithLifecycle()
+    val liq by vm.liquifyTool.collectAsStateWithLifecycle()
+    if (bone || warp || mesh || persp || liq) return   // в этих режимах палец работает инструментом, опорная точка не правится
+    val v = p ?: return
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        val c = Offset(v[0], v[1])
+        val r = 9.dp.toPx()
+        val col = if (v[3] > 0.5f) Color(0xFFFFA726) else if (v[2] > 0.5f) Color(0xFF42A5F5) else Color.White
+        drawCircle(Color.Black.copy(alpha = 0.55f), r + 2.dp.toPx(), c, style = Stroke(3.dp.toPx()))
+        drawCircle(col, r, c, style = Stroke(2.dp.toPx()))
+        val arm = r + 6.dp.toPx()
+        drawLine(Color.Black.copy(alpha = 0.55f), Offset(c.x - arm, c.y), Offset(c.x + arm, c.y), strokeWidth = 3.dp.toPx())
+        drawLine(Color.Black.copy(alpha = 0.55f), Offset(c.x, c.y - arm), Offset(c.x, c.y + arm), strokeWidth = 3.dp.toPx())
+        drawLine(col, Offset(c.x - arm, c.y), Offset(c.x + arm, c.y), strokeWidth = 1.5.dp.toPx())
+        drawLine(col, Offset(c.x, c.y - arm), Offset(c.x, c.y + arm), strokeWidth = 1.5.dp.toPx())
+        drawCircle(col, 2.dp.toPx(), c)
     }
 }
 

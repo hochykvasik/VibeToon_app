@@ -49,7 +49,7 @@ class VtRenderer(
     override fun onDrawFrame(gl: GL10?) {
         takeScene()?.let { lastScene = it; applyScene(it) }
         val p = frameParams()
-        RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY)
+        RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY, p.camera.rotation, p.camera.flipX, p.camera.flipY)
         RenderNative.setSelection(handle, p.selectionQuad)
         RenderNative.setBackground(handle, p.background)
         val more = RenderNative.drawFrame(handle)

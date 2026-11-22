@@ -159,7 +159,9 @@ object SceneBuilder {
         /** Transform Layer (null-объект): не рисуется, только передаёт трансформацию дочерним слоям. */
         nullIds: Set<Int> = emptySet(),
         /** Глубина слоя (параллакс камеры): id -> число; не заданные - 0. */
-        depths: Map<Int, Float> = emptyMap()
+        depths: Map<Int, Float> = emptyMap(),
+        /** Сдвиг опорной точки узла от центра рамки (Layer Pivot Editing): id -> (dx, dy) в координатах родителя. */
+        pivotOffsets: Map<Int, Pair<Float, Float>> = emptyMap()
     ): SceneData {
         // Камера: dx, dy - смещение центра кадра, scaleX - приближение, rotation - поворот вида
         val cam = transforms[cameraId]
@@ -193,6 +195,9 @@ object SceneBuilder {
         fun local(t: LayerTransform, px: Float, py: Float) =
             Affine2D.translate(px + t.dx, py + t.dy) * Affine2D.rotate(t.rotation) *
                 Affine2D.scale(t.scaleX, t.scaleY) * Affine2D.translate(-px, -py)
+        /** Опорная точка узла: центр рамки (у группы - центр рамки детей) плюс сдвиг, заданный пользователем. */
+        fun pivotX(n: Node) = (if (n is GroupNode) n.pivotX else (n as LeafNode).let { it.x + it.w / 2f }) + (pivotOffsets[n.id]?.first ?: 0f)
+        fun pivotY(n: Node) = (if (n is GroupNode) n.pivotY else (n as LeafNode).let { it.y + it.h / 2f }) + (pivotOffsets[n.id]?.second ?: 0f)
 
         fun cornersOf(m: Affine2D): FloatArray {
             val xs = floatArrayOf(0f, 1f, 1f, 0f)
@@ -223,8 +228,8 @@ object SceneBuilder {
                 for (n in nodes) {
                     val t = transforms[n.id] ?: LayerTransform()
                     val l = when (n) {
-                        is GroupNode -> local(t, n.pivotX, n.pivotY)
-                        is LeafNode -> local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                        is GroupNode -> local(t, pivotX(n), pivotY(n))
+                        is LeafNode -> local(t, pivotX(n), pivotY(n))
                     }
                     pw0[n.id] = parentWorld
                     loc0[n.id] = l
@@ -279,7 +284,7 @@ object SceneBuilder {
                         if (!n.visible) continue
                         clipBaseVisible = null
                         val pw = linkDelta(n.id) * parentWorld
-                        val world = pw * local(t, n.pivotX, n.pivotY)
+                        val world = pw * local(t, pivotX(n), pivotY(n))
                         parentWorlds[n.id] = pw
                         add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
                         val childQuads = ArrayList<FloatArray>()
@@ -295,7 +300,7 @@ object SceneBuilder {
                         if (n.id in nullIds) {
                             // Transform Layer: невидим, но у него есть рамка (для выбора и жестов) и своя трансформация для детей
                             val pwN = linkDelta(n.id) * parentWorld
-                            val worldN = pwN * local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                            val worldN = pwN * local(t, pivotX(n), pivotY(n))
                             parentWorlds[n.id] = pwN
                             val mN = worldN * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
                             val qN = cornersOf(mN)
@@ -312,7 +317,7 @@ object SceneBuilder {
                         if (!n.visible || (clipped && clipBaseVisible == false)) continue
                         val skinned = n.id in skins && n.id in meshes
                         val pw = (if (skinned) Affine2D.IDENTITY else linkDelta(n.id)) * parentWorld
-                        val world = pw * local(t, n.x + n.w / 2f, n.y + n.h / 2f)
+                        val world = pw * local(t, pivotX(n), pivotY(n))
                         parentWorlds[n.id] = pw
                         // единичный квадрат -> прямоугольник слоя -> мир
                         val m = world * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) *

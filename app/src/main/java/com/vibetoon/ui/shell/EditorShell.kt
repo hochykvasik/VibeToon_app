@@ -449,7 +449,9 @@ private fun TopBar(
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             BarIcon(Icons.Default.ArrowBack, "Проекты", onClick = onBack)
-            BarIcon(Icons.Default.PhotoLibrary, "Библиотека") { stub("Библиотека ассетов") }
+            var library by remember { mutableStateOf(false) }
+            BarIcon(Icons.Default.PhotoLibrary, "Библиотека") { library = true }
+            if (library) AssetLibraryDialog(vm, add) { library = false }
             Box {
                 BarIcon(Icons.Default.Menu, "Действия") { actions = true }
                 DropdownMenu(expanded = actions, onDismissRequest = { actions = false }) {
@@ -464,6 +466,10 @@ private fun TopBar(
                     DropdownMenuItem(text = { Text("Камера (Pan & Zoom)") }, onClick = { actions = false; vm.addCameraLayer() })
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("Сбросить вид холста") }, onClick = { actions = false; vm.resetCamera() })
+                    DropdownMenuItem(text = { Text("Поворот вида: 0°") }, onClick = { actions = false; vm.resetViewRotation() })
+                    DropdownMenuItem(text = { Text("Повернуть вид на 90° влево") }, onClick = { actions = false; vm.rotateViewBy(-90f) })
+                    DropdownMenuItem(text = { Text("Повернуть вид на 90° вправо") }, onClick = { actions = false; vm.rotateViewBy(90f) })
+                    DropdownMenuItem(text = { Text("Отразить холст по горизонтали") }, onClick = { actions = false; vm.toggleViewFlipX() })
                     DropdownMenuItem(text = { Text("Тестовый PSD") }, onClick = { actions = false; vm.parseTestPsd() })
                 }
             }
@@ -1236,6 +1242,13 @@ private fun LayerPropsPanel(vm: MainViewModel, id: Int, isGroup: Boolean, all: M
                 )
             }
         }
+        // опорная точка (pivot): тащится пальцем на холсте, кнопка возвращает её в центр без сдвига слоя
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(if (p.hasPivot) "Опорная точка: сдвинута" else "Опорная точка: центр", fontSize = 11.sp, modifier = Modifier.weight(1f))
+            if (p.hasPivot) OutlinedButton(onClick = { vm.resetPivot() }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(28.dp)) {
+                Text("В центр", fontSize = 11.sp)
+            }
+        }
     }
 }
 
@@ -1258,4 +1271,51 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
             Switch(checked = bone.independentRot, onCheckedChange = { vm.setBoneIndependent(bone.id, it) })
         }
     }
+}
+
+
+/**
+ * Библиотека ассетов проекта (Sprint 6.9, основа): символы-префабы (вставить ещё один экземпляр) и импортированные
+ * картинки (сделать символом). Общая библиотека между проектами и папки ассетов - «В разработке».
+ */
+@Composable
+fun AssetLibraryDialog(vm: MainViewModel, add: AddActions, onDismiss: () -> Unit) {
+    val stub = LocalStub.current
+    var tick by remember { mutableStateOf(0) }
+    val items = remember(tick) { vm.assetLibrary() }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Библиотека ассетов") },
+        text = {
+            Column(Modifier.heightIn(max = 380.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val symbols = items.filter { it.kind == "symbol" }
+                val images = items.filter { it.kind == "image" }
+                Text("Символы (префабы)", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                if (symbols.isEmpty()) Text("Символов пока нет: выделите слои и создайте символ", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                for (a in symbols) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(a.name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Экземпляров: ${a.uses}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    }
+                    OutlinedButton(onClick = { vm.insertSymbolInstance(a.id); onDismiss() }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(30.dp)) {
+                        Text("Вставить", fontSize = 12.sp)
+                    }
+                }
+                HorizontalDivider()
+                Text("Картинки проекта", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                if (images.isEmpty()) Text("Импортированных картинок нет", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                for (a in images) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(a.name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    OutlinedButton(onClick = { vm.assetToSymbol(a.id); tick++ }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(30.dp)) {
+                        Text("В символ", fontSize = 12.sp)
+                    }
+                }
+                HorizontalDivider()
+                OutlinedButton(onClick = { onDismiss(); add.image() }, modifier = Modifier.fillMaxWidth()) { Text("Импортировать картинку…", fontSize = 12.sp) }
+                OutlinedButton(onClick = { stub("Общая библиотека между проектами") }, modifier = Modifier.fillMaxWidth()) { Text("Общая библиотека между проектами", fontSize = 12.sp) }
+                Text("Импорт картинок сразу символами включается в Настройки → Импорт.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
+            }
+        },
+        confirmButton = { TextButton(onDismiss) { Text("Готово") } }
+    )
 }

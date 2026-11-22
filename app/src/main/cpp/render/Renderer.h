@@ -3,6 +3,8 @@
 #pragma once
 #include <GLES3/gl3.h>
 
+#include "ViewMath.h"
+
 #include <array>
 #include <cstdint>
 #include <deque>
@@ -22,9 +24,9 @@ public:
     // params: n*8 float [a, b, c, d, tx, ty, opacity, 0]: аффинное преобразование
     // "единичный квадрат -> холст" (canvas = (a*u + c*v + tx, b*u + d*v + ty)).
     void setScene(const int* ops, const float* params, int n);
-    // Камера: экранные координаты = C + (p - C)*zoom + pan, C - центр экрана, p - положение
-    // при вписывании холста. Одна матрица двигает и масштабирует весь холст.
-    void setCamera(float zoom, float panX, float panY);
+    // Камера вида: zoom, pan (пиксели экрана), поворот вида (радианы, по часовой) и отражения (Flip Canvas).
+    // Центр холста стоит в (центр экрана + pan); поворот и отражение - вокруг него. Экспорт их не видит.
+    void setCamera(float zoom, float panX, float panY, float rotation = 0.f, bool flipX = false, bool flipY = false);
     // Цвет фона холста (RGBA 0..1). Альфа 0 (прозрачный фон проекта) показывается светло-серым.
     void setBackground(float r, float g, float b, float a);
     // Warp: для слоёв из списка ids (n штук) 16 смещений контрольных точек сетки 4x4 (по 2 float, в долях
@@ -138,7 +140,8 @@ private:
     };
 
     void uploadPending();                        // не более kUploadBytesPerFrame за кадр
-    void viewTransform(float& scale, float& ox, float& oy) const;  // холст -> экран с камерой
+    ViewAffine view() const;                     // холст -> экран с камерой (поворот и отражения тоже)
+    void drawOutsideCanvas();                    // при повороте: закрашивает всё, что вылезло за холст
     void drawSelection();
     void mvpForRect(float x, float y, float w, float h, GLfloat out[9]) const;
     // Единичный квадрат -> холст по аффинной матрице m[6] -> экран (камера) -> NDC.
@@ -164,13 +167,15 @@ private:
 
     int width_ = 1, height_ = 1;
     int canvasW_ = 1, canvasH_ = 1;
-    float zoom_ = 1.f, panX_ = 0.f, panY_ = 0.f;
+    float zoom_ = 1.f, panX_ = 0.f, panY_ = 0.f, rot_ = 0.f;
+    bool flipX_ = false, flipY_ = false;
     float bg_[4] = {0.85f, 0.85f, 0.85f, 1.f};
     bool exportMode_ = false;
     GLuint screenFbo_ = 0;            // куда рисует drawFrame (0 - экран; при снимке - внутренний FBO)
     bool transparentCapture_ = false;
     int savedW_ = 1, savedH_ = 1;
-    float savedZoom_ = 1.f, savedPanX_ = 0.f, savedPanY_ = 0.f;
+    float savedZoom_ = 1.f, savedPanX_ = 0.f, savedPanY_ = 0.f, savedRot_ = 0.f;
+    bool savedFlipX_ = false, savedFlipY_ = false;
     std::vector<float> selQuads_;   // по 8 float на рамку
 
     GLuint progSolid_ = 0, progTex_ = 0, progBlend_ = 0;
@@ -204,7 +209,7 @@ private:
     void paintBake(int x, int y, int w, int h);
     void paintFreeTargets();
     GLuint progFx_ = 0;
-    GLint uFxMvp_ = -1, uFxTex_ = -1, uFxSize_ = -1, uFxCanvas_ = -1, uFxView_ = -1, uFxMode_ = -1, uFxP0_ = -1, uFxP1_ = -1;
+    GLint uFxMvp_ = -1, uFxTex_ = -1, uFxSize_ = -1, uFxCanvas_ = -1, uFxView_ = -1, uFxLin_ = -1, uFxMode_ = -1, uFxP0_ = -1, uFxP1_ = -1;
     std::unordered_map<int, std::vector<std::array<float, 10>>> effects_;
     std::unordered_map<int, std::array<float, 4>> turbs_;
     const float* curTurb_ = nullptr;    // параметры турбулентности рисуемого слоя
