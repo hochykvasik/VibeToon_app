@@ -1446,7 +1446,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pid = projectId ?: return
         when (com.vibetoon.domain.project.AssetCatalog.typeOf(relPath)) {
             com.vibetoon.domain.project.AssetCatalog.Type.VIDEO, com.vibetoon.domain.project.AssetCatalog.Type.AUDIO -> { insertMediaAsset(pid, relPath); return }
-            com.vibetoon.domain.project.AssetCatalog.Type.PSD -> { _state.value = UiState.Message("PSD проекта уже разложен на слои; вставка другого PSD из библиотеки - в разработке"); return }
+            com.vibetoon.domain.project.AssetCatalog.Type.PSD -> {
+                // пакет 23: другой PSD из библиотеки раскладывается в медиа-слои по PSD Import Mode
+                if (com.vibetoon.domain.project.PsdInsertPlan.isProjectPsd(relPath.substringAfterLast('/'))) _state.value = UiState.Message("PSD проекта уже разложен на слои: выберите другой PSD или «+ → PSD в текущий проект»")
+                else if (importJob?.isActive != true && _state.value != UiState.Loading && _state.value !is UiState.Rendering) {
+                    _state.value = UiState.Loading
+                    insertPsdFile(pid, relPath, com.vibetoon.domain.project.PsdInsertPlan.titleOf(relPath), deleteOnFail = false)
+                }
+                return
+            }
             else -> Unit
         }
         val id = nextMediaId()
@@ -1471,6 +1479,231 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось вставить ассет")
             }
         }
+    }
+
+    // ---------------------------------------------------------------- пакет 23: другой PSD в проекте, папки библиотеки
+
+    /** + → «PSD в текущий проект»: файл копируется в assets проекта (виден в библиотеке) и вставляется по PSD Import Mode. */
+    fun insertPsdFromUri(uri: Uri) {
+        val pid = projectId ?: return
+        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        _state.value = UiState.Loading
+        importJob = viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                runCatching {
+                    val name = importer.displayName(uri)
+                    val fileName = com.vibetoon.domain.project.PsdInsertPlan.assetName(name, java.util.UUID.randomUUID().toString().replace("-", ""))
+                    val dest = projects.mediaFile(pid, fileName)
+                    try {
+                        importer.copy(uri, dest)
+                        val head = ByteArray(4).also { b -> dest.inputStream().use { it.read(b) } }
+                        check(com.vibetoon.domain.project.ProjectArchive.detect(head) == com.vibetoon.domain.project.ProjectArchive.Kind.PSD) { "Это не PSD-файл" }
+                    } catch (t: Throwable) { dest.delete(); throw t }
+                    "assets/$fileName" to name
+                }
+            }
+            if (projectId != pid || closing) { res.getOrNull()?.let { (rel, _) -> withContext(Dispatchers.IO) { projects.fileOf(pid, rel).delete() } }; return@launch }
+            res.onSuccess { (rel, name) -> insertPsdFile(pid, rel, com.vibetoon.domain.project.PsdInsertPlan.titleOf(name), deleteOnFail = true) }
+                .onFailure { _state.value = UiState.Error(it.message ?: "Не удалось вставить PSD") }
+        }
+    }
+
+    /** Декодированный слой PSD -> Bitmap (без premultiply); null - слой пуст. */
+    private fun psdLayerBitmap(doc: Long, layerId: Int, scale: Float, limit: Int): android.graphics.Bitmap? {
+        val px = PsdNative.decodePixels(doc, layerId, scale, limit) ?: return null
+        if (px.size < 3 || px[0] <= 0 || px[1] <= 0 || px.size < 2 + px[0] * px[1]) return null
+        return android.graphics.Bitmap.createBitmap(px, 2, px[0], px[0], px[1], android.graphics.Bitmap.Config.ARGB_8888)
+    }
+
+    private fun writePng(pid: String, fileName: String, bmp: android.graphics.Bitmap, written: MutableList<java.io.File>): String {
+        val dest = projects.mediaFile(pid, fileName)
+        dest.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        written += dest
+        return "assets/$fileName"
+    }
+
+    /**
+     * Вставка PSD [rel] из assets проекта. Режим - Settings → Import → PSD Import Mode: слои и группы как в файле
+     * (медиа-слои в общей группе с именем файла), одним сведённым слоем или кадрами покадрового слоя. Документ вписывается
+     * в холст целиком; слои и анимация PSD проекта не меняются. Вызывается при состоянии Loading.
+     */
+    private fun insertPsdFile(pid: String, rel: String, title: String, deleteOnFail: Boolean) {
+        val mode = com.vibetoon.domain.project.PsdInsertPlan.Mode.of(appPrefs().getInt("psd_import_mode", 0))
+        val limit = if (resolutionLimitOn()) com.vibetoon.domain.project.ImportLimit.maxSide(canvasW, canvasH) else MAX_TEX
+        val cw = canvasW; val ch = canvasH
+        importJob = viewModelScope.launch {
+            val written = ArrayList<java.io.File>()
+            var inserted = false
+            var doc = 0L
+            try {
+                val file = projects.fileOf(pid, rel)
+                val parsed = withContext(decodeDispatcher) {
+                    check(file.isFile) { "Файл PSD не найден" }
+                    val layers = PsdNative.parseLayers(file.absolutePath).toList()
+                    doc = PsdNative.openDocument(file.absolutePath)
+                    val size = PsdNative.documentSize(doc)
+                    Triple(layers, size[0], size[1])
+                }
+                val (layers, dw, dh) = parsed
+                check(dw > 0 && dh > 0) { "Не удалось прочитать PSD" }
+                val f = com.vibetoon.domain.project.PsdInsertPlan.fit(dw, dh, cw, ch)
+                val fx = f[0]; val fy = f[1]; val s = f[2]
+                val ds = com.vibetoon.domain.project.PsdInsertPlan.decodeScale(s)
+                val byId = layers.associateBy { it.id }
+                val uniq = java.util.UUID.randomUUID().toString().take(8)
+                fun piece(psdId: Int): com.vibetoon.data.PsdComposer.Piece? {
+                    val l = byId[psdId] ?: return null
+                    val b = psdLayerBitmap(doc, psdId, ds, limit) ?: return null
+                    return com.vibetoon.data.PsdComposer.Piece(b, android.graphics.RectF(l.x * ds, l.y * ds, (l.x + l.width) * ds, (l.y + l.height) * ds))
+                }
+                val compW = kotlin.math.ceil(dw * ds).toInt().coerceAtLeast(1)
+                val compH = kotlin.math.ceil(dh * ds).toInt().coerceAtLeast(1)
+                val message: String
+                val select: Int
+                var extendTo = 0
+                var cellsOf: Int? = null
+                when (mode) {
+                    com.vibetoon.domain.project.PsdInsertPlan.Mode.LAYERS -> {
+                        val nodes = com.vibetoon.domain.project.PsdInsertPlan.tree(layers)
+                        check(nodes.isNotEmpty()) { "В PSD нет слоёв с пикселями" }
+                        val rootId = nextMediaId()
+                        val ids = nodes.associate { it.psdId to nextMediaId() }
+                        val tickets = nodes.filter { !it.group }.associate { n -> ids.getValue(n.psdId).let { it to RenderNative.textureUploadTicket(it) } }
+                        val items = withContext(decodeDispatcher) {
+                            val out = HashMap<Int, MediaItem>()
+                            for (n in nodes) {
+                                if (n.group) continue
+                                if (projectId != pid || closing) throw kotlinx.coroutines.CancellationException()
+                                val mid = ids.getValue(n.psdId)
+                                val bmp = psdLayerBitmap(doc, n.psdId, ds, limit) ?: continue   // пустой/текстовый без пикселей - пропуск
+                                try {
+                                    val path = writePng(pid, "m${mid}_$uniq.png", bmp, written)
+                                    RenderNative.uploadBitmapIfCurrent(mid, bmp, tickets.getValue(mid))
+                                    out[n.psdId] = MediaItem(mid, MediaKind.IMAGE, n.name.ifBlank { "Слой" }, path, bmp.width, bmp.height,
+                                        fx + n.x * s, fy + n.y * s, n.w * s, n.h * s)
+                                } finally { bmp.recycle() }
+                            }
+                            out
+                        }
+                        if (projectId != pid || closing) return@launch
+                        // группы без вставленных слоёв не создаются (дети в списке раньше своей группы)
+                        val present = HashSet<Int>()
+                        for (n in nodes) if ((!n.group && n.psdId in items) || (n.group && nodes.any { it.parent == n.psdId && it.psdId in present })) present += n.psdId
+                        check(present.isNotEmpty()) { "В PSD нет слоёв с пикселями" }
+                        checkpoint("add", force = true)
+                        val newProps = HashMap<Int, com.vibetoon.domain.model.LayerProps>()
+                        val links = ArrayList<Pair<Int, Int>>()
+                        for (n in nodes) {
+                            if (n.psdId !in present) continue
+                            val mid = ids.getValue(n.psdId)
+                            media += items[n.psdId] ?: MediaItem(mid, MediaKind.GROUP, n.name.ifBlank { "Группа" }, "")
+                            links += mid to (if (n.parent < 0) rootId else ids.getValue(n.parent))
+                            val p = com.vibetoon.domain.model.LayerProps(
+                                opacity = n.opacity.coerceIn(0f, 1f),
+                                blend = if (n.group) "norm" else com.vibetoon.domain.project.PsdInsertPlan.layerBlend(n.blend),
+                                clip = n.clipped && !n.group, visible = n.visible)
+                            if (p != com.vibetoon.domain.model.LayerProps()) newProps[mid] = p
+                        }
+                        media += MediaItem(rootId, MediaKind.GROUP, title, "")
+                        regroup = regroup + links
+                        if (newProps.isNotEmpty()) _layerProps.value = _layerProps.value + newProps
+                        select = rootId
+                        message = "PSD «$title» вставлен: слоёв ${items.size}"
+                    }
+                    com.vibetoon.domain.project.PsdInsertPlan.Mode.FLAT -> {
+                        val ops = com.vibetoon.domain.project.PsdInsertPlan.composeOps(layers)
+                        check(ops.isNotEmpty()) { "В PSD нет видимых слоёв с пикселями" }
+                        val id = nextMediaId()
+                        val ticket = RenderNative.textureUploadTicket(id)
+                        val item = withContext(decodeDispatcher) {
+                            val bmp = com.vibetoon.data.PsdComposer.compose(compW, compH, ops, ::piece)
+                            try {
+                                val path = writePng(pid, "m${id}_$uniq.png", bmp, written)
+                                RenderNative.uploadBitmapIfCurrent(id, bmp, ticket)
+                                MediaItem(id, MediaKind.IMAGE, title, path, bmp.width, bmp.height, fx, fy, dw * s, dh * s)
+                            } finally { bmp.recycle() }
+                        }
+                        if (projectId != pid || closing) return@launch
+                        checkpoint("add", force = true)
+                        media += item
+                        select = id
+                        message = "PSD «$title» вставлен одним слоем"
+                    }
+                    com.vibetoon.domain.project.PsdInsertPlan.Mode.FRAMES -> {
+                        val frames = com.vibetoon.domain.project.PsdInsertPlan.frames(layers)
+                        check(frames.isNotEmpty()) { "В PSD нет видимых слоёв с пикселями" }
+                        val cut = com.vibetoon.domain.project.PsdInsertPlan.frameCandidates(layers) > frames.size
+                        val id = nextMediaId()
+                        val ticket = RenderNative.textureUploadTicket(id)
+                        val item = withContext(decodeDispatcher) {
+                            val cells = ArrayList<com.vibetoon.domain.project.FrameCell>()
+                            var first: MediaItem? = null
+                            for ((i, fr) in frames.withIndex()) {
+                                if (projectId != pid || closing) throw kotlinx.coroutines.CancellationException()
+                                val bmp = com.vibetoon.data.PsdComposer.compose(compW, compH, fr.ops, ::piece)
+                                try {
+                                    if (first == null) {
+                                        val path = writePng(pid, "m${id}_$uniq.png", bmp, written)
+                                        RenderNative.uploadBitmapIfCurrent(id, bmp, ticket)
+                                        first = MediaItem(id, MediaKind.IMAGE, title, path, bmp.width, bmp.height, fx, fy, dw * s, dh * s)
+                                        cells += com.vibetoon.domain.project.FrameCell(i, path)
+                                    } else cells += com.vibetoon.domain.project.FrameCell(i, writePng(pid, "m${id}_c${cells.size}.png", bmp, written))
+                                } finally { bmp.recycle() }
+                            }
+                            checkNotNull(first).copy(cells = if (cells.size > 1) cells else emptyList())
+                        }
+                        if (projectId != pid || closing) return@launch
+                        checkpoint("add", force = true)
+                        media += item
+                        if (item.cells.size > 1) cellsOf = item.id
+                        extendTo = frames.size
+                        select = id
+                        message = if (cut) "PSD «$title» вставлен как покадровый слой: кадров ${frames.size} (больше за раз не импортируется)"
+                            else "PSD «$title» вставлен как покадровый слой: кадров ${frames.size}"
+                    }
+                }
+                val st = _animation.value.settings
+                if (extendTo > st.durationFrames) {
+                    val d = extendTo.coerceAtMost(TimeFormat.MAX_DURATION_FRAMES)
+                    meta = meta?.copy(durationFrames = d)
+                    _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, d))
+                }
+                inserted = true
+                rebuildLayers(); pushScene(); selectLayer(select); markDirty()
+                if (cellsOf != null) updateCells(_frame.value)
+                _state.value = UiState.Message(message)
+            } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+            catch (t: Throwable) {
+                Log.e("VT/Media", "insert psd failed", t)
+                if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось вставить PSD")
+            } finally {
+                if (doc != 0L) runCatching { PsdNative.closeDocument(doc) }
+                if (!inserted) withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                    written.forEach { it.delete() }
+                    if (deleteOnFail) projects.fileOf(pid, rel).delete()
+                }
+            }
+        }
+    }
+
+    /** Пользовательские папки библиотеки (файл проекта); файлы, которых нет в assets, не показываются. */
+    fun libraryFolders(): com.vibetoon.domain.project.LibraryFolders {
+        val pid = projectId ?: return com.vibetoon.domain.project.LibraryFolders()
+        val text = runCatching { projects.fileOf(pid, com.vibetoon.domain.project.LibraryFolders.FILE).takeIf { it.isFile }?.readText() }.getOrNull()
+        val existing = projects.mediaDir(pid).listFiles()?.filter { it.isFile }?.mapTo(HashSet()) { it.name }.orEmpty()
+        return com.vibetoon.domain.project.LibraryFolders.decode(text).prune(existing)
+    }
+
+    /** Сохранить папки библиотеки; false - не записалось. */
+    fun saveLibraryFolders(folders: com.vibetoon.domain.project.LibraryFolders): Boolean {
+        val pid = projectId ?: return false
+        return runCatching {
+            val f = projects.fileOf(pid, com.vibetoon.domain.project.LibraryFolders.FILE)
+            val tmp = java.io.File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(folders.encode())
+            if (!tmp.renameTo(f)) { f.writeText(folders.encode()); tmp.delete() }
+            true
+        }.getOrDefault(false)
     }
 
     /** Видео или аудио из библиотеки: тот же файл проекта (без копии), новый слой или дорожка. */

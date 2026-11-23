@@ -74,7 +74,7 @@ private val RU: Map<String, String> = mapOf(
     "Only Erase/Smudge Selected Path Layers" to "Стирать/размазывать только выбранные слои-контуры",
     "Import Images as Symbols" to "Импортировать картинки как символы",
     "Insert Images into Existing Drawing" to "Вставлять картинки в существующий рисунок",
-    "PSD Import Mode: слои как в файле" to "Импорт PSD: слои как в файле",
+    "PSD Import Mode" to "Режим импорта PSD",
     "Resolution Limit" to "Ограничение разрешения",
     "Import Layer Locked States" to "Переносить замки слоёв при импорте",
     "Import Text as Pixel Layer" to "Импортировать текст как пиксельный слой",
@@ -113,7 +113,7 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
         "Manually Close Selections", "Cursor Enabled", "Cursor Hover Preview", "Only Erase/Smudge Selected Path Layers"
     ),
     "Import" to toggles(
-        "Import Images as Symbols", "Insert Images into Existing Drawing", "PSD Import Mode: слои как в файле",
+        "Import Images as Symbols", "Insert Images into Existing Drawing",
         "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer"
     ),
     "Display" to listOf<Item>(
@@ -300,6 +300,20 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         }
                     }
                     val gridSettings = com.vibetoon.ui.theme.LocalAppSettings.current
+                    // пакет 23: PSD Import Mode - как раскладывается PSD, вставленный в текущий проект
+                    if (TABS[tab].first == "Import" && gridSettings != null) {
+                        Text(ru("PSD Import Mode"), fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+                        Text("Для PSD, вставленного в текущий проект (+ → «PSD в текущий проект» или библиотека). PSD нового проекта всегда раскладывается слоями как в файле", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            com.vibetoon.domain.project.PsdInsertPlan.Mode.entries.forEach { m ->
+                                androidx.compose.material3.FilterChip(
+                                    selected = gridSettings.psdImportMode == m.code,
+                                    onClick = { gridSettings.psdImportMode = m.code; gridSettings.savePsdImportMode() },
+                                    label = { Text(m.title, fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                    }
                     if (TABS[tab].first in setOf("General", "Display") && gridSettings?.showGrid == true) {
                         Text("Ячеек по ширине холста", fontSize = 13.sp)
                         androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -22,4 +22,10 @@ object PsdNative {
      * Возвращает размер RGBA в байтах, -1 если слой пуст или не загружен. Пиксели в Kotlin не попадают.
      */
     external fun loadTexture(doc: Long, layerId: Int, scale: Float, maxTex: Int): Long
+
+    /**
+     * Пакет 23: пиксели слоя для записи в PNG (вставка другого PSD в проект): [ширина, высота, ARGB без premultiply...]
+     * или null, если слой пуст или не декодировался.
+     */
+    external fun decodePixels(doc: Long, layerId: Int, scale: Float, maxTex: Int): IntArray?
 }

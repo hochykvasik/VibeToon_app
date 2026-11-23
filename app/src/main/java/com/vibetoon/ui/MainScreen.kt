@@ -155,6 +155,9 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
     val openVideo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.VIDEO, uri)
     }
+    val openPsdInsert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.insertPsdFromUri(uri)   // пакет 23
+    }
     val openVideoAsSymbol = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importVideoAsSymbol(uri)   // пакет 22
     }
@@ -169,7 +172,8 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
         text = { showTextDialog = true },
         imageAsSymbol = { openImageAsSymbol.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
         sequence = { asSymbol -> sequenceAsSymbol = asSymbol; openSequence.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
-        videoAsSymbol = { openVideoAsSymbol.launch(arrayOf("video/mp4", "video/*")) }
+        videoAsSymbol = { openVideoAsSymbol.launch(arrayOf("video/mp4", "video/*")) },
+        psdInsert = { openPsdInsert.launch(arrayOf("*/*")) }
     )
 
     com.vibetoon.ui.shell.EditorShell(vm, onBack, addActions) { showExport = true }
@@ -219,7 +223,9 @@ class AddActions(
     /** Пакет 11: секвенция картинок (true - как символ). */
     val sequence: (Boolean) -> Unit = {},
     /** Пакет 22: видео как символ (кадры - покадровый слой внутри символа). */
-    val videoAsSymbol: () -> Unit = {}
+    val videoAsSymbol: () -> Unit = {},
+    /** Пакет 23: другой PSD в текущий проект (по PSD Import Mode). */
+    val psdInsert: () -> Unit = {}
 )
 
 @Composable

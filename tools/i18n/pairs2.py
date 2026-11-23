@@ -1165,4 +1165,31 @@ PNG не записан|PNG was not written
 В файле нет видео|The file contains no video
 Не удалось получить кадры видео|Could not read the video frames
 Не удалось импортировать видео|Could not import the video
+PSD проекта уже разложен на слои: выберите другой PSD или «+ → PSD в текущий проект»|The project PSD is already split into layers: pick another PSD or “+ → PSD into current project”
+Это не PSD-файл|This is not a PSD file
+Не удалось вставить PSD|Could not insert the PSD
+Файл PSD не найден|PSD file not found
+Не удалось прочитать PSD|Could not read the PSD
+В PSD нет слоёв с пикселями|The PSD has no layers with pixels
+В PSD нет видимых слоёв с пикселями|The PSD has no visible layers with pixels
+PSD «{}» вставлен: слоёв {}|PSD “{}” inserted: {} layers
+PSD «{}» вставлен одним слоем|PSD “{}” inserted as a single layer
+PSD «{}» вставлен как покадровый слой: кадров {} (больше за раз не импортируется)|PSD “{}” inserted as a frame-by-frame layer: {} frames (more cannot be imported at once)
+PSD «{}» вставлен как покадровый слой: кадров {}|PSD “{}” inserted as a frame-by-frame layer: {} frames
+Режим импорта PSD|PSD Import Mode
+Для PSD, вставленного в текущий проект (+ → «PSD в текущий проект» или библиотека). PSD нового проекта всегда раскладывается слоями как в файле|For a PSD inserted into the current project (+ → “PSD into current project” or the library). A new project’s PSD is always split into layers as in the file
+Слои как в файле|Layers as in file
+Одним слоем|Single layer
+Слои как кадры|Layers as frames
+PSD в текущий проект|PSD into current project
+Не удалось сохранить папки библиотеки|Could not save library folders
+Удалить папку (файлы останутся)|Delete folder (files stay)
++ Папка|+ Folder
+Долгое нажатие на папку - переименовать или удалить; на файл - переложить|Long-press a folder to rename or delete it; long-press a file to move it
+Долгое нажатие на файл - положить в папку|Long-press a file to put it into a folder
+Папка пуста: долгое нажатие на файл в другой папке кладёт его сюда|The folder is empty: long-press a file in another folder to put it here
+Переименовать папку|Rename folder
+Пустое название или такая папка уже есть|Empty name, or such a folder already exists
+Сначала создайте папку: «+ Папка»|Create a folder first: “+ Folder”
+Убрать из папки|Remove from folder
 """

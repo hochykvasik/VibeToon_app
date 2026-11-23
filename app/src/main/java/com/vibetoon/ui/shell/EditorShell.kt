@@ -512,6 +512,7 @@ private fun TopBar(
                     DropdownMenuItem(text = { Text("Настройки") }, onClick = { actions = false; onSettings() })
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("PSD-файл") }, onClick = { actions = false; add.psd() })
+                    DropdownMenuItem(text = { Text("PSD в текущий проект") }, onClick = { actions = false; add.psdInsert() })
                     DropdownMenuItem(text = { Text("Изображение (PNG, JPG)") }, onClick = { actions = false; add.image() })
                     DropdownMenuItem(text = { Text("Изображение как символ") }, onClick = { actions = false; add.imageAsSymbol() })
                     DropdownMenuItem(text = { Text("Секвенция картинок (покадровый слой)") }, onClick = { actions = false; add.sequence(false) })
@@ -1549,25 +1550,42 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
 
 /**
  * Библиотека ассетов: папки «Картинки», «Видео», «Аудио», «PSD» (пакет 11) - файлы слоёв проекта и файлы удалённых
- * слоёв (миниатюры, у видео - первый кадр); тап вставляет как новый слой (видео - видео-слоем, аудио - дорожкой). Кэш скрыт.
+ * слоёв (миниатюры, у видео - первый кадр); тап вставляет как новый слой (видео - видео-слоем, аудио - дорожкой,
+ * другой PSD - по PSD Import Mode, пакет 23). Кэш скрыт. Пакет 23: пользовательские папки - «+ Папка», долгое нажатие
+ * на файл кладёт его в папку, долгое нажатие на папку - переименование и удаление.
  */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun AssetLibraryDialog(vm: MainViewModel, onDismiss: () -> Unit) {
     val all = remember { vm.assetLibrary() }
     val hidden = remember { vm.assetServiceCount() }
+    var folders by remember { mutableStateOf(vm.libraryFolders()) }
     var showUnused by remember { mutableStateOf(false) }
     var folder by remember { mutableStateOf<com.vibetoon.domain.project.AssetCatalog.Type?>(null) }
-    val assets = if (folder == null) all else com.vibetoon.domain.project.AssetCatalog.folder(all, folder!!)
+    var userFolder by remember { mutableStateOf<String?>(null) }
+    var nameDialog by remember { mutableStateOf<String?>(null) }    // "" - новая папка, иначе имя переименуемой
+    var folderMenu by remember { mutableStateOf<String?>(null) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val lang = com.vibetoon.ui.theme.LocalAppSettings.current?.effectiveLang
+    fun toast(ru: String) = android.widget.Toast.makeText(ctx, com.vibetoon.ui.i18n.translate(ctx, lang, ru), android.widget.Toast.LENGTH_SHORT).show()
+    fun save(next: com.vibetoon.domain.project.LibraryFolders) { if (vm.saveLibraryFolders(next)) folders = next else toast("Не удалось сохранить папки библиотеки") }
+    val uf = userFolder
+    val assets = when {
+        uf != null -> folders.filesIn(uf).toSet().let { inF -> all.filter { it.file in inF } }
+        folder == null -> all
+        else -> com.vibetoon.domain.project.AssetCatalog.folder(all, folder!!)
+    }
     val inProject = assets.filter { it.kind == com.vibetoon.domain.project.AssetCatalog.Kind.IN_PROJECT }
     val unused = assets.filter { it.kind == com.vibetoon.domain.project.AssetCatalog.Kind.UNUSED }
-    val folders = listOf(
+    val typeFolders = listOf(
         null to "Все",
         com.vibetoon.domain.project.AssetCatalog.Type.IMAGE to "Картинки",
         com.vibetoon.domain.project.AssetCatalog.Type.VIDEO to "Видео",
         com.vibetoon.domain.project.AssetCatalog.Type.AUDIO to "Аудио",
         com.vibetoon.domain.project.AssetCatalog.Type.PSD to "PSD"
     )
+    val pick: (String) -> Unit = { vm.insertAsset(it); onDismiss() }
+    val move: (String, String?) -> Unit = { file, to -> save(folders.assign(file, to)) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Библиотека ассетов") },
@@ -1575,36 +1593,80 @@ private fun AssetLibraryDialog(vm: MainViewModel, onDismiss: () -> Unit) {
             androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 item {
                     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for ((t, title) in folders) {
+                        for ((t, title) in typeFolders) {
                             val n = if (t == null) all.size else all.count { it.type == t }
-                            androidx.compose.material3.FilterChip(selected = folder == t, onClick = { folder = t },
+                            androidx.compose.material3.FilterChip(selected = userFolder == null && folder == t, onClick = { folder = t; userFolder = null },
                                 label = { Text(L(title) + " ($n)", fontSize = 12.sp, maxLines = 1) })
                         }
+                        // пакет 23: пользовательские папки
+                        for (name in folders.names) {
+                            val n = folders.filesIn(name).count { f -> all.any { it.file == f } }
+                            Box {
+                                androidx.compose.material3.FilterChip(selected = userFolder == name, onClick = { userFolder = name; folder = null },
+                                    leadingIcon = { Icon(Icons.Default.Folder, null, Modifier.size(16.dp)) },
+                                    label = { Text("$name ($n)", fontSize = 12.sp, maxLines = 1, modifier = Modifier.combinedClickable(onClick = { userFolder = name; folder = null }, onLongClick = { folderMenu = name })) })
+                                DropdownMenu(expanded = folderMenu == name, onDismissRequest = { folderMenu = null }) {
+                                    DropdownMenuItem(text = { Text("Переименовать") }, onClick = { folderMenu = null; nameDialog = name })
+                                    DropdownMenuItem(text = { Text("Удалить папку (файлы останутся)") }, onClick = {
+                                        folderMenu = null; save(folders.delete(name)); if (userFolder == name) userFolder = null
+                                    })
+                                }
+                            }
+                        }
+                        androidx.compose.material3.AssistChip(onClick = { nameDialog = "" }, label = { Text("+ Папка", fontSize = 12.sp) })
                     }
                 }
-                if (assets.isEmpty()) item { Text("Пока пусто: импортированные картинки, видео, аудио и рисунки слоёв появятся здесь") }
+                if (uf != null) item { Text("Долгое нажатие на папку - переименовать или удалить; на файл - переложить", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                else if (folders.names.isNotEmpty()) item { Text("Долгое нажатие на файл - положить в папку", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (assets.isEmpty()) item { Text(if (uf != null) "Папка пуста: долгое нажатие на файл в другой папке кладёт его сюда" else "Пока пусто: импортированные картинки, видео, аудио и рисунки слоёв появятся здесь") }
                 if (inProject.isNotEmpty()) item { Text("В проекте", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
-                items(inProject.chunked(3).size) { i -> val row = inProject.chunked(3)[i]; AssetRow(vm, row) { vm.insertAsset(it); onDismiss() } }
+                items(inProject.chunked(3).size) { i -> val row = inProject.chunked(3)[i]; AssetRow(vm, row, folders, pick, move) }
                 if (unused.isNotEmpty()) item {
                     androidx.compose.material3.TextButton(onClick = { showUnused = !showUnused }) {
                         Text(if (showUnused) "Скрыть файлы удалённых слоёв (${unused.size})" else "Файлы удалённых слоёв (${unused.size})", fontSize = 12.sp)
                     }
                 }
-                if (showUnused) items(unused.chunked(3).size) { i -> val row = unused.chunked(3)[i]; AssetRow(vm, row) { vm.insertAsset(it); onDismiss() } }
+                if (showUnused) items(unused.chunked(3).size) { i -> val row = unused.chunked(3)[i]; AssetRow(vm, row, folders, pick, move) }
                 if (hidden > 0) item { Text("Скрыто служебных файлов (кэш миниатюр, Liquify, кадры анимации): $hidden", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         },
         confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Закрыть") } }
     )
+    nameDialog?.let { old ->
+        var text by remember(old) { mutableStateOf(old) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { nameDialog = null },
+            title = { Text(if (old.isEmpty()) "Новая папка" else "Переименовать папку") },
+            text = { androidx.compose.material3.OutlinedTextField(text, { text = it.take(com.vibetoon.domain.project.LibraryFolders.MAX_NAME) }, singleLine = true, label = { Text("Название") }) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val next = if (old.isEmpty()) folders.add(text) else folders.rename(old, text)
+                    if (next == null) toast("Пустое название или такая папка уже есть")
+                    else {
+                        save(next); nameDialog = null
+                        if (old.isEmpty()) { userFolder = next.names.last(); folder = null }
+                        else if (userFolder == old) userFolder = com.vibetoon.domain.project.LibraryFolders.clean(text)
+                    }
+                }) { Text("Готово") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { nameDialog = null }) { Text("Отмена") } }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AssetRow(vm: MainViewModel, row: List<com.vibetoon.domain.project.AssetCatalog.Entry>, onPick: (String) -> Unit) {
+private fun AssetRow(
+    vm: MainViewModel, row: List<com.vibetoon.domain.project.AssetCatalog.Entry>, folders: com.vibetoon.domain.project.LibraryFolders,
+    onPick: (String) -> Unit, onMove: (String, String?) -> Unit
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for (e in row) {
             val thumb by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, e.rel) { value = vm.assetThumb(e.rel) }
+            var menu by remember(e.file) { mutableStateOf(false) }
+            val inFolder = folders.folderOf(e.file)
             Column(
-                Modifier.width(84.dp).clip(RoundedCornerShape(8.dp)).clickable { onPick(e.rel) }.padding(2.dp),
+                Modifier.width(84.dp).clip(RoundedCornerShape(8.dp)).combinedClickable(onClick = { onPick(e.rel) }, onLongClick = { menu = true }).padding(2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(Modifier.size(76.dp).background(androidx.compose.ui.graphics.Color(0xFFEFEFEF), RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
@@ -1616,6 +1678,14 @@ private fun AssetRow(vm: MainViewModel, row: List<com.vibetoon.domain.project.As
                         else -> Text("…", fontSize = 12.sp)
                     }
                     if (e.type == com.vibetoon.domain.project.AssetCatalog.Type.VIDEO) Icon(Icons.Default.PlayArrow, L("Видео"), Modifier.align(Alignment.BottomEnd).size(18.dp))
+                    if (inFolder != null) Icon(Icons.Default.Folder, inFolder, Modifier.align(Alignment.TopEnd).size(14.dp))
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        if (folders.names.isEmpty()) DropdownMenuItem(text = { Text("Сначала создайте папку: «+ Папка»") }, onClick = { menu = false }, enabled = false)
+                        for (name in folders.names) DropdownMenuItem(
+                            text = { Text(if (name == inFolder) "✓ $name" else name, maxLines = 1) },
+                            onClick = { menu = false; if (name != inFolder) onMove(e.file, name) })
+                        if (inFolder != null) DropdownMenuItem(text = { Text("Убрать из папки") }, onClick = { menu = false; onMove(e.file, null) })
+                    }
                 }
                 Text(e.title, fontSize = 11.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }

@@ -71,6 +71,9 @@ class AppSettings(context: Context) {
     var checkerThumbnails by mutableStateOf(p.getBoolean("checker_thumbnails", false))
     // До появления настройки звук при скраббинге был включён всегда.
     var audioWhileScrubbing by mutableStateOf(p.getBoolean("audio_while_scrubbing", true))
+    /** Пакет 23: PSD Import Mode (код PsdInsertPlan.Mode: 0 слои как в файле, 1 одним слоем, 2 слои как кадры). */
+    var psdImportMode by mutableStateOf(p.getInt("psd_import_mode", 0))
+    fun savePsdImportMode() { p.edit().putInt("psd_import_mode", psdImportMode).apply() }
     /** Пакет 22: Show Symbol Context (по умолчанию вкл.) и Symbol Context Opacity в процентах (5-100, по умолчанию 30). */
     var symbolContext by mutableStateOf(p.getBoolean("symbol_context", true))
     var symbolContextOpacity by mutableStateOf(p.getInt("symbol_context_opacity", com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT))
@@ -181,6 +184,7 @@ class AppSettings(context: Context) {
         rotateCanvas = p.getBoolean("rotate_canvas_2f", true)
         checkerThumbnails = p.getBoolean("checker_thumbnails", false)
         symbolContext = p.getBoolean("symbol_context", true)
+        psdImportMode = p.getInt("psd_import_mode", 0)
         symbolContextOpacity = p.getInt("symbol_context_opacity", com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT)
         audioWhileScrubbing = p.getBoolean("audio_while_scrubbing", true)
         autoKeyframes = p.getBoolean("auto_keyframes", false)
