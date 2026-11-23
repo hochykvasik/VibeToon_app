@@ -255,6 +255,24 @@ fun StatusLine(vm: MainViewModel) {
     }
 }
 
+/** Пакет 19-20: ручки Безье (линии от узла и квадратики) - выбранный контур и контур пера в работе. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBezierHandles(d: com.vibetoon.ui.ToolDrag, dark: Color) {
+    d.handles?.let { h ->
+        val hl = 5.dp.toPx()
+        for (k in 0 until h.size / 6) {
+            val n = Offset(h[k * 6], h[k * 6 + 1])
+            for (w in 0..1) {
+                val e = Offset(h[k * 6 + 2 + w * 2], h[k * 6 + 3 + w * 2])
+                if (e == n) continue
+                drawLine(dark, n, e, 3.dp.toPx()); drawLine(Color(0xFF26C6DA), n, e, 1.5f.dp.toPx())
+                val on = k * 2 + w == d.selHandle
+                drawRect(dark, Offset(e.x - hl - 1.5f, e.y - hl - 1.5f), androidx.compose.ui.geometry.Size(hl * 2 + 3f, hl * 2 + 3f))
+                drawRect(if (on) Color(0xFFFFB300) else Color(0xFF26C6DA), Offset(e.x - hl, e.y - hl), androidx.compose.ui.geometry.Size(hl * 2, hl * 2))
+            }
+        }
+    }
+}
+
 /** Выделение (полупрозрачная маска с границей), рамка/лассо в процессе и точки пера - поверх холста. */
 @Composable
 private fun RasterOverlayLayer(vm: MainViewModel) {
@@ -281,21 +299,7 @@ private fun RasterOverlayLayer(vm: MainViewModel) {
                     else { drawOval(dark, tl, sz, style = androidx.compose.ui.graphics.drawscope.Stroke(4.dp.toPx())); drawOval(white, tl, sz, style = st) }
                 }
                 4 -> {
-                    // пакет 19: ручки Безье выбранного контура - линии от узла и квадратики
-                    d.handles?.let { h ->
-                        val hl = 5.dp.toPx()
-                        for (k in 0 until h.size / 6) {
-                            val n = Offset(h[k * 6], h[k * 6 + 1])
-                            for (w in 0..1) {
-                                val e = Offset(h[k * 6 + 2 + w * 2], h[k * 6 + 3 + w * 2])
-                                if (e == n) continue
-                                drawLine(dark, n, e, 3.dp.toPx()); drawLine(Color(0xFF26C6DA), n, e, 1.5f.dp.toPx())
-                                val on = k * 2 + w == d.selHandle
-                                drawRect(dark, Offset(e.x - hl - 1.5f, e.y - hl - 1.5f), androidx.compose.ui.geometry.Size(hl * 2 + 3f, hl * 2 + 3f))
-                                drawRect(if (on) Color(0xFFFFB300) else Color(0xFF26C6DA), Offset(e.x - hl, e.y - hl), androidx.compose.ui.geometry.Size(hl * 2, hl * 2))
-                            }
-                        }
-                    }
+                    drawBezierHandles(d, dark)
                     for (i in 0 until p.size / 2) {
                         val on = i == d.sel
                         drawCircle(dark, (if (on) 9 else 6).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
@@ -303,10 +307,12 @@ private fun RasterOverlayLayer(vm: MainViewModel) {
                     }
                 }
                 2, 3, 5 -> {
-                    for (i in 0 until p.size / 2 - 1) {
-                        val a = Offset(p[i * 2], p[i * 2 + 1]); val b = Offset(p[i * 2 + 2], p[i * 2 + 3])
+                    val line = d.curve ?: p   // пакет 20: контур пера с ручками - кривая
+                    for (i in 0 until line.size / 2 - 1) {
+                        val a = Offset(line[i * 2], line[i * 2 + 1]); val b = Offset(line[i * 2 + 2], line[i * 2 + 3])
                         drawLine(dark, a, b, 4.dp.toPx()); drawLine(white, a, b, 2.dp.toPx())
                     }
+                    if (d.kind == 3) drawBezierHandles(d, dark)
                     if (d.kind == 5 && p.size >= 2) {
                         drawCircle(Color(0xFF26C6DA).copy(alpha = .3f), 24.dp.toPx(), Offset(p[0], p[1]))
                         drawCircle(Color(0xFF26C6DA), 5.dp.toPx(), Offset(p[0], p[1]))

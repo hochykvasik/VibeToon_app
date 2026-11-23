@@ -1150,4 +1150,5 @@ PNG не записан|PNG was not written
 Узел сглажен: потяните ручку, чтобы изменить изгиб|Node smoothed: drag a handle to change the curve
 Узел стал углом|The node is now a corner
 Контур сглажен|Path smoothed
+Перо: тапами ставьте точки на векторном слое, протяжка от новой точки вытягивает ручки кривой, «Готово» завершает контур, тап по первой точке замыкает|Pen: tap to place points on a vector layer, drag from a new point to pull out curve handles, “Done” finishes the outline, tapping the first point closes it
 """

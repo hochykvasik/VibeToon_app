@@ -1458,4 +1458,5 @@
     <string name="ui_node_smoothed_drag_a_handle_to_chang">Узел сглажен: потяните ручку, чтобы изменить изгиб</string>
     <string name="ui_the_node_is_now_a_corner">Узел стал углом</string>
     <string name="ui_path_smoothed">Контур сглажен</string>
+    <string name="ui_pen_tap_to_place_points_on_a_vector__2">Перо: тапами ставьте точки на векторном слое, протяжка от новой точки вытягивает ручки кривой, «Готово» завершает контур, тап по первой точке замыкает</string>
 </resources>

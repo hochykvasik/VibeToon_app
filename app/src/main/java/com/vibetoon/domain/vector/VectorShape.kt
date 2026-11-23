@@ -261,6 +261,45 @@ object VectorBezier {
         return pack(s.copy(pts = pts), h)
     }
 
+    /**
+     * Пакет 20: ручки при постановке точки пером. [handles] - ручки контура в работе (по 4 на точку), у точки [k]
+     * выход ставится в dx,dy (вектор протяжки пальцем), вход - зеркально. Длина меньше [minLen] - ручек нет (простой тап).
+     */
+    fun penPull(handles: List<Float>, k: Int, dx: Float, dy: Float, minLen: Float): List<Float> {
+        if (k < 0 || handles.size < (k + 1) * 4 || !dx.isFinite() || !dy.isFinite()) return handles
+        val h = handles.toMutableList()
+        val on = kotlin.math.hypot(dx, dy) >= minLen
+        h[k * 4] = if (on) -dx else 0f; h[k * 4 + 1] = if (on) -dy else 0f
+        h[k * 4 + 2] = if (on) dx else 0f; h[k * 4 + 3] = if (on) dy else 0f
+        return h
+    }
+
+    /** Контур пера из точек и ручек в работе: ручки неверной длины или все нулевые - прямые отрезки, как раньше. */
+    fun fromPen(closed: Boolean, pts: List<Float>, handles: List<Float>, stroke: Long, fill: Long, width: Float): VectorShape {
+        val s = VectorShape(if (closed && pts.size >= 6) VecKind.POLYGON else VecKind.POLY, pts.toList(), stroke, fill, width)
+        return if (handles.size == pts.size * 2) pack(s, handles) else s
+    }
+
+    /** Точки кривой контура для предпросмотра (по [steps] на сегмент): x0,y0,x1,y1,... в координатах контура. */
+    fun flatten(s: VectorShape, steps: Int): List<Float> {
+        val segs = cubics(s)
+        if (segs.isEmpty()) return s.pts.toList()
+        val n = steps.coerceIn(1, 64)
+        val out = ArrayList<Float>(segs.size * n * 2 + 2)
+        out += segs[0][0]; out += segs[0][1]
+        for (c in segs) {
+            val straight = c[2] == c[0] && c[3] == c[1] && c[4] == c[6] && c[5] == c[7]
+            val m = if (straight) 1 else n
+            for (i in 1..m) {
+                val t = i.toFloat() / m; val u = 1f - t
+                val a = u * u * u; val b = 3f * u * u * t; val cc = 3f * u * t * t; val d = t * t * t
+                out += a * c[0] + b * c[2] + cc * c[4] + d * c[6]
+                out += a * c[1] + b * c[3] + cc * c[5] + d * c[7]
+            }
+        }
+        return out
+    }
+
     /** Сегменты кубических кривых: x0,y0, c1x,c1y, c2x,c2y, x1,y1 (замкнутый контур - с последним к первому). */
     fun cubics(s: VectorShape): List<FloatArray> {
         val n = nodes(s)

@@ -6250,7 +6250,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 RasterTool.PIPETTE -> "Пипетка: коснитесь холста, чтобы взять цвет"
                 RasterTool.SELECT -> "Выделение: обведите область или коснитесь палочкой; внутри выделения тяните, чтобы перенести"
                 RasterTool.SMUDGE -> "Смазка: проведите по рисунку слоя-картинки"
-                RasterTool.PATH -> "Перо: тапами ставьте точки на векторном слое, «Готово» завершает контур, тап по первой точке замыкает"
+                RasterTool.PATH -> "Перо: тапами ставьте точки на векторном слое, протяжка от новой точки вытягивает ручки кривой, «Готово» завершает контур, тап по первой точке замыкает"
             })
         }
     }
@@ -6326,7 +6326,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun rasterMove(sx: Float, sy: Float) {
         if (rasterMode == 5 && kotlin.math.hypot(sx - closeTapX, sy - closeTapY) > 12f * getApplication<Application>().resources.displayMetrics.density) closeTapMoved = true
-        when (rasterMode) { 1 -> selDrawMove(sx, sy); 2 -> selMoveMove(sx, sy); 3 -> pxSmudgeMove(sx, sy); 4 -> vecNodeMove(sx, sy) }
+        when (rasterMode) { 1 -> selDrawMove(sx, sy); 2 -> selMoveMove(sx, sy); 3 -> pxSmudgeMove(sx, sy); 4 -> vecNodeMove(sx, sy); 6 -> penDragMove(sx, sy) }
     }
 
     fun rasterUp() {
@@ -6336,7 +6336,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Жест прерван вторым пальцем (камера). */
     fun rasterCancel() {
-        when (rasterMode) { 1 -> { _toolDrag.value = null; selPts.clear(); selLayerPts.clear() }; 2 -> { selShiftX = 0f; selShiftY = 0f; refreshSelOverlay() }; 3 -> pxSmudgeUp(); 4 -> vecNodeCancel() }
+        when (rasterMode) { 1 -> { _toolDrag.value = null; selPts.clear(); selLayerPts.clear() }; 2 -> { selShiftX = 0f; selShiftY = 0f; refreshSelOverlay() }; 3 -> pxSmudgeUp(); 4 -> vecNodeCancel(); 6 -> penDragCancel() }
         rasterMode = 0
         cancelPendingLasso()
     }
@@ -7090,6 +7090,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---- перо: контур по точкам на векторном слое ----
 
     private val penPts = ArrayList<Float>()   // пиксели холста
+    /** Пакет 20: ручки точек контура в работе (по 4 на точку, относительно точки); протяжка при постановке точки. */
+    private var penHandles: List<Float> = emptyList()
+    private var penDragX = 0f
+    private var penDragY = 0f
 
     // ---- правка узлов готовых векторных примитивов: тап выбирает узел, перетаскивание двигает, кнопки удаляют ----
 
@@ -7327,9 +7331,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (kotlin.math.hypot(sx - fx, sy - fy) < 28f) { penFinish(true); return true }
         }
         penPts += cx; penPts += cy
+        penHandles = penHandles.take(penPts.size * 2 - 4) + listOf(0f, 0f, 0f, 0f)
+        penDragX = cx; penDragY = cy
+        rasterMode = 6   // протяжка вытягивает ручки этой точки
         _penCount.value = penPts.size / 2
         refreshPenOverlay()
         return true
+    }
+
+    /** Пакет 20: протяжка после постановки точки - выход ручки по пальцу, вход зеркально (короткая протяжка - без ручек). */
+    private fun penDragMove(sx: Float, sy: Float) {
+        val id = selectedVectorId() ?: return
+        val q = scene?.selectionQuads?.get(id) ?: return
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return
+        val k = penPts.size / 2 - 1
+        if (k < 0) return
+        val (ax, ay) = canvasToScreen(q, penDragX, penDragY)
+        val minScreen = 10f * getApplication<Application>().resources.displayMetrics.density
+        val dx = p.first * canvasW - penDragX; val dy = p.second * canvasH - penDragY
+        penHandles = if (kotlin.math.hypot(sx - ax, sy - ay) < minScreen) com.vibetoon.domain.vector.VectorBezier.penPull(penHandles, k, 0f, 0f, 1f)
+            else com.vibetoon.domain.vector.VectorBezier.penPull(penHandles, k, dx, dy, 0f)
+        refreshPenOverlay()
+    }
+
+    /** Жест прерван (второй палец): ручки последней точки сбрасываются. */
+    private fun penDragCancel() {
+        val k = penPts.size / 2 - 1
+        if (k >= 0) penHandles = com.vibetoon.domain.vector.VectorBezier.penPull(penHandles, k, 0f, 0f, 1f)
+        refreshPenOverlay()
     }
 
     fun penFinish(closed: Boolean) {
@@ -7339,22 +7368,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (penPts.size < 4) { _state.value = UiState.Message("Для контура нужно хотя бы две точки"); return }
         val c = vecStroke()
         val fill = if (closed && _vecFill.value) (c and 0x00FFFFFFL) or 0xFF000000L else 0L
-        val shape = com.vibetoon.domain.vector.VectorShape(
-            if (closed && penPts.size >= 6) com.vibetoon.domain.vector.VecKind.POLYGON else com.vibetoon.domain.vector.VecKind.POLY,
-            penPts.toList(), c, fill, brush.value.size
-        )
-        penPts.clear(); _penCount.value = 0; _toolDrag.value = null
+        val shape = com.vibetoon.domain.vector.VectorBezier.fromPen(closed, penPts.toList(), penHandles, c, fill, brush.value.size)
+        penPts.clear(); penHandles = emptyList(); _penCount.value = 0; _toolDrag.value = null
         setVectors(id, com.vibetoon.domain.vector.VectorMath.withShape(m.vectors, shape))
         _state.value = UiState.Message(if (closed) "Контур замкнут" else "Контур добавлен")
     }
 
     fun penUndoPoint() {
         if (penPts.size >= 2) { penPts.removeAt(penPts.size - 1); penPts.removeAt(penPts.size - 1) }
+        penHandles = penHandles.take(penPts.size * 2)
         _penCount.value = penPts.size / 2
         refreshPenOverlay()
     }
 
-    fun penCancel() { penPts.clear(); _penCount.value = 0; _toolDrag.value = null }
+    fun penCancel() { penPts.clear(); penHandles = emptyList(); _penCount.value = 0; _toolDrag.value = null }
 
     private fun refreshPenOverlay() {
         val id = selectedVectorId()
@@ -7390,7 +7417,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val u = penPts[i * 2] / canvasW; val v = penPts[i * 2 + 1] / canvasH
             toScreen(q[0] + u * (q[2] - q[0]) + v * (q[6] - q[0]), q[1] + u * (q[3] - q[1]) + v * (q[7] - q[1])).let { out[i * 2] = it.first; out[i * 2 + 1] = it.second }
         }
-        _toolDrag.value = ToolDrag(3, out)
+        // пакет 20: контур в работе с ручками - кривая и ручки на экране
+        val pen = com.vibetoon.domain.vector.VectorBezier.fromPen(false, penPts.toList(), penHandles, 0L, 0L, 0f)
+        if (!com.vibetoon.domain.vector.VectorBezier.hasHandles(pen)) { _toolDrag.value = ToolDrag(3, out); return }
+        val flat = com.vibetoon.domain.vector.VectorBezier.flatten(pen, 16)
+        val curve = FloatArray(flat.size)
+        for (i in 0 until flat.size / 2) canvasToScreen(q, flat[i * 2], flat[i * 2 + 1]).let { curve[i * 2] = it.first; curve[i * 2 + 1] = it.second }
+        val hs = ArrayList<Float>()
+        for (k in 0 until penPts.size / 2) {
+            if (!com.vibetoon.domain.vector.VectorBezier.nodeHasHandles(pen, k)) continue
+            hs += out[k * 2]; hs += out[k * 2 + 1]
+            for (w in 0..1) { val (hx, hy) = com.vibetoon.domain.vector.VectorBezier.handleAt(pen, k, w)!!; val (px, py) = canvasToScreen(q, hx, hy); hs += px; hs += py }
+        }
+        _toolDrag.value = ToolDrag(3, out, handles = hs.toFloatArray(), curve = curve)
     }
 
     /** Обновление экранных оверлеев растровых инструментов при смене сцены и камеры. */
