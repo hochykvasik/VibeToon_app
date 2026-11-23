@@ -182,6 +182,12 @@ fun TimelinePanel(
     // Порядок строк = порядок слоёв; выделение его не меняет (иначе ломается «Лесенка»)
     val shownRows = rows
     var showSettings by remember { mutableStateOf(false) }
+    // сцены (пакет 9)
+    val scenes by vm.scenes.collectAsStateWithLifecycle()
+    val scenePlayOnly by vm.scenePlayOnly.collectAsStateWithLifecycle()
+    var showScenes by remember { mutableStateOf(false) }
+    // текущая сцена меняется только на границах сцен: панель не перекомпонуется на каждом кадре Play
+    val sceneNow by remember(scenes) { derivedStateOf { scenes.firstOrNull { frameS.value in it } } }
     val duration = animation.settings.durationFrames
     val fps = animation.settings.fps
 
@@ -392,6 +398,8 @@ fun TimelinePanel(
             TlIcon(Icons.Default.Flag, "Маркер кадра", active = markerHere) { vm.toggleMarker() }
             TlIcon(Icons.Default.SkipNext, "Следующий маркер", enabled = markers.isNotEmpty()) { vm.jumpMarker(true) }
             TlIcon(Icons.Default.RestartAlt, "Сбросить трансформацию", enabled = selected != null && !playing) { vm.resetLayerTransform() }
+            // Сцены (пакет 9): создание, переход, переименование, удаление; Play и экспорт по сцене
+            TlIcon(Icons.Default.Movie, "Сцены", active = scenes.isNotEmpty()) { showScenes = true }
             // Шестерёнка: длительность проекта и FPS
             TlIcon(Icons.Default.Settings, "Длительность и FPS") { showSettings = true }
         }
@@ -431,6 +439,7 @@ fun TimelinePanel(
             }
         }
 
+        if (scenes.isNotEmpty()) SceneStrip(vm, scenes, sceneNow, frameWPx, contentW, NAME_W, hScroll, viewportPx) { showScenes = true }
         Row {
             Box(Modifier.width(NAME_W).height(RULER_H))
             // Линейка не листается сама (enabled=false): тап и перетаскивание по ней - перемотка.
@@ -1086,6 +1095,7 @@ fun TimelinePanel(
         }
     }
     if (showSettings) TimelineSettingsDialog(duration, fps, vm::setTimeline) { showSettings = false }
+    if (showScenes) ScenesDialog(vm, scenes, sceneNow, fps, scenePlayOnly) { showScenes = false }
 }
 
 /**

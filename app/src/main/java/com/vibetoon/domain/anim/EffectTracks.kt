@@ -101,4 +101,23 @@ object EffectTracks {
         }
         return result
     }
+
+    /**
+     * Пакет 9: копия дорожек параметров эффектов слоя [from] на слой [to] (тот же слот): слой, перенесённый в группу,
+     * получает её общую цепочку эффектов вместе с ключами - анимация совпадает с соседями. Прежние дорожки [to] в этих
+     * слотах заменяются (или удаляются, если у источника их нет).
+     */
+    fun copyLayerTracks(anim: Animation, from: Int, to: Int, effects: List<Effect>): Animation {
+        if (from !in 0..MAX_LAYER || to !in 0..MAX_LAYER || from == to) return anim
+        val tracks = anim.tracks.toMutableMap()
+        for (e in effects) {
+            if (e.slot !in 0 until SLOTS) continue
+            for (p in 0 until PARAMS) {
+                val src = anim.tracks[id(from, e.slot, p)]
+                val dst = id(to, e.slot, p)
+                if (src == null) tracks.remove(dst) else tracks[dst] = AnimationTrack(dst, src.keys)
+            }
+        }
+        return anim.copy(tracks = tracks)
+    }
 }

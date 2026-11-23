@@ -7,6 +7,7 @@ import com.vibetoon.domain.model.Affine2D
 import com.vibetoon.domain.model.GroupNode
 import com.vibetoon.domain.model.LeafNode
 import com.vibetoon.domain.model.Node
+import com.vibetoon.domain.model.SceneDomain
 import com.vibetoon.domain.model.SceneTree
 import com.vibetoon.domain.project.MEDIA_ID_BASE
 import com.vibetoon.nativebridge.LayerInfo
@@ -263,12 +264,28 @@ object SceneBuilder {
             return floatArrayOf(minX, minY, maxX, minY, maxX, maxY, minX, maxY)
         }
 
+        // Пакет 8+: слои разных пространств в одной группе. Слои PSD заданы в координатах PSD (в холст их вписывает
+        // rootWorld0), медиа-слои (картинки, рисунки, экземпляры символов, id >= MEDIA_ID_BASE) - сразу в координатах
+        // холста. Медиа-слой внутри группы PSD (рот-символ в папке головы) получает мир группы * rootWorld0⁻¹, слой PSD
+        // внутри медиа-группы - мир группы * rootWorld0: трансформации группы наследуются, а собственные координаты
+        // слоя не искажаются вписыванием PSD.
+        val fitInv = rootWorld0.inverse() ?: Affine2D.IDENTITY
+        fun crossed(parentWorld: Affine2D, parentMedia: Boolean, id: Int): Affine2D {
+            val media = SceneDomain.isMedia(id)
+            return when {
+                media == parentMedia -> parentWorld
+                media -> parentWorld * fitInv
+                else -> parentWorld * rootWorld0
+            }
+        }
+
         // Предпроход: для каждого узла локальная матрица и мир его родителя в дереве (без привязок).
         val pw0 = HashMap<Int, Affine2D>()
         val loc0 = HashMap<Int, Affine2D>()
         if (links.isNotEmpty() || bones.isNotEmpty()) {
-            fun pre(nodes: List<Node>, parentWorld: Affine2D) {
+            fun pre(nodes: List<Node>, parentWorld0: Affine2D, parentMedia: Boolean) {
                 for (n in nodes) {
+                    val parentWorld = crossed(parentWorld0, parentMedia, n.id)
                     val t = transforms[n.id] ?: LayerTransform()
                     val l = when (n) {
                         is GroupNode -> local(t, n.pivotX, n.pivotY, n.id)
@@ -276,12 +293,12 @@ object SceneBuilder {
                     }
                     pw0[n.id] = parentWorld
                     loc0[n.id] = l
-                    if (n is GroupNode) pre(n.children, parentWorld * l)
+                    if (n is GroupNode) pre(n.children, parentWorld * l, SceneDomain.isMedia(n.id))
                 }
             }
             val (m0, p0) = roots.partition { it.id >= MEDIA_ID_BASE }
-            pre(p0, rootWorld)
-            pre(m0, camView)
+            pre(p0, rootWorld, false)
+            pre(m0, camView, true)
             for ((id, h) in bones) {
                 pw0[id] = Affine2D.IDENTITY
                 loc0[id] = local(transforms[id] ?: LayerTransform(), h.first, h.second)
@@ -315,13 +332,14 @@ object SceneBuilder {
         fun linkDelta(id: Int): Affine2D = links[id]?.let { delta(it) } ?: Affine2D.IDENTITY
 
         /** Обход списка братьев; в [out] накапливаются рамки видимых слоёв (для рамки группы). */
-        fun walk(nodes: List<Node>, parentWorld: Affine2D, out: MutableList<FloatArray>) {
+        fun walk(nodes: List<Node>, parentWorld0: Affine2D, out: MutableList<FloatArray>, parentMedia: Boolean) {
             // Видима ли база текущей clipping-цепочки; null - базы-слоя нет (начало списка или
             // между ними группа). Clipping к группе-базе пока не поддерживается: такой слой
             // рисуется как обычный, а не пропадает.
             var clipBaseVisible: Boolean? = null
             for (n in nodes) {
                 val t = transforms[n.id] ?: LayerTransform()
+                val parentWorld = crossed(parentWorld0, parentMedia, n.id)
                 when (n) {
                     is GroupNode -> {
                         if (!n.visible) continue
@@ -345,7 +363,7 @@ object SceneBuilder {
                         }
                         add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
                         val childQuads = ArrayList<FloatArray>()
-                        walk(n.children, world, childQuads)
+                        walk(n.children, world, childQuads, SceneDomain.isMedia(n.id))
                         activeGroup = previous
                         safeGroupPath = previousPath
                         add(OP_END_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
@@ -434,18 +452,18 @@ object SceneBuilder {
         // координатах холста и рисуются поверх PSD в порядке добавления.
         val (media, psd) = roots.partition { it.id >= MEDIA_ID_BASE }
         // подряд идущие корни с одинаковой глубиной обходятся вместе (цепочки обтравки не рвутся), у каждой группы глубин своя матрица камеры
-        fun walkByDepth(list: List<Node>, pre: Affine2D) {
+        fun walkByDepth(list: List<Node>, pre: Affine2D, media: Boolean) {
             var i = 0
             while (i < list.size) {
                 val d = depths[list[i].id] ?: 0f
                 var j = i + 1
                 while (j < list.size && (depths[list[j].id] ?: 0f) == d) j++
-                walk(list.subList(i, j), camViewFor(d) * pre, ArrayList())
+                walk(list.subList(i, j), camViewFor(d) * pre, ArrayList(), media)
                 i = j
             }
         }
-        walkByDepth(psd, rootWorld0)
-        walkByDepth(media, Affine2D.IDENTITY)
+        walkByDepth(psd, rootWorld0, false)
+        walkByDepth(media, Affine2D.IDENTITY, true)
         require(visitedGroups == groupDeformations.keys) { "Group deformer targets a missing or hidden group" }
         val allGroupMeshes = preparedGroupMeshes + generatedGroupMeshes + generatedDenseMeshes
         val nativeWarps = warps - generatedDenseMeshes.keys

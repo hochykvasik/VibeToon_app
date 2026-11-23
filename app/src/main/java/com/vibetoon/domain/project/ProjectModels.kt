@@ -236,7 +236,9 @@ data class ProjectData(
     val warpGridSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap(),
     val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap(),
     /** Переопределения опорных точек (пивотов) узлов: id -> (x, y) в координатах холста. */
-    val pivots: Map<Int, Pair<Float, Float>> = emptyMap()
+    val pivots: Map<Int, Pair<Float, Float>> = emptyMap(),
+    /** Сцены: именованные части таймлайна (пакет 9). */
+    val scenes: List<com.vibetoon.domain.anim.SceneRange> = emptyList()
 ) {
     fun animation() = Animation(ProjectSettings(meta.fps, meta.durationFrames), tracks)
 }

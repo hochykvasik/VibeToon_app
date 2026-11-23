@@ -71,6 +71,9 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
             var gifAlpha by remember { mutableStateOf(false) }
             var sequenceAlpha by remember { mutableStateOf(false) }
             var jpeg by remember { mutableStateOf(false) }
+            // пакет 9: экспорт только сцены под плейхедом
+            val scene = remember { vm.currentScene() }
+            var sceneOnly by remember { mutableStateOf(vm.exportSceneOnly && scene != null) }
             val backupLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
                 if (uri != null) { vm.exportProjectBackup(uri, ctx); onHide() }
             }
@@ -84,6 +87,7 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                 ExportMode.SEQUENCE -> sequenceFps
                 else -> fps
             }
+            vm.setExportSceneOnly(sceneOnly)
             val (w, h, frames) = vm.exportInfo(quality, exportFps)
             AlertDialog(
                 onDismissRequest = onHide,
@@ -97,6 +101,11 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                                 androidx.compose.material3.FilterChip(selected = mode == m, onClick = { mode = m }, label = { Text(m.title) })
                             }
                         }
+                        if (scene != null && (mode == ExportMode.VIDEO || mode == ExportMode.GIF || mode == ExportMode.SEQUENCE))
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                                androidx.compose.material3.Switch(checked = sceneOnly, onCheckedChange = { sceneOnly = it })
+                                Text(com.vibetoon.ui.i18n.L("Только сцена") + " «" + com.vibetoon.ui.timeline.sceneDisplayName(scene.name) + "»", fontSize = 13.sp)
+                            }
                         if (mode == ExportMode.IMAGE) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                                 androidx.compose.material3.FilterChip(selected = !jpeg, onClick = { jpeg = false }, label = { Text("PNG (с прозрачностью)") })

@@ -973,4 +973,29 @@ Hold - резкая смена формы. Плавно/Линейно - кад�
 Имя кости|Bone name
 Например: Предплечье|For example: Forearm
 Переименовать кость|Rename bone
+Сцены|Scenes
+Сцена|Scene
+Вне сцен|Outside scenes
+Сцены делят общий таймлайн на части: переход, Play и экспорт по сцене. Удаление сцены не удаляет кадры и ключи.|Scenes split the shared timeline into parts: jump, Play and export per scene. Deleting a scene keeps its frames and keys.
+Сцен пока нет: «+ Новая сцена» сделает текущий таймлайн первой сценой.|No scenes yet: “+ New scene” turns the current timeline into the first scene.
+Имя сцены|Scene name
+{} – {} · {} кадров|{} – {} · {} frames
+Переименовать сцену|Rename scene
+Удалить сцену|Delete scene
++ Новая сцена|+ New scene
+Разрезать на плейхеде|Split at playhead
+◀ Предыдущая|◀ Previous
+Следующая ▶|Next ▶
+Play только в текущей сцене|Play only the current scene
+Экспорт только текущей сцены|Export only the current scene
+Только сцена|Only scene
+Слишком много сцен|Too many scenes
+Проект достиг максимальной длительности|The project has reached its maximum length
+Сцена добавлена в конец таймлайна|Scene added at the end of the timeline
+Поставьте плейхед внутрь сцены, не на её первый кадр|Put the playhead inside a scene, not on its first frame
+Сцена разрезана на плейхеде|Scene split at the playhead
+Сцена удалена, кадры остались на таймлайне|Scene deleted, its frames stay on the timeline
+Сцен в этом направлении нет|No scenes in this direction
+Нельзя: экземпляр символа не может лежать внутри своего определения|Not allowed: a symbol instance cannot be inside its own definition
+Слой перенесён в группу и получил её эффекты|Layer moved into the group and received its effects
 """

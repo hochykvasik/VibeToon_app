@@ -42,6 +42,22 @@ data class GroupNode(
     val pivotY: Float
 ) : Node
 
+/**
+ * Пространства координат узлов: записи PSD (id < MEDIA_ID_BASE, включая группы слоёв PSD) - в координатах PSD,
+ * медиа-слои (картинки, рисунки, текст, экземпляры символов) - в координатах холста. SceneBuilder переводит
+ * между ними, когда слой одного пространства лежит в группе другого.
+ */
+object SceneDomain {
+    fun isMedia(id: Int): Boolean = id >= com.vibetoon.domain.project.MEDIA_ID_BASE
+
+    /** Дети группы [groupId] в её пространстве координат; если таких нет - все дети. */
+    fun sameSpace(groupId: Int, kids: List<Node>): List<Node> {
+        val media = isMedia(groupId)
+        val same = kids.filter { isMedia(it.id) == media }
+        return if (same.isEmpty()) kids else same
+    }
+}
+
 object SceneTree {
     fun build(layers: List<LayerInfo>, pivots: Map<Int, Pair<Float, Float>> = emptyMap()): List<Node> {
         val byParent = layers.groupBy { it.parentId }
@@ -54,7 +70,9 @@ object SceneTree {
                 )
                 LayerKind.GROUP_OPEN, LayerKind.GROUP_CLOSED -> {
                     val kids = make(l.id)
-                    val (px, py) = pivots[l.id] ?: pivotOf(kids)
+                    // пивот группы - по детям её же пространства координат: экземпляр символа (рамка во весь холст,
+                    // координаты холста) в группе PSD не сдвигает её пивот, и ключи/эффекты головы не «прыгают»
+                    val (px, py) = pivots[l.id] ?: pivotOf(SceneDomain.sameSpace(l.id, kids))
                     GroupNode(l.id, l.name, l.isVisible, l.opacity, l.blendMode, kids, px, py)
                 }
             }
