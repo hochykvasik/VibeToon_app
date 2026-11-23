@@ -2998,7 +2998,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Форма действительно попала в GPU? (бюджет текстур мог её отклонить - тогда не ссылаться на пустоту) */
     private fun verifyFormTexture(key: SymbolFormCache.Key, id: Int, tries: Int) {
         val view = RenderHost.view ?: return
-        view.checkTextureAfterFrame(id) { size ->
+        view.layerSizeAfterFrame(id) { size: IntArray? ->
             viewModelScope.launch {
                 if (size != null || formCache.any(key)?.texId != id) return@launch
                 if (RenderNative.pendingUploadBytes() > 0 && tries < 40) {   // ещё в очереди загрузки
