@@ -1291,6 +1291,10 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Узел стал углом" to R.string.ui_the_node_is_now_a_corner,
     "Контур сглажен" to R.string.ui_path_smoothed,
     "Перо: тапами ставьте точки на векторном слое, протяжка от новой точки вытягивает ручки кривой, «Готово» завершает контур, тап по первой точке замыкает" to R.string.ui_pen_tap_to_place_points_on_a_vector__2,
+    "Независимые ручки" to R.string.ui_independent_handles,
+    "У узла нет ручек: сначала «Сгладить узел» или вытяните ручки пером" to R.string.ui_the_node_has_no_handles_tap_smooth_n,
+    "Ручки узла независимы: каждая двигается отдельно" to R.string.ui_the_node_s_handles_are_independent_e,
+    "Ручки узла связаны: вторая снова напротив первой" to R.string.ui_the_node_s_handles_are_linked_the_se,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */

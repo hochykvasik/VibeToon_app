@@ -26,7 +26,9 @@ data class VectorShape(
      * Пакет 19: ручки Безье контуров пера (POLY/POLYGON) - по 4 числа на узел: вход dx,dy и выход dx,dy относительно узла
      * (ручки двигаются вместе с узлом). Пусто - контур из прямых, как раньше.
      */
-    val handles: List<Float> = emptyList()
+    val handles: List<Float> = emptyList(),
+    /** Пакет 21: независимые ручки узла (по флагу на узел; пусто - все ручки связаны, вторая напротив первой). */
+    val freeHandles: List<Boolean> = emptyList()
 )
 
 /** Чистая математика векторного слоя (без Android): отбор точек жеста, сборка примитива, границы. */
@@ -183,8 +185,33 @@ object VectorBezier {
     private fun full(s: VectorShape): MutableList<Float> =
         if (s.handles.size == s.pts.size * 2) s.handles.toMutableList() else MutableList(s.pts.size * 2) { 0f }
 
-    /** Все ручки нулевые - поле пустое (контур снова из прямых, файл как раньше). */
-    private fun pack(s: VectorShape, h: List<Float>): VectorShape = s.copy(handles = if (h.all { it == 0f }) emptyList() else h.toList())
+    /** Все ручки нулевые - поле пустое (контур снова из прямых, файл как раньше); флаги независимых ручек - только при ручках. */
+    private fun pack(s: VectorShape, h: List<Float>, free: List<Boolean> = s.freeHandles): VectorShape {
+        val hs = if (h.all { it == 0f }) emptyList() else h.toList()
+        val fs = if (hs.isEmpty() || free.size != s.pts.size / 2 || free.none { it }) emptyList() else free.toList()
+        return s.copy(handles = hs, freeHandles = fs)
+    }
+
+    /** Пакет 21: ручки узла [k] независимы (перетаскивание одной не поворачивает другую). */
+    fun isFree(s: VectorShape, k: Int): Boolean = s.freeHandles.size == s.pts.size / 2 && s.freeHandles.getOrNull(k) == true
+
+    private fun withFree(s: VectorShape, k: Int, free: Boolean): List<Boolean> =
+        (if (s.freeHandles.size == s.pts.size / 2) s.freeHandles.toMutableList() else MutableList(s.pts.size / 2) { false }).also { it[k] = free }
+
+    /**
+     * Пакет 21: «Независимые ручки» / «Связать ручки». Связывание поворачивает ручку входа напротив ручки выхода
+     * (длина входа сохраняется). null - у узла нет ручек или контур не перо.
+     */
+    fun setFree(s: VectorShape, k: Int, free: Boolean): VectorShape? {
+        if (!supports(s) || k !in 0 until nodes(s) || !nodeHasHandles(s, k)) return null
+        val h = full(s)
+        if (!free) {
+            val ox = h[k * 4 + 2]; val oy = h[k * 4 + 3]; val ol = kotlin.math.hypot(ox, oy)
+            val il = kotlin.math.hypot(h[k * 4], h[k * 4 + 1])
+            if (ol > 1e-3f && il > 1e-3f) { h[k * 4] = -ox / ol * il; h[k * 4 + 1] = -oy / ol * il }
+        }
+        return pack(s, h, withFree(s, k, free))
+    }
 
     /** Соседи узла [k] по контуру (у замкнутого - по кругу); null - соседа нет. */
     private fun neighbor(s: VectorShape, k: Int, d: Int): Int? {
@@ -219,7 +246,7 @@ object VectorBezier {
         val dOut = kotlin.math.hypot(nx - x, ny - y) / 3f
         val h = full(s)
         h[k * 4] = -tx * dIn; h[k * 4 + 1] = -ty * dIn; h[k * 4 + 2] = tx * dOut; h[k * 4 + 3] = ty * dOut
-        return pack(s, h)
+        return pack(s, h, if (isFree(s, k)) withFree(s, k, false) else s.freeHandles)   // сглаженный узел - ручки связаны
     }
 
     fun smoothAll(s: VectorShape): VectorShape? {
@@ -233,7 +260,7 @@ object VectorBezier {
         if (!supports(s) || k !in 0 until nodes(s)) return null
         val h = full(s)
         for (i in 0 until 4) h[k * 4 + i] = 0f
-        return pack(s, h)
+        return pack(s, h, if (isFree(s, k)) withFree(s, k, false) else s.freeHandles)
     }
 
     fun nodeHasHandles(s: VectorShape, k: Int): Boolean =
@@ -250,7 +277,7 @@ object VectorBezier {
         val o = (1 - which) * 2
         val ol = kotlin.math.hypot(h[k * 4 + o], h[k * 4 + o + 1])
         val l = kotlin.math.hypot(dx, dy)
-        if (ol > 0f && l > 1e-3f) { h[k * 4 + o] = -dx / l * ol; h[k * 4 + o + 1] = -dy / l * ol }
+        if (!isFree(s, k) && ol > 0f && l > 1e-3f) { h[k * 4 + o] = -dx / l * ol; h[k * 4 + o + 1] = -dy / l * ol }
         return shapes.toMutableList().also { it[si] = pack(s, h) }
     }
 
@@ -258,7 +285,8 @@ object VectorBezier {
     fun withoutNode(s: VectorShape, k: Int): VectorShape {
         val pts = s.pts.toMutableList(); pts.removeAt(k * 2 + 1); pts.removeAt(k * 2)
         val h = if (s.handles.size == s.pts.size * 2) s.handles.toMutableList().also { l -> repeat(4) { l.removeAt(k * 4) } } else emptyList()
-        return pack(s.copy(pts = pts), h)
+        val f = if (s.freeHandles.size == s.pts.size / 2) s.freeHandles.toMutableList().also { it.removeAt(k) } else emptyList()
+        return pack(s.copy(pts = pts, freeHandles = f), h, f)
     }
 
     /**

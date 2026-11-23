@@ -264,10 +264,12 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBezierHandles(d
             for (w in 0..1) {
                 val e = Offset(h[k * 6 + 2 + w * 2], h[k * 6 + 3 + w * 2])
                 if (e == n) continue
-                drawLine(dark, n, e, 3.dp.toPx()); drawLine(Color(0xFF26C6DA), n, e, 1.5f.dp.toPx())
+                // пакет 21: независимые ручки - сиреневые
+                val tint = if (d.freeHandles?.getOrNull(k) == true) Color(0xFFCE93D8) else Color(0xFF26C6DA)
+                drawLine(dark, n, e, 3.dp.toPx()); drawLine(tint, n, e, 1.5f.dp.toPx())
                 val on = k * 2 + w == d.selHandle
                 drawRect(dark, Offset(e.x - hl - 1.5f, e.y - hl - 1.5f), androidx.compose.ui.geometry.Size(hl * 2 + 3f, hl * 2 + 3f))
-                drawRect(if (on) Color(0xFFFFB300) else Color(0xFF26C6DA), Offset(e.x - hl, e.y - hl), androidx.compose.ui.geometry.Size(hl * 2, hl * 2))
+                drawRect(if (on) Color(0xFFFFB300) else tint, Offset(e.x - hl, e.y - hl), androidx.compose.ui.geometry.Size(hl * 2, hl * 2))
             }
         }
     }

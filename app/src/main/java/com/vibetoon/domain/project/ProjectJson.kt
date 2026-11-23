@@ -322,6 +322,7 @@ object ProjectJson {
         if (v.op.isNotEmpty()) mm["op"] = v.op
         if (v.parts.isNotEmpty()) mm["parts"] = v.parts.map { vectorJson(it) }
         if (v.handles.isNotEmpty()) mm["h"] = v.handles.map { f -> f.toDouble() }
+        if (v.freeHandles.isNotEmpty()) mm["fh"] = v.freeHandles.map { b -> if (b) 1 else 0 }
     }
 
     /** Чтение фигуры; неизвестный вид, мало точек или BOOL без двух частей - фигура пропускается. */
@@ -333,12 +334,16 @@ object ProjectJson {
         if (pts.size < 4) return null
         val parts = (m["parts"] as? List<*>).orEmpty().mapNotNull { vectorOf(it, depth + 1) }
         val op = m["op"] as? String ?: ""
+        // ручки Безье (пакет 19): только при точном числе значений, иначе контур читается прямыми;
+        // независимые ручки (пакет 21) - флаг на узел, только вместе с ручками
+        val handles = (m["h"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toFloat()?.takeIf { f -> f.isFinite() } }.takeIf { it.size == pts.size * 2 } ?: emptyList()
         if (kind == com.vibetoon.domain.vector.VecKind.BOOL && (parts.size != 2 || op !in com.vibetoon.domain.vector.VectorBool.OPS)) return null
         return com.vibetoon.domain.vector.VectorShape(
             kind, pts, parseColor(m["s"] as? String ?: "#FF000000"), (m["f"] as? String)?.let { parseColor(it) } ?: 0L,
             (m["w"] as? Number)?.toFloat() ?: 8f, m["n"] as? String ?: "", op, parts,
-            // ручки Безье (пакет 19): только при точном числе значений, иначе контур читается прямыми
-            (m["h"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toFloat()?.takeIf { f -> f.isFinite() } }.takeIf { it.size == pts.size * 2 } ?: emptyList()
+            handles,
+            (m["fh"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt()?.let { b -> b != 0 } }
+                .takeIf { handles.isNotEmpty() && it.size == pts.size / 2 && it.any { b -> b } } ?: emptyList()
         )
     }
 

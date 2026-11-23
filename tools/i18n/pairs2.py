@@ -1151,4 +1151,8 @@ PNG не записан|PNG was not written
 Узел стал углом|The node is now a corner
 Контур сглажен|Path smoothed
 Перо: тапами ставьте точки на векторном слое, протяжка от новой точки вытягивает ручки кривой, «Готово» завершает контур, тап по первой точке замыкает|Pen: tap to place points on a vector layer, drag from a new point to pull out curve handles, “Done” finishes the outline, tapping the first point closes it
+Независимые ручки|Independent handles
+У узла нет ручек: сначала «Сгладить узел» или вытяните ручки пером|The node has no handles: tap “Smooth node” first or pull handles out with the pen
+Ручки узла независимы: каждая двигается отдельно|The node’s handles are independent: each moves on its own
+Ручки узла связаны: вторая снова напротив первой|The node’s handles are linked: the second one is opposite the first again
 """

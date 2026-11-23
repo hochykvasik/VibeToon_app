@@ -7287,10 +7287,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val updated = when (action) {
             0 -> com.vibetoon.domain.vector.VectorBezier.smoothNode(s, nodePt)
             1 -> com.vibetoon.domain.vector.VectorBezier.cornerNode(s, nodePt)
+            3 -> com.vibetoon.domain.vector.VectorBezier.setFree(s, nodePt, !com.vibetoon.domain.vector.VectorBezier.isFree(s, nodePt))   // пакет 21
             else -> com.vibetoon.domain.vector.VectorBezier.smoothAll(s)
         }
         if (updated == null || updated == s) {
-            _state.value = UiState.Message(if (action == 1) "У узла уже нет ручек" else "Узел нельзя сгладить: нужен соседний узел в другом месте")
+            _state.value = UiState.Message(when (action) {
+                1 -> "У узла уже нет ручек"
+                3 -> "У узла нет ручек: сначала «Сгладить узел» или вытяните ручки пером"
+                else -> "Узел нельзя сгладить: нужен соседний узел в другом месте"
+            })
             return
         }
         val result = media[i].vectors.toMutableList().also { it[nodeShape] = updated }
@@ -7301,6 +7306,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = UiState.Message(when (action) {
             0 -> "Узел сглажен: потяните ручку, чтобы изменить изгиб"
             1 -> "Узел стал углом"
+            3 -> if (com.vibetoon.domain.vector.VectorBezier.isFree(updated, nodePt)) "Ручки узла независимы: каждая двигается отдельно" else "Ручки узла связаны: вторая снова напротив первой"
             else -> "Контур сглажен"
         })
     }
@@ -7398,16 +7404,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     flat += px; flat += py
                 }
                 // пакет 19: ручки Безье выбранного контура
-                val hs = ArrayList<Float>(); var selH = -1
+                val hs = ArrayList<Float>(); var selH = -1; val free = ArrayList<Boolean>()
                 shapes.getOrNull(nodeShape)?.takeIf { id == nodeSelId && com.vibetoon.domain.vector.VectorBezier.hasHandles(it) }?.let { s ->
                     for (k in 0 until s.pts.size / 2) {
                         if (!com.vibetoon.domain.vector.VectorBezier.nodeHasHandles(s, k)) continue
                         if (k == nodePt && nodeHandle >= 0) selH = (hs.size / 6) * 2 + nodeHandle
+                        free += com.vibetoon.domain.vector.VectorBezier.isFree(s, k)
                         val (nx, ny) = canvasToScreen(q, s.pts[k * 2], s.pts[k * 2 + 1]); hs += nx; hs += ny
                         for (w in 0..1) { val (hx, hy) = com.vibetoon.domain.vector.VectorBezier.handleAt(s, k, w)!!; val (px, py) = canvasToScreen(q, hx, hy); hs += px; hs += py }
                     }
                 }
-                _toolDrag.value = ToolDrag(4, flat.toFloatArray(), sel = sel, handles = if (hs.isEmpty()) null else hs.toFloatArray(), selHandle = selH)
+                _toolDrag.value = ToolDrag(4, flat.toFloatArray(), sel = sel, handles = if (hs.isEmpty()) null else hs.toFloatArray(), selHandle = selH, freeHandles = free.toBooleanArray())
                 return
             }
         }

@@ -1459,4 +1459,8 @@
     <string name="ui_the_node_is_now_a_corner">Узел стал углом</string>
     <string name="ui_path_smoothed">Контур сглажен</string>
     <string name="ui_pen_tap_to_place_points_on_a_vector__2">Перо: тапами ставьте точки на векторном слое, протяжка от новой точки вытягивает ручки кривой, «Готово» завершает контур, тап по первой точке замыкает</string>
+    <string name="ui_independent_handles">Независимые ручки</string>
+    <string name="ui_the_node_has_no_handles_tap_smooth_n">У узла нет ручек: сначала «Сгладить узел» или вытяните ручки пером</string>
+    <string name="ui_the_node_s_handles_are_independent_e">Ручки узла независимы: каждая двигается отдельно</string>
+    <string name="ui_the_node_s_handles_are_linked_the_se">Ручки узла связаны: вторая снова напротив первой</string>
 </resources>
