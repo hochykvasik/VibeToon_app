@@ -321,6 +321,7 @@ object ProjectJson {
         if (v.fill != 0L) mm["f"] = colorToString(v.fill); if (v.preset.isNotEmpty()) mm["n"] = v.preset
         if (v.op.isNotEmpty()) mm["op"] = v.op
         if (v.parts.isNotEmpty()) mm["parts"] = v.parts.map { vectorJson(it) }
+        if (v.handles.isNotEmpty()) mm["h"] = v.handles.map { f -> f.toDouble() }
     }
 
     /** Чтение фигуры; неизвестный вид, мало точек или BOOL без двух частей - фигура пропускается. */
@@ -335,7 +336,9 @@ object ProjectJson {
         if (kind == com.vibetoon.domain.vector.VecKind.BOOL && (parts.size != 2 || op !in com.vibetoon.domain.vector.VectorBool.OPS)) return null
         return com.vibetoon.domain.vector.VectorShape(
             kind, pts, parseColor(m["s"] as? String ?: "#FF000000"), (m["f"] as? String)?.let { parseColor(it) } ?: 0L,
-            (m["w"] as? Number)?.toFloat() ?: 8f, m["n"] as? String ?: "", op, parts
+            (m["w"] as? Number)?.toFloat() ?: 8f, m["n"] as? String ?: "", op, parts,
+            // ручки Безье (пакет 19): только при точном числе значений, иначе контур читается прямыми
+            (m["h"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toFloat()?.takeIf { f -> f.isFinite() } }.takeIf { it.size == pts.size * 2 } ?: emptyList()
         )
     }
 

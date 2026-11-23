@@ -280,10 +280,27 @@ private fun RasterOverlayLayer(vm: MainViewModel) {
                     if (d.kind == 0) { drawRect(dark, tl, sz, style = androidx.compose.ui.graphics.drawscope.Stroke(4.dp.toPx())); drawRect(white, tl, sz, style = st) }
                     else { drawOval(dark, tl, sz, style = androidx.compose.ui.graphics.drawscope.Stroke(4.dp.toPx())); drawOval(white, tl, sz, style = st) }
                 }
-                4 -> for (i in 0 until p.size / 2) {
-                    val on = i == d.sel
-                    drawCircle(dark, (if (on) 9 else 6).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
-                    drawCircle(if (on) Color(0xFFFFB300) else white, (if (on) 7 else 4).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
+                4 -> {
+                    // пакет 19: ручки Безье выбранного контура - линии от узла и квадратики
+                    d.handles?.let { h ->
+                        val hl = 5.dp.toPx()
+                        for (k in 0 until h.size / 6) {
+                            val n = Offset(h[k * 6], h[k * 6 + 1])
+                            for (w in 0..1) {
+                                val e = Offset(h[k * 6 + 2 + w * 2], h[k * 6 + 3 + w * 2])
+                                if (e == n) continue
+                                drawLine(dark, n, e, 3.dp.toPx()); drawLine(Color(0xFF26C6DA), n, e, 1.5f.dp.toPx())
+                                val on = k * 2 + w == d.selHandle
+                                drawRect(dark, Offset(e.x - hl - 1.5f, e.y - hl - 1.5f), androidx.compose.ui.geometry.Size(hl * 2 + 3f, hl * 2 + 3f))
+                                drawRect(if (on) Color(0xFFFFB300) else Color(0xFF26C6DA), Offset(e.x - hl, e.y - hl), androidx.compose.ui.geometry.Size(hl * 2, hl * 2))
+                            }
+                        }
+                    }
+                    for (i in 0 until p.size / 2) {
+                        val on = i == d.sel
+                        drawCircle(dark, (if (on) 9 else 6).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
+                        drawCircle(if (on) Color(0xFFFFB300) else white, (if (on) 7 else 4).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
+                    }
                 }
                 2, 3, 5 -> {
                     for (i in 0 until p.size / 2 - 1) {

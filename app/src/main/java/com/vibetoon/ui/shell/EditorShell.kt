@@ -691,6 +691,9 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
                 if (pen == 0) OutlinedButton(onClick = vm::restyleSelectedVector, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Цвет и толщина кисти", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen == 0) OutlinedButton(onClick = vm::deleteVectorNode, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Удалить узел", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen == 0) OutlinedButton(onClick = vm::deleteVectorShape, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Удалить примитив", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                // пакет 19: узлы Безье контуров пера
+                if (pen == 0) for ((a, t) in listOf(0 to "Сгладить узел", 1 to "Острый угол", 2 to "Сгладить контур"))
+                    OutlinedButton(onClick = { vm.bezierVectorNode(a) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 // пакет 18: булевы операции выбранной фигуры с фигурой под ней
                 if (pen == 0) for ((op, t) in listOf(
                     com.vibetoon.domain.vector.VectorBool.UNION to "Объединить", com.vibetoon.domain.vector.VectorBool.SUBTRACT to "Вычесть",

@@ -1140,4 +1140,14 @@ PNG не записан|PNG was not written
 Разобрать можно только фигуру булевой операции|Only a boolean operation shape can be released
 Фигура разобрана на две|The shape was released into two shapes
 Узлы фигуры булевой операции можно двигать; чтобы удалить узел, сначала нажмите «Разобрать»|Nodes of a boolean operation shape can be moved; to delete a node, tap “Release” first
+Сгладить узел|Smooth node
+Острый угол|Corner
+Сгладить контур|Smooth path
+У фигуры булевой операции ручки не правятся: сначала нажмите «Разобрать»|Handles of a boolean operation shape can’t be edited: tap “Release” first
+Ручки кривых есть только у контуров пера; у линии, прямоугольника, эллипса и фигур их нет|Only pen paths have curve handles; lines, rectangles, ellipses and preset shapes don’t
+У узла уже нет ручек|This node has no handles
+Узел нельзя сгладить: нужен соседний узел в другом месте|The node can’t be smoothed: it needs a neighboring node at a different position
+Узел сглажен: потяните ручку, чтобы изменить изгиб|Node smoothed: drag a handle to change the curve
+Узел стал углом|The node is now a corner
+Контур сглажен|Path smoothed
 """

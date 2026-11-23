@@ -1280,6 +1280,16 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Разобрать можно только фигуру булевой операции" to R.string.ui_only_a_boolean_operation_shape_can_b,
     "Фигура разобрана на две" to R.string.ui_the_shape_was_released_into_two_shap,
     "Узлы фигуры булевой операции можно двигать; чтобы удалить узел, сначала нажмите «Разобрать»" to R.string.ui_nodes_of_a_boolean_operation_shape_c,
+    "Сгладить узел" to R.string.ui_smooth_node,
+    "Острый угол" to R.string.ui_corner,
+    "Сгладить контур" to R.string.ui_smooth_path,
+    "У фигуры булевой операции ручки не правятся: сначала нажмите «Разобрать»" to R.string.ui_handles_of_a_boolean_operation_shape,
+    "Ручки кривых есть только у контуров пера; у линии, прямоугольника, эллипса и фигур их нет" to R.string.ui_only_pen_paths_have_curve_handles_li,
+    "У узла уже нет ручек" to R.string.ui_this_node_has_no_handles,
+    "Узел нельзя сгладить: нужен соседний узел в другом месте" to R.string.ui_the_node_can_t_be_smoothed_it_needs_,
+    "Узел сглажен: потяните ручку, чтобы изменить изгиб" to R.string.ui_node_smoothed_drag_a_handle_to_chang,
+    "Узел стал углом" to R.string.ui_the_node_is_now_a_corner,
+    "Контур сглажен" to R.string.ui_path_smoothed,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */

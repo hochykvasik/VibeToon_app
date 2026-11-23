@@ -1448,4 +1448,14 @@
     <string name="ui_only_a_boolean_operation_shape_can_b">Only a boolean operation shape can be released</string>
     <string name="ui_the_shape_was_released_into_two_shap">The shape was released into two shapes</string>
     <string name="ui_nodes_of_a_boolean_operation_shape_c">Nodes of a boolean operation shape can be moved; to delete a node, tap “Release” first</string>
+    <string name="ui_smooth_node">Smooth node</string>
+    <string name="ui_corner">Corner</string>
+    <string name="ui_smooth_path">Smooth path</string>
+    <string name="ui_handles_of_a_boolean_operation_shape">Handles of a boolean operation shape can’t be edited: tap “Release” first</string>
+    <string name="ui_only_pen_paths_have_curve_handles_li">Only pen paths have curve handles; lines, rectangles, ellipses and preset shapes don’t</string>
+    <string name="ui_this_node_has_no_handles">This node has no handles</string>
+    <string name="ui_the_node_can_t_be_smoothed_it_needs_">The node can’t be smoothed: it needs a neighboring node at a different position</string>
+    <string name="ui_node_smoothed_drag_a_handle_to_chang">Node smoothed: drag a handle to change the curve</string>
+    <string name="ui_the_node_is_now_a_corner">The node is now a corner</string>
+    <string name="ui_path_smoothed">Path smoothed</string>
 </resources>

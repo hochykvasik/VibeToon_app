@@ -7,6 +7,7 @@ import android.graphics.Path
 import com.vibetoon.domain.paint.ShapeKind
 import com.vibetoon.domain.paint.ShapeMath
 import com.vibetoon.domain.vector.VecKind
+import com.vibetoon.domain.vector.VectorBezier
 import com.vibetoon.domain.vector.VectorShape
 
 /** Растеризация векторного слоя: примитивы (координаты в px холста) рисуются в прозрачный Bitmap слоя [bw] x [bh]. */
@@ -31,8 +32,8 @@ object VectorRaster {
         if (s.kind == VecKind.BOOL) { boolPath(s, 0)?.let { draw(it) }; return }   // пакет 18
         when (s.kind) {
             VecKind.PATH -> draw(smooth(p))
-            VecKind.POLY -> strokePaint?.let { cv.drawPath(poly(p, false), it) }
-            VecKind.POLYGON -> draw(poly(p, true))
+            VecKind.POLY -> strokePaint?.let { cv.drawPath(if (VectorBezier.hasHandles(s)) bezier(s) else poly(p, false), it) }
+            VecKind.POLYGON -> draw(if (VectorBezier.hasHandles(s)) bezier(s) else poly(p, true))
             VecKind.LINE -> strokePaint?.let { cv.drawLine(p[0], p[1], p[p.size - 2], p[p.size - 1], it) }
             VecKind.RECT -> draw(Path().apply { addRect(minOf(p[0], p[2]), minOf(p[1], p[3]), maxOf(p[0], p[2]), maxOf(p[1], p[3]), Path.Direction.CW) })
             VecKind.ELLIPSE -> draw(Path().apply { addOval(minOf(p[0], p[2]), minOf(p[1], p[3]), maxOf(p[0], p[2]), maxOf(p[1], p[3]), Path.Direction.CW) })
@@ -58,7 +59,7 @@ object VectorRaster {
         if (p.size < 4) return null
         return when (s.kind) {
             VecKind.PATH -> smooth(p).apply { close() }
-            VecKind.POLYGON -> poly(p, true)
+            VecKind.POLYGON -> if (VectorBezier.hasHandles(s)) bezier(s) else poly(p, true)
             VecKind.RECT -> Path().apply { addRect(minOf(p[0], p[2]), minOf(p[1], p[3]), maxOf(p[0], p[2]), maxOf(p[1], p[3]), Path.Direction.CW) }
             VecKind.ELLIPSE -> Path().apply { addOval(minOf(p[0], p[2]), minOf(p[1], p[3]), maxOf(p[0], p[2]), maxOf(p[1], p[3]), Path.Direction.CW) }
             VecKind.PRESET -> {
@@ -97,6 +98,17 @@ object VectorRaster {
         }
         val r = Path()
         return if (r.op(a, b, op)) r else null
+    }
+
+    /** Контур пера с ручками Безье (пакет 19): кубические сегменты, замкнутый - с close(). */
+    private fun bezier(s: VectorShape): Path {
+        val path = Path()
+        val segs = VectorBezier.cubics(s)
+        if (segs.isEmpty()) return path
+        path.moveTo(segs[0][0], segs[0][1])
+        for (c in segs) path.cubicTo(c[2], c[3], c[4], c[5], c[6], c[7])
+        if (s.kind == VecKind.POLYGON) path.close()
+        return path
     }
 
     private fun poly(p: List<Float>, close: Boolean): Path {

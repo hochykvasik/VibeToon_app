@@ -7099,6 +7099,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var nodeOriginal: MediaItem? = null
     private var nodeDraft: List<com.vibetoon.domain.vector.VectorShape>? = null
     private var nodeSelectionSnapshot: List<com.vibetoon.domain.vector.VectorShape>? = null
+    /** Пакет 19: перетаскивается ручка Безье выбранного узла (0 - вход, 1 - выход), -1 - сам узел. */
+    private var nodeHandle = -1
 
     private fun canvasToScreen(q: FloatArray, x: Float, y: Float): Pair<Float, Float> {
         val u = x / canvasW; val v = y / canvasH
@@ -7118,9 +7120,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return best
     }
 
+    /** Ближайшая ручка Безье выбранного контура: (узел, 0/1) и расстояние на экране; ручки показываются только у него. */
+    private fun vecHandleAt(id: Int, sx: Float, sy: Float): Pair<Pair<Int, Int>, Float>? {
+        if (id != nodeSelId) return null
+        val m = media.firstOrNull { it.id == id } ?: return null
+        val s = m.vectors.getOrNull(nodeShape) ?: return null
+        if (!com.vibetoon.domain.vector.VectorBezier.hasHandles(s)) return null
+        val q = scene?.selectionQuads?.get(id) ?: return null
+        var best: Pair<Int, Int>? = null
+        var bestD = 34f
+        for (k in 0 until s.pts.size / 2) {
+            if (!com.vibetoon.domain.vector.VectorBezier.nodeHasHandles(s, k)) continue
+            for (w in 0..1) {
+                val (hx, hy) = com.vibetoon.domain.vector.VectorBezier.handleAt(s, k, w) ?: continue
+                val (px, py) = canvasToScreen(q, hx, hy)
+                val d = kotlin.math.hypot(sx - px, sy - py)
+                if (d < bestD) { bestD = d; best = k to w }
+            }
+        }
+        return best?.let { it to bestD }
+    }
+
+    private fun vecNodeDist(id: Int, hit: Pair<Int, Int>, sx: Float, sy: Float): Float {
+        val q = scene?.selectionQuads?.get(id) ?: return Float.MAX_VALUE
+        val s = media.firstOrNull { it.id == id }?.vectors?.getOrNull(hit.first) ?: return Float.MAX_VALUE
+        val (px, py) = canvasToScreen(q, s.pts[hit.second * 2], s.pts[hit.second * 2 + 1])
+        return kotlin.math.hypot(sx - px, sy - py)
+    }
+
     private fun vecNodeDown(id: Int, sx: Float, sy: Float): Boolean {
-        val hit = vecNodeAt(id, sx, sy)
-        if (hit == null) { nodeShape = -1; nodePt = -1; refreshPenOverlay(); return false }
+        val hit0 = vecNodeAt(id, sx, sy)
+        val hh = vecHandleAt(id, sx, sy)
+        // ручка берётся, если она ближе ближайшего узла (короткая ручка у самого узла не мешает выбрать узел)
+        val hit = if (hh != null && (hit0 == null || hh.second < vecNodeDist(id, hit0, sx, sy))) {
+            nodeHandle = hh.first.second; nodeShape to hh.first.first
+        } else { nodeHandle = -1; hit0 }
+        if (hit == null) { nodeShape = -1; nodePt = -1; nodeHandle = -1; refreshPenOverlay(); return false }
         nodeShape = hit.first; nodePt = hit.second; nodeSelId = id
         nodeOriginal = media.firstOrNull { it.id == id } ?: return false
         nodeDraft = nodeOriginal!!.vectors
@@ -7139,7 +7174,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (nodePt !in 0 until shape.pts.size / 2) return
         val q = scene?.selectionQuads?.get(original.id) ?: return
         val p = unitOf(q, toCanvas(sx, sy)) ?: return
-        nodeDraft = com.vibetoon.domain.vector.VectorMath.moveNode(draft, nodeShape, nodePt, p.first * canvasW, p.second * canvasH) ?: return
+        nodeDraft = (if (nodeHandle >= 0) com.vibetoon.domain.vector.VectorBezier.moveHandle(draft, nodeShape, nodePt, nodeHandle, p.first * canvasW, p.second * canvasH)
+            else com.vibetoon.domain.vector.VectorMath.moveNode(draft, nodeShape, nodePt, p.first * canvasW, p.second * canvasH)) ?: return
         refreshPenOverlay()
         val now = SystemClock.uptimeMillis()
         if (now - vecPreviewAt >= 70) { vecPreviewAt = now; renderVector(original.copy(vectors = nodeDraft!!), save = false) }
@@ -7192,8 +7228,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val canDrop = (s.kind == com.vibetoon.domain.vector.VecKind.PATH || s.kind == com.vibetoon.domain.vector.VecKind.POLY || s.kind == com.vibetoon.domain.vector.VecKind.POLYGON) &&
             s.pts.size / 2 > (if (s.kind == com.vibetoon.domain.vector.VecKind.POLYGON) 3 else 2)
         if (!canDrop) { deleteVectorShape(); return }
-        val pts = s.pts.toMutableList(); pts.removeAt(nodePt * 2 + 1); pts.removeAt(nodePt * 2)
-        setVectors(nodeSelId, media[i].vectors.toMutableList().also { it[nodeShape] = s.copy(pts = pts) })
+        setVectors(nodeSelId, media[i].vectors.toMutableList().also { it[nodeShape] = com.vibetoon.domain.vector.VectorBezier.withoutNode(s, nodePt) })
         nodePt = -1
         refreshPenOverlay()
     }
@@ -7236,6 +7271,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         nodeSelectionSnapshot = r.shapes.toList()
         refreshPenOverlay()
         _state.value = UiState.Message("Фигура разобрана на две")
+    }
+
+    /** Пакет 19: «Сгладить узел» / «Угол» / «Сгладить контур» - ручки Безье контуров пера. */
+    fun bezierVectorNode(action: Int) {
+        val i = media.indexOfFirst { it.id == nodeSelId }
+        if (i < 0 || !canEditSelectedVectorNode()) { _state.value = UiState.Message("Сначала коснитесь узла выбранного незаблокированного слоя"); return }
+        val s = media[i].vectors.getOrNull(nodeShape) ?: return
+        if (s.kind == com.vibetoon.domain.vector.VecKind.BOOL) { _state.value = UiState.Message("У фигуры булевой операции ручки не правятся: сначала нажмите «Разобрать»"); return }
+        if (!com.vibetoon.domain.vector.VectorBezier.supports(s)) { _state.value = UiState.Message("Ручки кривых есть только у контуров пера; у линии, прямоугольника, эллипса и фигур их нет"); return }
+        val updated = when (action) {
+            0 -> com.vibetoon.domain.vector.VectorBezier.smoothNode(s, nodePt)
+            1 -> com.vibetoon.domain.vector.VectorBezier.cornerNode(s, nodePt)
+            else -> com.vibetoon.domain.vector.VectorBezier.smoothAll(s)
+        }
+        if (updated == null || updated == s) {
+            _state.value = UiState.Message(if (action == 1) "У узла уже нет ручек" else "Узел нельзя сгладить: нужен соседний узел в другом месте")
+            return
+        }
+        val result = media[i].vectors.toMutableList().also { it[nodeShape] = updated }
+        setVectors(nodeSelId, result)
+        nodeSelectionSnapshot = result.toList()
+        nodeHandle = -1
+        refreshPenOverlay()
+        _state.value = UiState.Message(when (action) {
+            0 -> "Узел сглажен: потяните ручку, чтобы изменить изгиб"
+            1 -> "Узел стал углом"
+            else -> "Контур сглажен"
+        })
     }
 
     fun deleteVectorShape() {
@@ -7307,7 +7370,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (i == nodeShape && k == nodePt && id == nodeSelId) sel = flat.size / 2
                     flat += px; flat += py
                 }
-                _toolDrag.value = ToolDrag(4, flat.toFloatArray(), sel = sel)
+                // пакет 19: ручки Безье выбранного контура
+                val hs = ArrayList<Float>(); var selH = -1
+                shapes.getOrNull(nodeShape)?.takeIf { id == nodeSelId && com.vibetoon.domain.vector.VectorBezier.hasHandles(it) }?.let { s ->
+                    for (k in 0 until s.pts.size / 2) {
+                        if (!com.vibetoon.domain.vector.VectorBezier.nodeHasHandles(s, k)) continue
+                        if (k == nodePt && nodeHandle >= 0) selH = (hs.size / 6) * 2 + nodeHandle
+                        val (nx, ny) = canvasToScreen(q, s.pts[k * 2], s.pts[k * 2 + 1]); hs += nx; hs += ny
+                        for (w in 0..1) { val (hx, hy) = com.vibetoon.domain.vector.VectorBezier.handleAt(s, k, w)!!; val (px, py) = canvasToScreen(q, hx, hy); hs += px; hs += py }
+                    }
+                }
+                _toolDrag.value = ToolDrag(4, flat.toFloatArray(), sel = sel, handles = if (hs.isEmpty()) null else hs.toFloatArray(), selHandle = selH)
                 return
             }
         }
