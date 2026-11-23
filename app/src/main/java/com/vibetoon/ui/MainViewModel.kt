@@ -776,6 +776,64 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Пакет 16: итог переноса замков/текста PSD для сообщения после загрузки (null - ничего не переносилось). */
+    private var psdExtrasNote: String? = null
+
+    /**
+     * Пакет 16: замки слоёв PSD (`lspf`) -> замок / замок прозрачности VibeToon; текстовые слои PSD (`TySh`) ->
+     * редактируемый текст (растровый слой PSD скрывается как удалённый, Undo не нужен: это новый импорт).
+     * Текст ставится по рамке слоя PSD, но поверх слоёв PSD и вне их групп (смешанный порядок - в разработке).
+     * Ошибка чтения или отрисовки одного слоя не мешает импорту: этот слой остаётся картинкой.
+     */
+    private fun applyPsdExtras(summary: ParseSummary, locks: Boolean, editableText: Boolean): String? {
+        val extras = runCatching { java.io.File(summary.path).inputStream().use { com.vibetoon.domain.project.PsdLayerExtras.read(it) } }
+            .getOrDefault(emptyList())
+        if (extras.isEmpty()) return null
+        val infoById = summary.layers.associateBy { it.id }
+        val props = HashMap(layerProps)
+        fun base(info: LayerInfo) = props[info.id] ?: LayerProps(info.opacity, info.blendMode, false, info.isClipped).normalized()
+        var locked = 0; var texts = 0; var failed = 0
+        for (e in extras) {
+            val info = infoById[e.index] ?: continue
+            if (info.kind == LayerKind.GROUP_END) continue
+            val t = e.text
+            if (editableText && t != null && info.kind == LayerKind.LAYER) {
+                val ok = runCatching {
+                    val pl = com.vibetoon.domain.project.PsdLayerExtras.placement(e, t, fit.a, fit.tx, fit.ty)
+                    val id = nextMediaId()
+                    val proto = MediaItem(
+                        id, MediaKind.TEXT, info.name.ifBlank { "Текст" }, "",
+                        text = t.text, textColor = t.color ?: 0xFF000000L,
+                        textSize = pl.size.coerceIn(TextRenderer.MIN_SIZE, TextRenderer.MAX_SIZE), textAlign = t.align
+                    )
+                    val (w, h) = renderAndUpload(proto)
+                    media += proto.copy(x = pl.x, y = pl.y, w = w, h = h)
+                    val b0 = base(info)
+                    val p = b0.copy(alphaLock = false, clip = false, visible = b0.visible && info.isVisible)   // скрытый в PSD текст остаётся скрытым
+                    props[id] = if (locks && e.locked) p.copy(locked = true) else p
+                    props.remove(info.id)
+                    deletedPsd = deletedPsd + info.id
+                    texts++
+                    if (locks && e.locked) locked++
+                }.onFailure { Log.w("VT/Psd", "text layer ${info.id} stays raster", it) }.isSuccess
+                if (ok) continue
+                failed++
+            }
+            if (locks && (e.locked || e.alphaLock)) {
+                props[info.id] = base(info).copy(locked = e.locked, alphaLock = e.alphaLock || base(info).alphaLock)
+                locked++
+            }
+        }
+        setProps(props)
+        return when {
+            failed > 0 -> "Текстовые слои PSD стали редактируемым текстом: $texts; остались картинкой: $failed"
+            texts > 0 && locked > 0 -> "Текстовые слои PSD стали редактируемым текстом: $texts; перенесено замков: $locked"
+            texts > 0 -> "Текстовые слои PSD стали редактируемым текстом: $texts"
+            locked > 0 -> "Перенесено замков слоёв PSD: $locked"
+            else -> null
+        }
+    }
+
     private suspend fun renderPsd(summary: ParseSummary, keepState: Boolean) = withContext(decodeDispatcher) {
         var doc = 0L
         try {
@@ -785,6 +843,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             psdH = size[1]
             fit = ProjectMath.fit(psdW, psdH, canvasW, canvasH)
             psdLayers = summary.layers
+            psdExtrasNote = null
             override.clear()
             if (!keepState) {
                 // Новый PSD: id слоёв другие, прежние правки PSD теряют смысл. Правки медиа-слоёв остаются.
@@ -799,6 +858,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 })
                 fxLayers = fxLayers.filterKeys { it >= MEDIA_ID_BASE }
                 _frame.value = 0
+                // пакет 16: Import → Import Layer Locked States / Import Text as Pixel Layer
+                val prefs = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+                val takeLocks = prefs.getBoolean("import_layer_locks", false)
+                val editableText = !prefs.getBoolean("import_text_as_pixels", true)
+                if (takeLocks || editableText) psdExtrasNote = applyPsdExtras(summary, takeLocks, editableText)
             }
             _psdName.value = summary.name
             collapsed = LayerTree.defaultCollapsed(summary.layers)
@@ -832,7 +896,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             Log.i("VT/Psd", "textures queued: $loaded of ${psdTextureIds.size}, ${bytes / 1048576f} MB RGBA")
-            _state.value = UiState.Success(summary.layers.size, summary.millis, loaded, bytes / 1048576f)
+            val note = psdExtrasNote.also { psdExtrasNote = null }
+            _state.value = if (note != null) UiState.Message(note) else UiState.Success(summary.layers.size, summary.millis, loaded, bytes / 1048576f)
             psdRef = PsdRef("assets/source.psd", summary.name, psdW, psdH)
             markDirty()
         } catch (t: Throwable) {

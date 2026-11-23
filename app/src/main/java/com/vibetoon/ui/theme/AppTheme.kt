@@ -98,7 +98,11 @@ class AppSettings(context: Context) {
     var importImagesAsSymbols by mutableStateOf(p.getBoolean("import_images_as_symbols", false))
     /** Пакет 12: Resolution Limit - картинки при импорте уменьшаются до длинной стороны холста. */
     var resolutionLimit by mutableStateOf(p.getBoolean("import_resolution_limit", false))
-    fun saveImport() { p.edit().putBoolean("import_images_as_symbols", importImagesAsSymbols).putBoolean("import_resolution_limit", resolutionLimit).apply() }
+    /** Пакет 16: замки слоёв PSD переносятся при импорте; текст PSD - картинкой (выкл. - редактируемый текст). */
+    var importLayerLocks by mutableStateOf(p.getBoolean("import_layer_locks", false))
+    var importTextAsPixels by mutableStateOf(p.getBoolean("import_text_as_pixels", true))
+    fun saveImport() { p.edit().putBoolean("import_images_as_symbols", importImagesAsSymbols).putBoolean("import_resolution_limit", resolutionLimit)
+        .putBoolean("import_layer_locks", importLayerLocks).putBoolean("import_text_as_pixels", importTextAsPixels).apply() }
     var tap2Undo by mutableStateOf(p.getBoolean("tap2", false))
     var tap3Redo by mutableStateOf(p.getBoolean("tap3", false))
     fun saveGestures() { p.edit().putBoolean("tap2", tap2Undo).putBoolean("tap3", tap3Redo).apply() }
@@ -190,6 +194,8 @@ class AppSettings(context: Context) {
         boneColors = p.getBoolean("bone_colors", false)
         importImagesAsSymbols = p.getBoolean("import_images_as_symbols", false)
         resolutionLimit = p.getBoolean("import_resolution_limit", false)
+        importLayerLocks = p.getBoolean("import_layer_locks", false)
+        importTextAsPixels = p.getBoolean("import_text_as_pixels", true)
         tap2Undo = p.getBoolean("tap2", false)
         tap3Redo = p.getBoolean("tap3", false)
         hotkeys.clear()

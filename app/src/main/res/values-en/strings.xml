@@ -1422,4 +1422,10 @@
     <string name="ui_could_not_read_the_gif_the_file_is_d">Could not read the GIF: the file is damaged or too large</string>
     <string name="ui_could_not_import_the_gif">Could not import the GIF</string>
     <string name="ui_the_gif_has_no_frames">The GIF has no frames</string>
+    <string name="ui_new_psd_a_layer_lock_pixels_position">New PSD: a layer lock (pixels, position, whole layer) becomes a lock, a transparency lock becomes “Alpha lock”; projects already open are not changed</string>
+    <string name="ui_off_text_layers_of_a_new_psd_become_">Off: text layers of a new PSD become editable text (text, size, color, alignment; default font, above the PSD layers)</string>
+    <string name="ui_psd_text_layers_became_editable_text">PSD text layers became editable text: {}; kept as images: {}</string>
+    <string name="ui_psd_text_layers_became_editable_text_2">PSD text layers became editable text: {}; locks imported: {}</string>
+    <string name="ui_psd_text_layers_became_editable_text_3">PSD text layers became editable text: {}</string>
+    <string name="ui_psd_layer_locks_imported">PSD layer locks imported: {}</string>
 </resources>

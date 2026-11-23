@@ -1259,6 +1259,8 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "GIF не прочитан: файл повреждён или слишком большой" to R.string.ui_could_not_read_the_gif_the_file_is_d,
     "Не удалось импортировать GIF" to R.string.ui_could_not_import_the_gif,
     "В GIF нет кадров" to R.string.ui_the_gif_has_no_frames,
+    "Новый PSD: замок слоя (пиксели, положение, весь слой) - замок, замок прозрачности - «Замок прозрачности»; уже открытые проекты не меняются" to R.string.ui_new_psd_a_layer_lock_pixels_position,
+    "Выкл.: текстовые слои нового PSD становятся редактируемым текстом (текст, размер, цвет, выравнивание; шрифт по умолчанию, поверх слоёв PSD)" to R.string.ui_off_text_layers_of_a_new_psd_become_,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -1282,8 +1284,10 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Анимационный\\ слой\\ «(.+?)»:\\ рисуйте,\\ «Добавить\\ пустой\\ кадр»\\ ставит\\ следующий\\ рисунок\$" to R.string.ui_animation_layer_draw_add_empty_frame,
     "^Обведено\\ слоёв:\\ (.+?)\\.\\ Выберите\\ кость\\ \\(инструмент\\ «Выбрать»\\)\\ и\\ нажмите\\ «Привязать»\$" to R.string.ui_layers_lassoed_select_a_bone_select_,
     "^Импортировано\\ как\\ символ\\ «Символ\\ (.+?)»:\\ двойной\\ тап\\ открывает\\ редактирование\$" to R.string.ui_imported_as_symbol_symbol_double_tap,
+    "^Текстовые\\ слои\\ PSD\\ стали\\ редактируемым\\ текстом:\\ (.+?);\\ остались\\ картинкой:\\ (.+?)\$" to R.string.ui_psd_text_layers_became_editable_text,
     "^Символ\\ «Символ\\ (.+?)»\\ создан:\\ двойной\\ тап\\ по\\ нему\\ открывает\\ редактирование\$" to R.string.ui_symbol_symbol_created_double_tap_it_,
     "^Маркеры\\ не\\ сдвинуты:\\ на\\ целевом\\ кадре\\ слоя\\ «(.+?)»\\ уже\\ есть\\ другой\\ рисунок\$" to R.string.ui_markers_not_moved_layer_already_has_,
+    "^Текстовые\\ слои\\ PSD\\ стали\\ редактируемым\\ текстом:\\ (.+?);\\ перенесено\\ замков:\\ (.+?)\$" to R.string.ui_psd_text_layers_became_editable_text_2,
     "^(.+?)\\ КБ\\.\\ Сохранено\\ в\\ папку\\ проекта;\\ копию\\ в\\ галерею\\ создать\\ не\\ удалось\\.\$" to R.string.ui_kb_saved_in_the_project_folder_the_g,
     "^Добавлено:\\ (.+?)\\.\\ Проект\\ продлён\\ до\\ максимума,\\ конец\\ звука\\ не\\ поместился\$" to R.string.ui_added_project_extended_to_its_maximu,
     "^Секвенция\\ импортирована:\\ (.+?)\\ кадров\\.\\ Проект\\ продлён\\ до\\ конца\\ секвенции\$" to R.string.ui_sequence_imported_frames_project_ext,
@@ -1305,6 +1309,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Проект\\ создан\\ в\\ более\\ новой\\ версии\\ приложения\\ \\(v(.+?)\\)\$" to R.string.ui_project_was_created_by_a_newer_app_v,
     "^Слишком\\ глубокая\\ вложенность\\ символов\\ \\(максимум\\ (.+?)\\)\$" to R.string.ui_symbols_are_nested_too_deeply_maximu,
     "^Холст\\ обрезан\\ до\\ (.+?)×(.+?)\\.\\ Отмена\\ через\\ Undo\\ недоступна\$" to R.string.ui_canvas_cropped_to_undo_is_unavailabl,
+    "^Текстовые\\ слои\\ PSD\\ стали\\ редактируемым\\ текстом:\\ (.+?)\$" to R.string.ui_psd_text_layers_became_editable_text_3,
     "^(.+?)\\ КБ\\.\\ Сохранено\\ в\\ папку\\ проекта\\ и\\ в\\ галерею\\.\$" to R.string.ui_kb_saved_to_the_project_folder_and_t,
     "^Пин\\ (.+?):\\ тяните\\ его,\\ рисунок\\ следует\\ за\\ точкой\$" to R.string.ui_pin_drag_it_the_drawing_follows_the_,
     "^Точка\\ удалена,\\ сетка\\ перестроена\\ \\((.+?)\\ вершин\\)\$" to R.string.ui_point_deleted_mesh_rebuilt_vertices,
@@ -1324,6 +1329,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Длительность:\\ (.+?)\\ \\(мин:сек:кадры\\)\$" to R.string.ui_duration_min_sec_frames,
     "^Ключ\\ времени\\ \\(Hold\\)\\ на\\ кадре\\ (.+?)\$" to R.string.ui_time_key_hold_at_frame,
     "^Новый\\ слой\\ «(.+?)»:\\ рисуйте\\ кистью\$" to R.string.ui_new_layer_draw_with_the_brush,
+    "^Перенесено\\ замков\\ слоёв\\ PSD:\\ (.+?)\$" to R.string.ui_psd_layer_locks_imported,
     "^(.+?):\\ текстур\\ (.+?)\\ \\((.+?)\\ МБ\\)\\.\\ Выделено:\\ (.+?)\$" to R.string.ui_textures_mb_selected,
     "^Переход\\ к\\ следующему\\ ключу:\\ (.+?)\$" to R.string.ui_transition_to_the_next_key,
     "^Повреждённый\\ файл\\ проекта:\\ (.+?)\$" to R.string.ui_damaged_project_file,

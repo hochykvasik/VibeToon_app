@@ -1114,4 +1114,10 @@ GIF импортирован: {} кадров|GIF imported: {} frames
 GIF не прочитан: файл повреждён или слишком большой|Could not read the GIF: the file is damaged or too large
 Не удалось импортировать GIF|Could not import the GIF
 В GIF нет кадров|The GIF has no frames
+Новый PSD: замок слоя (пиксели, положение, весь слой) - замок, замок прозрачности - «Замок прозрачности»; уже открытые проекты не меняются|New PSD: a layer lock (pixels, position, whole layer) becomes a lock, a transparency lock becomes “Alpha lock”; projects already open are not changed
+Выкл.: текстовые слои нового PSD становятся редактируемым текстом (текст, размер, цвет, выравнивание; шрифт по умолчанию, поверх слоёв PSD)|Off: text layers of a new PSD become editable text (text, size, color, alignment; default font, above the PSD layers)
+Текстовые слои PSD стали редактируемым текстом: {}; остались картинкой: {}|PSD text layers became editable text: {}; kept as images: {}
+Текстовые слои PSD стали редактируемым текстом: {}; перенесено замков: {}|PSD text layers became editable text: {}; locks imported: {}
+Текстовые слои PSD стали редактируемым текстом: {}|PSD text layers became editable text: {}
+Перенесено замков слоёв PSD: {}|PSD layer locks imported: {}
 """

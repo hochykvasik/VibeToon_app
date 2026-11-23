@@ -1422,4 +1422,10 @@
     <string name="ui_could_not_read_the_gif_the_file_is_d">GIF не прочитан: файл повреждён или слишком большой</string>
     <string name="ui_could_not_import_the_gif">Не удалось импортировать GIF</string>
     <string name="ui_the_gif_has_no_frames">В GIF нет кадров</string>
+    <string name="ui_new_psd_a_layer_lock_pixels_position">Новый PSD: замок слоя (пиксели, положение, весь слой) - замок, замок прозрачности - «Замок прозрачности»; уже открытые проекты не меняются</string>
+    <string name="ui_off_text_layers_of_a_new_psd_become_">Выкл.: текстовые слои нового PSD становятся редактируемым текстом (текст, размер, цвет, выравнивание; шрифт по умолчанию, поверх слоёв PSD)</string>
+    <string name="ui_psd_text_layers_became_editable_text">Текстовые слои PSD стали редактируемым текстом: {}; остались картинкой: {}</string>
+    <string name="ui_psd_text_layers_became_editable_text_2">Текстовые слои PSD стали редактируемым текстом: {}; перенесено замков: {}</string>
+    <string name="ui_psd_text_layers_became_editable_text_3">Текстовые слои PSD стали редактируемым текстом: {}</string>
+    <string name="ui_psd_layer_locks_imported">Перенесено замков слоёв PSD: {}</string>
 </resources>
