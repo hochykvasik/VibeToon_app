@@ -276,6 +276,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Экспорт только сцены под плейхедом (MP4, GIF, PNG-последовательность). */
     var exportSceneOnly: Boolean = false
         private set
+    // пакет 10: активная (открытая) сцена - плейхед, Play, переходы и экспорт в её границах; null - весь таймлайн
+    private val _activeScene = MutableStateFlow<Int?>(null)
+    val activeScene: StateFlow<Int?> = _activeScene.asStateFlow()
+    // пакет 10: «Режим ключей» - на таймлайне только слои с ключами, переход и выделение по ключам
+    private val _keyMode = MutableStateFlow(false)
+    val keyMode: StateFlow<Boolean> = _keyMode.asStateFlow()
     val markers: StateFlow<List<Int>> = _markers.asStateFlow()
 
     /** Привязки "слой -> родитель": ребёнок двигается вместе с родителем. */
@@ -460,6 +466,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _clips.value = data.clips
             _markers.value = data.markers
             _scenes.value = data.scenes
+            _activeScene.value = null
             _links.value = data.links
             _bones.value = data.bones
             regroup = data.regroup
@@ -592,6 +599,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _clips.value = emptyMap()
         _markers.value = emptyList()
         _scenes.value = emptyList()
+        _activeScene.value = null
         _links.value = emptyMap()
         _bones.value = emptyList()
         regroup = emptyList()
@@ -2456,8 +2464,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (drawing) deleteFrame() else deleteSelected()
     }
 
-    fun goStart() = scrubTo(0)
-    fun goEnd() = scrubTo(duration() - 1)
+    fun goStart() = scrubTo(activeRange()?.start ?: 0)
+    fun goEnd() = scrubTo(activeRange()?.let { it.end - 1 } ?: (duration() - 1))
 
     fun toggleMarker() {
         val f = _frame.value
@@ -9175,9 +9183,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             rebuildLayers()
         }
         _scenes.value = r.scenes
-        r.scenes.firstOrNull { it.id == r.sceneId }?.let { scrubTo(it.start) }
         pushScene()
         markDirty()
+        if (r.scenes.any { it.id == r.sceneId }) { _activeScene.value = r.sceneId; r.scenes.first { it.id == r.sceneId }.let { scrubTo(it.start) } }
         _state.value = UiState.Message("Сцена добавлена в конец таймлайна")
     }
 
@@ -9202,6 +9210,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Удалить сцену: только метку, кадры и ключи остаются (отрезок присоединяется к соседней сцене). */
     fun removeScene(id: Int) {
         if (_playing.value || _scenes.value.none { it.id == id }) return
+        if (_activeScene.value == id) _activeScene.value = null
         applySceneChange(com.vibetoon.domain.anim.SceneMath.remove(_scenes.value, id), "Сцена удалена, кадры остались на таймлайне")
     }
 
@@ -9209,7 +9218,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun selectScene(id: Int) {
         val sc = _scenes.value.firstOrNull { it.id == id } ?: return
         pause()
+        _activeScene.value = id
         scrubTo(sc.start)
+        _state.value = UiState.Message("Открыта сцена: Play, переходы и экспорт - в её границах")
+    }
+
+    /** «Весь таймлайн»: выйти из сцены, плейхед и Play снова по всему проекту. */
+    fun showAllScenes() {
+        if (_activeScene.value == null) return
+        _activeScene.value = null
+        _state.value = UiState.Message("Показан весь таймлайн")
+    }
+
+    /** Активная сцена (если открыта и существует) - не в режиме редактирования символа (у него свои кадры). */
+    fun activeRange(): com.vibetoon.domain.anim.SceneRange? {
+        val id = _activeScene.value ?: return null
+        if (_editingSymbol.value != null) return null
+        return _scenes.value.firstOrNull { it.id == id }
     }
 
     /** Предыдущая / следующая сцена. */
@@ -9217,6 +9242,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val sc = com.vibetoon.domain.anim.SceneMath.step(_scenes.value, _frame.value, dir)
             ?: run { _state.value = UiState.Message("Сцен в этом направлении нет"); return }
         pause()
+        if (_activeScene.value != null) { selectScene(sc.id); return }
         scrubTo(sc.start)
     }
 
@@ -9224,13 +9250,127 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setExportSceneOnly(on: Boolean) { exportSceneOnly = on }
 
     /** Отрезок экспорта: текущая сцена (если выбран экспорт сцены и плейхед в сцене) или null - весь проект. */
-    private fun exportRange(): com.vibetoon.domain.anim.SceneRange? = if (exportSceneOnly) currentScene() else null
+    private fun exportRange(): com.vibetoon.domain.anim.SceneRange? = if (exportSceneOnly) (activeRange() ?: currentScene()) else null
+
+    // ---------------------------------------------------------------- режим ключей (пакет 10)
+
+    fun toggleKeyMode() {
+        _keyMode.value = !_keyMode.value
+        _state.value = UiState.Message(if (_keyMode.value) "Режим ключей: показаны только слои с ключами" else "Режим ключей выключен")
+    }
+
+    private fun allKeyFrames(): Set<Int> {
+        val tracks = _animation.value.tracks
+        return com.vibetoon.domain.anim.KeyMode.frames(layers.map { it.id }, tracks,
+            _timeKeys.value.mapValues { (_, l) -> l.map { it.frame } }, _bones.value.map { it.id })
+    }
+
+    /** «◀ Ключ / Ключ ▶»: ближайший кадр с ключом любого слоя или кости (в границах открытой сцены). */
+    fun jumpAnyKey(forward: Boolean) {
+        val r = activeRange()
+        val target = com.vibetoon.domain.anim.KeyMode.step(allKeyFrames(), _frame.value, forward, r?.start ?: 0, (r?.end ?: duration()) - 1)
+        if (target != null) scrubTo(target) else _state.value = UiState.Message("Ключей в этом направлении нет")
+    }
+
+    /** Выделить все ключи на кадре плейхеда (слои, ключи времени символов, кости). */
+    fun selectKeysAtFrame() {
+        val f = _frame.value
+        val tracks = _animation.value.tracks
+        val sel = HashSet<Pair<Int, Int>>()
+        for (l in layers) if (f in com.vibetoon.domain.anim.TrackGroups.frames(l.id, tracks) || _timeKeys.value[l.id]?.any { it.frame == f } == true) sel += l.id to f
+        for (b in _bones.value) if (tracks[b.id]?.keyAt(f) != null) sel += b.id to f
+        if (sel.isEmpty()) { _state.value = UiState.Message("На этом кадре ключей нет"); return }
+        _keySel.value = sel
+    }
+
+    /** Выделить все ключи (в границах открытой сцены). */
+    fun selectAllKeys() {
+        val r = activeRange()
+        val tracks = _animation.value.tracks
+        val sel = HashSet<Pair<Int, Int>>()
+        fun inRange(f: Int) = r == null || f in r.start until r.end
+        for (l in layers) {
+            for (f in com.vibetoon.domain.anim.TrackGroups.frames(l.id, tracks)) if (inRange(f)) sel += l.id to f
+            _timeKeys.value[l.id]?.forEach { if (inRange(it.frame)) sel += l.id to it.frame }
+        }
+        for (b in _bones.value) tracks[b.id]?.keys?.forEach { if (inRange(it.frame)) sel += b.id to it.frame }
+        if (sel.isEmpty()) { _state.value = UiState.Message("Ключей нет"); return }
+        _keySel.value = sel
+    }
+
+    // ---------------------------------------------------------------- иерархия трансформаций (пакет 10)
+
+    /** Привязать узел [child] к [parent] (null - отвязать) из окна «Иерархия трансформаций». */
+    fun setParentOf(child: Int, parent: Int?) {
+        if (_playing.value) return
+        if (parent != null && (parent == child || parent in com.vibetoon.domain.anim.TransformHierarchy.descendants(child, _links.value))) {
+            _state.value = UiState.Message("Нельзя: родитель сам привязан к этому слою"); return
+        }
+        if (_links.value[child] == parent) return
+        checkpoint("parent", force = true)
+        if (parent != null && _bones.value.any { it.id == parent }) skinLayers = skinLayers - child
+        _links.value = if (parent == null) _links.value - child else _links.value + (child to parent)
+        pushScene()
+        markDirty()
+        _state.value = UiState.Message(if (parent == null) "Привязка снята" else "Привязано к: ${layerName(parent)}")
+    }
+
+    /** Кандидаты в родители узла [child]: всё, кроме него и его потомков по привязкам. */
+    fun parentCandidatesOf(child: Int): List<Pair<Int, String>> {
+        val banned = com.vibetoon.domain.anim.TransformHierarchy.descendants(child, _links.value) + child
+        return _bones.value.filter { it.id !in banned }.map { it.id to it.name } +
+            layers.filter { it.id !in banned && it.kind != LayerKind.GROUP_END }.map { it.id to it.name }
+    }
+
+    /** Группы-предки узла снизу вверх (они тоже передают трансформацию). */
+    fun groupChain(id: Int): List<Int> {
+        val parentOf = layers.associate { it.id to it.parentId }
+        return com.vibetoon.domain.project.SymbolPlacement.ancestors(id) { parentOf[it] }
+    }
+
+    /** Порядок узлов для дерева привязок: кости, затем слои сверху вниз. */
+    fun hierarchyOrder(): List<Int> = _bones.value.map { it.id } + layers.reversed().map { it.id }
+
+    fun unlinkAll() {
+        if (_links.value.isEmpty() || _playing.value) return
+        checkpoint("parent", force = true)
+        _links.value = emptyMap()
+        pushScene(); markDirty()
+        _state.value = UiState.Message("Все привязки сняты")
+    }
+
+    // ---------------------------------------------------------------- расширение клипа (пакет 10)
+
+    /** «Расширить»: клипы выделенных слоёв тянутся до конца открытой сцены (или проекта). */
+    fun extendSelectedClips() {
+        if (_playing.value) return
+        val ids = _selection.value.ifEmpty { _selected.value?.let { setOf(it) }.orEmpty() }.filter { it < BONE_ID_BASE }
+        if (ids.isEmpty()) { _state.value = UiState.Message("Выберите слой"); return }
+        if (ids.any { isLockedId(it) }) { lockedNotice(); return }
+        val r = activeRange()
+        val lo = r?.start ?: 0
+        val hi = r?.end ?: duration()
+        val changes = ids.mapNotNull { id ->
+            val c = clipOf(id)
+            val m = media.firstOrNull { it.id == id }
+            if (m != null && !m.isVisual) return@mapNotNull null
+            val plain = c.speed == 1f && !c.reverse && !c.freeze && c.offset == 0 && !c.loop && m?.kind != MediaKind.VIDEO
+            val (s0, e0) = com.vibetoon.domain.anim.ClipExtend.extend(c.start, c.end, lo, hi, plain)
+            if (s0 == c.start && e0 == c.end) null else id to c.copy(start = s0, end = e0)
+        }
+        if (changes.isEmpty()) { _state.value = UiState.Message("Клип уже занимает всю сцену"); return }
+        checkpoint("clipextend", force = true)
+        changes.forEach { (id, c) -> storeClip(id, c) }
+        pushScene(); markDirty()
+        _state.value = UiState.Message(if (r != null) "Клип расширен до конца сцены" else "Клип расширен до конца проекта")
+    }
 
     // ---------------------------------------------------------------- время и Play
 
     /** Перемотка (ползунок, поле кадра). Временные правки кадра сбрасываются. */
     fun setFrame(frame: Int) {
-        val f = frame.coerceIn(0, _animation.value.settings.durationFrames - 1)
+        val r = activeRange()
+        val f = if (r != null) frame.coerceIn(r.start, r.end - 1) else frame.coerceIn(0, _animation.value.settings.durationFrames - 1)
         if (f == _frame.value) return
         val t0 = if (com.vibetoon.render.RenderMetrics.enabled) System.nanoTime() else 0L
         cancelPendingLasso()
@@ -9350,7 +9490,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val settings = _animation.value.settings
         val looping = _loop.value
         // пакет 9: «Play только в сцене» - проигрывается сцена под плейхедом
-        val scene = if (_scenePlayOnly.value) currentScene() else null
+        val scene = activeRange() ?: if (_scenePlayOnly.value) currentScene() else null
         // без цикла старт с последнего кадра начинает проигрывание заново
         val startFrame = when {
             scene != null -> if (!looping && _frame.value >= scene.end - 1) scene.start else _frame.value

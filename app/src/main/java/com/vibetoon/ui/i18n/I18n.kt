@@ -28,12 +28,21 @@ import java.util.Locale
  */
 @Composable
 fun L(ru: String): String {
-    val exact = I18N_IDS[ru]
-    val tm = if (exact == null) findTemplate(ru) else null
-    val id = exact ?: tm?.first ?: return ru
     val ctx = LocalContext.current
     // язык читается из состояния настроек прямо здесь: переключение обновляет и окна-диалоги (у них свой слой композиции)
     val lang = com.vibetoon.ui.theme.LocalAppSettings.current?.effectiveLang
+    return translate(ctx, lang, ru, 0)
+}
+
+/**
+ * Перевод без Compose (тот же словарь, что у [L]). Значения, подставляемые в шаблон, тоже переводятся, если они
+ * сами есть в словаре: «Переключение сцен — в разработке» в английском режиме даёт «Scene switching — coming soon»,
+ * а не смесь «Переключение сцен — coming soon» (пакет 10).
+ */
+fun translate(ctx: Context, lang: String?, ru: String, depth: Int = 0): String {
+    val exact = I18N_IDS[ru]
+    val tm = if (exact == null) findTemplate(ru) else null
+    val id = exact ?: tm?.first ?: return ru
     val text = if (lang == null) ctx.getString(id) else stringsFor(ctx, lang).getString(id)
     if (tm == null) return text
     // шаблон: подставляем значения из исходной строки по порядку на места {}
@@ -41,7 +50,11 @@ fun L(ru: String): String {
     var gi = 0
     var i = 0
     while (i < text.length) {
-        if (text.startsWith("{}", i) && gi < tm.second.size) { sb.append(tm.second[gi++]); i += 2 } else { sb.append(text[i]); i++ }
+        if (text.startsWith("{}", i) && gi < tm.second.size) {
+            val v = tm.second[gi++]
+            sb.append(if (depth < 2) translate(ctx, lang, v, depth + 1) else v)
+            i += 2
+        } else { sb.append(text[i]); i++ }
     }
     return sb.toString()
 }

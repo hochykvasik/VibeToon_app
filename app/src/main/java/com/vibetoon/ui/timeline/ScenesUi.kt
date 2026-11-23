@@ -18,7 +18,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.AlertDialog
@@ -48,6 +50,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vibetoon.domain.anim.SceneRange
 import com.vibetoon.domain.anim.TimeFormat
 import com.vibetoon.ui.MainViewModel
@@ -67,7 +70,7 @@ private val SCENE_COLORS = listOf(Color(0xFF7E57C2), Color(0xFF26A69A))
  */
 @Composable
 fun SceneStrip(
-    vm: MainViewModel, scenes: List<SceneRange>, current: SceneRange?, frameWPx: Float, contentW: Dp, nameW: Dp,
+    vm: MainViewModel, scenes: List<SceneRange>, current: SceneRange?, focused: Boolean, frameWPx: Float, contentW: Dp, nameW: Dp,
     hScroll: ScrollState, viewportPx: Int, onOpen: () -> Unit
 ) {
     val measurer = rememberTextMeasurer()
@@ -98,7 +101,8 @@ fun SceneStrip(
                     val x1 = s.end * frameWPx
                     if (x1 < left || x0 > right) return@forEachIndexed
                     val col = SCENE_COLORS[i % SCENE_COLORS.size]
-                    drawRect(col.copy(alpha = if (s == current) 0.55f else 0.25f), Offset(x0, 0f), Size(x1 - x0, size.height))
+                    // открытая сцена ярче, остальные при открытой сцене притушены
+                    drawRect(col.copy(alpha = if (s == current) 0.6f else if (focused) 0.12f else 0.25f), Offset(x0, 0f), Size(x1 - x0, size.height))
                     drawLine(col, Offset(x0, 0f), Offset(x0, size.height), strokeWidth = 2f)
                     // подпись в видимой части отрезка: имя не уезжает за край при прокрутке
                     val tx = maxOf(x0, left) + 4f
@@ -115,7 +119,7 @@ fun SceneStrip(
 
 /** Окно «Сцены»: список, переход, переименование, удаление, новая сцена, разрез, Play/экспорт только сцены. */
 @Composable
-fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRange?, fps: Int, playOnly: Boolean, onDismiss: () -> Unit) {
+fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRange?, focused: Boolean, fps: Int, playOnly: Boolean, onDismiss: () -> Unit) {
     var editing by remember { mutableStateOf<Int?>(null) }
     var nameText by remember { mutableStateOf("") }
     var exportOnly by remember { mutableStateOf(vm.exportSceneOnly) }
@@ -127,9 +131,13 @@ fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRang
                 Text("Сцены делят общий таймлайн на части: переход, Play и экспорт по сцене. Удаление сцены не удаляет кадры и ключи.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                 if (scenes.isEmpty()) Text("Сцен пока нет: «+ Новая сцена» сделает текущий таймлайн первой сценой.", fontSize = 13.sp)
+                if (scenes.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    RadioButton(selected = !focused, onClick = vm::showAllScenes)
+                    Text("Весь таймлайн", fontSize = 14.sp, fontWeight = if (!focused) FontWeight.Bold else FontWeight.Normal)
+                }
                 for (s in scenes) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        RadioButton(selected = s == current, onClick = { vm.selectScene(s.id) })
+                        RadioButton(selected = focused && s == current, onClick = { vm.selectScene(s.id) })
                         if (editing == s.id) {
                             OutlinedTextField(
                                 value = nameText, onValueChange = { nameText = it.take(com.vibetoon.domain.anim.SceneMath.MAX_NAME) },
@@ -138,7 +146,8 @@ fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRang
                             TextButton(onClick = { vm.renameScene(s.id, nameText); editing = null }) { Text("OK") }
                         } else {
                             Column(Modifier.weight(1f)) {
-                                Text(sceneDisplayName(s.name), fontSize = 14.sp, fontWeight = if (s == current) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
+                                Text(sceneDisplayName(s.name), fontSize = 14.sp, fontWeight = if (focused && s == current) FontWeight.Bold else FontWeight.Normal, maxLines = 1,
+                                    modifier = Modifier.pointerInput(s.id) { detectTapGestures { vm.selectScene(s.id) } })
                                 Text("${TimeFormat.format(s.start, fps)} – ${TimeFormat.format(s.end, fps)} · ${s.length} кадров", fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), maxLines = 1)
                             }
@@ -163,6 +172,89 @@ fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRang
                     Switch(checked = exportOnly, onCheckedChange = { exportOnly = it; vm.setExportSceneOnly(it) })
                     Text("Экспорт только текущей сцены", fontSize = 13.sp)
                 }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } }
+    )
+}
+
+/** Меню переключения сцен у кнопки сцены на панели воспроизведения (пакет 10). [onClose] (true - открыть окно «Сцены»). */
+@Composable
+fun SceneMenu(vm: MainViewModel, expanded: Boolean, scenes: List<SceneRange>, active: SceneRange?, playing: Boolean, onClose: (Boolean) -> Unit) {
+    androidx.compose.material3.DropdownMenu(expanded = expanded, onDismissRequest = { onClose(false) }) {
+        if (scenes.isNotEmpty()) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Весь таймлайн") },
+                leadingIcon = { if (active == null) Icon(Icons.Default.Check, null) },
+                onClick = { vm.showAllScenes(); onClose(false) }
+            )
+            for (s in scenes) androidx.compose.material3.DropdownMenuItem(
+                text = { Text(sceneDisplayName(s.name) + "  ·  " + s.length) },
+                leadingIcon = { if (active?.id == s.id) Icon(Icons.Default.Check, null) else Icon(Icons.Default.Movie, null) },
+                onClick = { vm.selectScene(s.id); onClose(false) }
+            )
+            androidx.compose.material3.HorizontalDivider()
+        }
+        androidx.compose.material3.DropdownMenuItem(text = { Text("+ Новая сцена") }, enabled = !playing, onClick = { vm.addScene(); onClose(false) })
+        androidx.compose.material3.DropdownMenuItem(text = { Text("Разрезать на плейхеде") }, enabled = !playing, onClick = { vm.splitSceneAtPlayhead(); onClose(false) })
+        androidx.compose.material3.DropdownMenuItem(text = { Text("Управление сценами…") }, onClick = { onClose(true) })
+    }
+}
+
+/**
+ * Окно «Иерархия трансформаций» (пакет 10): дерево привязок (кто кого ведёт), для выбранного слоя - его родитель
+ * (выбор из списка, «Отвязать»), цепочка привязок и групп, через которые он получает трансформацию.
+ */
+@Composable
+fun TransformHierarchyDialog(vm: MainViewModel, selected: Int?, onDismiss: () -> Unit) {
+    val links by vm.links.collectAsStateWithLifecycle()
+    var pickParent by remember { mutableStateOf(false) }
+    val rows = remember(links) { com.vibetoon.domain.anim.TransformHierarchy.tree(links, vm.hierarchyOrder()) }
+    val sub = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Иерархия трансформаций") },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Привязанный слой повторяет сдвиг, поворот и масштаб родителя поверх своей трансформации; группы тоже передают трансформацию вложенным слоям.",
+                    fontSize = 12.sp, color = sub)
+                if (selected != null && selected < com.vibetoon.domain.project.BONE_ID_BASE) {
+                    Text(L("Выбран слой") + ": " + vm.layerName(selected), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    val parent = links[selected]
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(L("Родитель") + ": " + (parent?.let { vm.layerName(it) } ?: L("нет")), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Box {
+                            OutlinedButton(onClick = { pickParent = true }) { Text("Выбрать…", maxLines = 1, softWrap = false) }
+                            androidx.compose.material3.DropdownMenu(expanded = pickParent, onDismissRequest = { pickParent = false }) {
+                                for ((id, name) in vm.parentCandidatesOf(selected)) androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(name) }, onClick = { vm.setParentOf(selected, id); pickParent = false }
+                                )
+                            }
+                        }
+                        if (parent != null) TextButton(onClick = { vm.setParentOf(selected, null) }) { Text("Отвязать", maxLines = 1, softWrap = false) }
+                    }
+                    val chain = com.vibetoon.domain.anim.TransformHierarchy.chain(selected, links)
+                    if (chain.isNotEmpty()) Text(L("Цепочка привязок") + ": " + chain.joinToString(" › ") { vm.layerName(it) }, fontSize = 12.sp, color = sub)
+                    val groups = vm.groupChain(selected)
+                    if (groups.isNotEmpty()) Text(L("Группы") + ": " + groups.joinToString(" › ") { vm.layerName(it) }, fontSize = 12.sp, color = sub)
+                    val kids = com.vibetoon.domain.anim.TransformHierarchy.descendants(selected, links)
+                    if (kids.isNotEmpty()) Text(L("Ведёт слоёв") + ": " + kids.size, fontSize = 12.sp, color = sub)
+                } else Text("Выберите слой, чтобы назначить ему родителя.", fontSize = 13.sp)
+                androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text("Все привязки", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                if (rows.isEmpty()) Text("Привязок пока нет.", fontSize = 12.sp, color = sub)
+                for (r in rows) Row(
+                    Modifier.fillMaxWidth().padding(start = (r.depth * 14).dp)
+                        .pointerInput(r.id) { detectTapGestures { if (r.id < com.vibetoon.domain.project.BONE_ID_BASE) vm.selectLayer(r.id) } },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text((if (r.depth > 0) "└ " else "● ") + vm.layerName(r.id), fontSize = 13.sp, maxLines = 1,
+                        fontWeight = if (r.id == selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+                    if (r.parent != null) IconButton(onClick = { vm.setParentOf(r.id, null) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.LinkOff, L("Отвязать"), Modifier.size(18.dp))
+                    }
+                }
+                if (rows.isNotEmpty()) TextButton(onClick = vm::unlinkAll) { Text("Отвязать всё") }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } }

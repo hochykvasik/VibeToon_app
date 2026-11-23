@@ -72,8 +72,9 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
             var sequenceAlpha by remember { mutableStateOf(false) }
             var jpeg by remember { mutableStateOf(false) }
             // пакет 9: экспорт только сцены под плейхедом
-            val scene = remember { vm.currentScene() }
-            var sceneOnly by remember { mutableStateOf(vm.exportSceneOnly && scene != null) }
+            val scene = remember { vm.activeRange() ?: vm.currentScene() }
+            // открыта сцена - по умолчанию экспортируется она (пакет 10)
+            var sceneOnly by remember { mutableStateOf((vm.exportSceneOnly || vm.activeRange() != null) && scene != null) }
             val backupLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
                 if (uri != null) { vm.exportProjectBackup(uri, ctx); onHide() }
             }

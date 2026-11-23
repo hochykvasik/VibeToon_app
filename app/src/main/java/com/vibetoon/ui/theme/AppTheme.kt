@@ -94,6 +94,9 @@ class AppSettings(context: Context) {
     var boneColors by mutableStateOf(p.getBoolean("bone_colors", false))
     fun saveSprint67() { p.edit().putBoolean("auto_keyframes", autoKeyframes).putBoolean("step_frames", stepFrames).putBoolean("quick_delete_drawing", quickDeleteDrawing).putBoolean("selection_mask_visible", selectionMaskVisible).putBoolean("bone_colors", boneColors).apply() }
     /** Касание двумя пальцами - Undo, тремя - Redo (по умолчанию выключено, чтобы не мешать жестам камеры). */
+    /** Пакет 10: «Import Images as Symbols» - «+ Изображение» сразу создаёт символ с экземпляром. */
+    var importImagesAsSymbols by mutableStateOf(p.getBoolean("import_images_as_symbols", false))
+    fun saveImport() { p.edit().putBoolean("import_images_as_symbols", importImagesAsSymbols).apply() }
     var tap2Undo by mutableStateOf(p.getBoolean("tap2", false))
     var tap3Redo by mutableStateOf(p.getBoolean("tap3", false))
     fun saveGestures() { p.edit().putBoolean("tap2", tap2Undo).putBoolean("tap3", tap3Redo).apply() }
@@ -114,6 +117,81 @@ class AppSettings(context: Context) {
     }
 
     fun reset() { lang = ""; theme = "system"; accent = 0; save() }
+
+    /** Пакет 10: «Reset» во вкладке «Отображение» - значения отображения по умолчанию. */
+    fun resetDisplay() {
+        leftHanded = false; showGrid = false; gridCells = com.vibetoon.domain.render.CanvasGrid.density(16)
+        checkerThumbnails = false; selectionMaskVisible = true; boneColors = false
+        save(); saveGrid(); savePlaybackAndDisplay(); saveSprint67()
+    }
+
+    /** Пакет 10: резервная копия всех настроек (JSON) для «Manual Backup». */
+    fun backupJson(): String = com.vibetoon.domain.settings.SettingsBackup.encode(p.all)
+
+    /** Пакет 10: «Import Backup» - значения записываются с типами текущих настроек и сразу применяются. */
+    fun importBackup(text: String): Boolean {
+        val values = com.vibetoon.domain.settings.SettingsBackup.decode(text) ?: return false
+        val cur = p.all
+        val e = p.edit()
+        for ((k, v) in values) {
+            when (cur[k]) {
+                is Float -> (v as? Number)?.let { e.putFloat(k, it.toFloat()) }
+                is Long -> (v as? Number)?.let { e.putLong(k, it.toLong()) }
+                is Int -> (v as? Number)?.let { e.putInt(k, it.toInt()) }
+                is Boolean -> (v as? Boolean)?.let { e.putBoolean(k, it) }
+                is String -> (v as? String)?.let { e.putString(k, it) }
+                else -> when (v) { is Boolean -> e.putBoolean(k, v); is Int -> e.putInt(k, v); is Float -> e.putFloat(k, v); is String -> e.putString(k, v) }
+            }
+        }
+        e.commit()
+        reload()
+        return true
+    }
+
+    /** Перечитать все значения из настроек (после импорта копии). */
+    private fun reload() {
+        lang = p.getString("lang", "") ?: ""
+        theme = p.getString("theme", "system") ?: "system"
+        accent = p.getInt("accent", 0).coerceIn(0, ACCENTS.size - 1)
+        onboarded = p.getBoolean("onboarded", false)
+        leftHanded = p.getBoolean("left", false)
+        showGrid = p.getBoolean("show_grid", false)
+        gridCells = com.vibetoon.domain.render.CanvasGrid.density(p.getInt("grid_cells", 16))
+        resetFrameAfterPause = p.getBoolean("reset_frame_after_pause", false)
+        compatibleVideoExport = p.getBoolean("compatible_video_export", false)
+        perfHud = p.getBoolean("perf_hud", false)
+        vectorWorkflow = p.getBoolean("vector_workflow", false)
+        autoPixelEdit = p.getBoolean("auto_pixel_edit", false)
+        onlyEraseSelectedPaths = p.getBoolean("only_erase_selected_paths", false)
+        temporaryPivots = p.getBoolean("temporary_pivots", false)
+        pivotEditing = p.getBoolean("pivot_editing", true)
+        rotateCanvas = p.getBoolean("rotate_canvas_2f", true)
+        checkerThumbnails = p.getBoolean("checker_thumbnails", false)
+        audioWhileScrubbing = p.getBoolean("audio_while_scrubbing", true)
+        autoKeyframes = p.getBoolean("auto_keyframes", false)
+        shapeAssist = p.getBoolean("shape_assist", false)
+        touchDetection = p.getBoolean("touch_detection", false)
+        doubleTapMultiSelect = p.getBoolean("double_tap_multi_select", false)
+        manualSelectionClose = p.getBoolean("manual_selection_close", false)
+        showMotionPath = p.getBoolean("show_motion_path", false)
+        refocusButton = p.getBoolean("refocus_button", false)
+        followCamera = p.getBoolean("follow_camera", false)
+        longPressPicker = p.getBoolean("long_press_picker", false)
+        fingerDrawing = p.getBoolean("finger_drawing", true)
+        cursorEnabled = p.getBoolean("cursor_enabled", true)
+        cursorHoverPreview = p.getBoolean("cursor_hover_preview", false)
+        quickSelection = p.getBoolean("quick_selection", false)
+        selectLayersOnCanvas = p.getBoolean("select_layers_canvas", true)
+        stepFrames = p.getBoolean("step_frames", true)
+        quickDeleteDrawing = p.getBoolean("quick_delete_drawing", false)
+        selectionMaskVisible = p.getBoolean("selection_mask_visible", true)
+        boneColors = p.getBoolean("bone_colors", false)
+        importImagesAsSymbols = p.getBoolean("import_images_as_symbols", false)
+        tap2Undo = p.getBoolean("tap2", false)
+        tap3Redo = p.getBoolean("tap3", false)
+        hotkeys.clear()
+        for (a in com.vibetoon.domain.HotkeyAction.values()) p.getInt("hk_" + a.name, -1).takeIf { it >= 0 }?.let { hotkeys[a] = it }
+    }
 }
 
 val LocalAppSettings = compositionLocalOf<AppSettings?> { null }

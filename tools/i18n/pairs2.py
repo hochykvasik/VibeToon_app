@@ -998,4 +998,40 @@ Play только в текущей сцене|Play only the current scene
 Сцен в этом направлении нет|No scenes in this direction
 Нельзя: экземпляр символа не может лежать внутри своего определения|Not allowed: a symbol instance cannot be inside its own definition
 Слой перенесён в группу и получил её эффекты|Layer moved into the group and received its effects
+Расширить клип|Extend clip
+Весь таймлайн|Whole timeline
+Управление сценами…|Manage scenes…
+Открыта сцена: Play, переходы и экспорт - в её границах|Scene opened: Play, navigation and export stay inside it
+Показан весь таймлайн|Showing the whole timeline
+Режим ключей: показаны только слои с ключами|Key mode: only layers with keys are shown
+Режим ключей выключен|Key mode off
+Ключей в этом направлении нет|No keys in this direction
+На этом кадре ключей нет|No keys on this frame
+Ключей нет|No keys
+Все привязки сняты|All links removed
+Клип уже занимает всю сцену|The clip already fills the scene
+Клип расширен до конца сцены|Clip extended to the end of the scene
+Клип расширен до конца проекта|Clip extended to the end of the project
+Слоёв с ключами: {}|Layers with keys: {}
+◀ Ключ|◀ Key
+Ключ ▶|Key ▶
+Ключи кадра|Frame keys
+Все ключи|All keys
+Все слои|All layers
+Привязанный слой повторяет сдвиг, поворот и масштаб родителя поверх своей трансформации; группы тоже передают трансформацию вложенным слоям.|A linked layer repeats its parent's move, rotation and scale on top of its own transform; groups also pass their transform to nested layers.
+Выбран слой|Selected layer
+нет|none
+Выбрать…|Choose…
+Цепочка привязок|Link chain
+Ведёт слоёв|Drives layers
+Выберите слой, чтобы назначить ему родителя.|Select a layer to assign its parent.
+Все привязки|All links
+Привязок пока нет.|No links yet.
+Отвязать всё|Unlink all
+Копия настроек сохранена|Settings backup saved
+Не удалось сохранить копию настроек|Could not save the settings backup
+Настройки восстановлены из копии|Settings restored from the backup
+Это не файл настроек VibeToon|This is not a VibeToon settings file
+Настройки отображения сброшены|Display settings reset
+«+ Изображение» сразу создаёт символ: картинка - определение, на холсте - экземпляр|“+ Image” creates a symbol right away: the picture is the definition, the canvas gets an instance
 """

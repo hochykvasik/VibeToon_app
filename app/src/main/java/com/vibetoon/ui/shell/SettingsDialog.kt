@@ -138,6 +138,24 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
 fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
     val stub = LocalStub.current
     var tab by rememberSaveable { mutableStateOf(0) }
+    // пакет 10: сброс отображения и резервная копия настроек
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val appSt = com.vibetoon.ui.theme.LocalAppSettings.current
+    fun notify(ru: String) {
+        android.widget.Toast.makeText(ctx, com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, ru), android.widget.Toast.LENGTH_SHORT).show()
+    }
+    val backupOut = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null && appSt != null) {
+            val ok = runCatching { ctx.contentResolver.openOutputStream(uri)?.use { it.write(appSt.backupJson().toByteArray()) } != null }.getOrDefault(false)
+            notify(if (ok) "Копия настроек сохранена" else "Не удалось сохранить копию настроек")
+        }
+    }
+    val backupIn = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && appSt != null) {
+            val text = runCatching { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } }.getOrNull()
+            notify(if (text != null && appSt.importBackup(text)) "Настройки восстановлены из копии" else "Это не файл настроек VibeToon")
+        }
+    }
     var canvasDialog by remember { mutableStateOf(0) }
     if (vm != null && canvasDialog != 0) com.vibetoon.ui.CanvasDialog(vm, canvasDialog == 2) { canvasDialog = 0 }
     AlertDialog(
@@ -177,7 +195,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         when (item) {
                             is Toggle -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 val st = com.vibetoon.ui.theme.LocalAppSettings.current
-                                val available = st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers")
+                                val available = st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers", "Import Images as Symbols")
                                 Column(Modifier.weight(1f)) {
                                     Text(ru(item.title), fontSize = 14.sp)
                                     if (!available) Text("В разработке", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -202,6 +220,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                         "Temporary Pivots" -> Text("Пивот действует только на время перетаскивания и не сохраняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Rotate Canvas 2 Fingers" -> Text("Поворот после 8° двумя пальцами, снап к 0/90/180/270°; только вид, экспорт не меняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Performance HUD" -> Text("Время сборки кадра (UI) и отрисовки (GL), доля медленных кадров, слои вне экрана и проходы эффектов", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Import Images as Symbols" -> Text("«+ Изображение» сразу создаёт символ: картинка - определение, на холсте - экземпляр", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Layer Pivot Editing" -> Text("Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
@@ -236,11 +255,19 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                 else if (item.title == "Temporary Pivots" && st != null) Switch(checked = st.temporaryPivots, onCheckedChange = { st.temporaryPivots = it; st.savePixelModes() })
                                 else if (item.title == "Rotate Canvas 2 Fingers" && st != null) Switch(checked = st.rotateCanvas, onCheckedChange = { st.rotateCanvas = it; st.savePixelModes() })
                                 else if (item.title == "Layer Pivot Editing" && st != null) Switch(checked = st.pivotEditing, onCheckedChange = { st.pivotEditing = it; st.savePixelModes() })
+                                else if (item.title == "Import Images as Symbols" && st != null) Switch(checked = st.importImagesAsSymbols, onCheckedChange = { st.importImagesAsSymbols = it; st.saveImport() })
                                 else if (item.title == "2 Finger Tap Undo" && st != null) Switch(checked = st.tap2Undo, onCheckedChange = { st.tap2Undo = it; st.saveGestures() })
                                 else if (item.title == "3 Finger Tap Redo" && st != null) Switch(checked = st.tap3Redo, onCheckedChange = { st.tap3Redo = it; st.saveGestures() })
                                 else Switch(checked = false, onCheckedChange = null, enabled = false)
                             }
-                            is Action -> OutlinedButton(onClick = { stub(item.title) }, modifier = Modifier.fillMaxWidth()) { Text(ru(item.title), fontSize = 13.sp) }
+                            is Action -> OutlinedButton(onClick = {
+                                when (item.title) {
+                                    "Reset" -> if (appSt != null) { appSt.resetDisplay(); notify("Настройки отображения сброшены") } else stub(item.title)
+                                    "Manual Backup" -> if (appSt != null) backupOut.launch("vibetoon-settings.json") else stub(item.title)
+                                    "Import Backup" -> if (appSt != null) backupIn.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) else stub(item.title)
+                                    else -> stub(item.title)
+                                }
+                            }, modifier = Modifier.fillMaxWidth()) { Text(ru(item.title), fontSize = 13.sp) }
                             is Info -> Row(Modifier.fillMaxWidth()) {
                                 Text(ru(item.title), fontSize = 14.sp, modifier = Modifier.weight(1f))
                                 Text(item.value, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))

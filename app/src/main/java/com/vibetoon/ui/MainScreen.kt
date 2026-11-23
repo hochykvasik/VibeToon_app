@@ -138,8 +138,10 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
     var showTextDialog by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     // Меню "+": картинка, видео, аудио - тот же системный диалог, разные типы файлов
+    val importSettings = com.vibetoon.ui.theme.LocalAppSettings.current
     val openImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) vm.importMedia(MediaKind.IMAGE, uri)
+        // «Import Images as Symbols» (пакет 10): картинка сразу становится символом
+        if (uri != null) { if (importSettings?.importImagesAsSymbols == true) vm.importMediaAsSymbol(uri) else vm.importMedia(MediaKind.IMAGE, uri) }
     }
     val openImageAsSymbol = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMediaAsSymbol(uri)

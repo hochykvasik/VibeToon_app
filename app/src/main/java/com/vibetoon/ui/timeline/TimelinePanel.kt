@@ -180,7 +180,6 @@ fun TimelinePanel(
     val keyScope = rememberCoroutineScope()
     var keyDragDelta by remember { mutableIntStateOf(0) }
     // Порядок строк = порядок слоёв; выделение его не меняет (иначе ломается «Лесенка»)
-    val shownRows = rows
     var showSettings by remember { mutableStateOf(false) }
     // сцены (пакет 9)
     val scenes by vm.scenes.collectAsStateWithLifecycle()
@@ -188,6 +187,17 @@ fun TimelinePanel(
     var showScenes by remember { mutableStateOf(false) }
     // текущая сцена меняется только на границах сцен: панель не перекомпонуется на каждом кадре Play
     val sceneNow by remember(scenes) { derivedStateOf { scenes.firstOrNull { frameS.value in it } } }
+    // пакет 10: открытая сцена (внутри символа - его собственные кадры, сцены не действуют)
+    val activeSceneId by vm.activeScene.collectAsStateWithLifecycle()
+    val activeSc = if (editingSym == null) scenes.firstOrNull { it.id == activeSceneId } else null
+    var sceneMenu by remember { mutableStateOf(false) }
+    var showHierarchy by remember { mutableStateOf(false) }
+    // пакет 10: «Режим ключей» - только слои с ключами (и их группы)
+    val keyMode by vm.keyMode.collectAsStateWithLifecycle()
+    val keyedIds = remember(rows, animation, timeKeyMap, keyMode) {
+        if (!keyMode) emptySet() else com.vibetoon.domain.anim.KeyMode.keyed(rows.map { it.layer.id }, animation.tracks, timeKeyMap)
+    }
+    val shownRows = remember(rows, keyedIds, keyMode) { if (keyMode) com.vibetoon.domain.anim.KeyMode.rows(rows, keyedIds) else rows }
     val duration = animation.settings.durationFrames
     val fps = animation.settings.fps
 
@@ -289,12 +299,19 @@ fun TimelinePanel(
             }
             TlIcon(Icons.Default.ChevronRight, "Следующий кадр") { vm.stepTimeline(1, stepByFrames) }
             TlIcon(Icons.Default.LastPage, "В конец") { vm.goEnd() }
-            FrameFieldHost(frameS, fps, duration - 1, vm::scrubTo)
-            Text("/ ${TimeFormat.format(duration, fps)}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            // в открытой сцене время считается от её начала, справа - длина сцены
+            FrameFieldHost(frameS, fps, activeSc?.start ?: 0, (activeSc?.length ?: duration) - 1, vm::scrubTo)
+            Text("/ ${TimeFormat.format(activeSc?.length ?: duration, fps)}", fontSize = 12.sp, maxLines = 1, softWrap = false)
             TlIcon(Icons.Default.AutoAwesome, "Эффекты (FX)", active = fx) { vm.toggleFx() }
             TlIcon(Icons.Default.Layers, "Калька (Onion Skin)", active = onion, onLong = { onionDialog = true }) { vm.toggleOnion() }
             TlIcon(Icons.Default.Repeat, "Зацикливание", active = loop) { vm.toggleLoop() }
-            if (!phone) AssistChip(onClick = { stub("Переключение сцен") }, label = { com.vibetoon.ui.DropText("Сцена 1") })
+            // переключение сцен (пакет 10): список сцен, «Весь таймлайн», новая сцена, разрез, управление
+            Box {
+                AssistChip(onClick = { sceneMenu = true }, label = {
+                    com.vibetoon.ui.DropText(activeSc?.let { sceneDisplayName(it.name) } ?: com.vibetoon.ui.i18n.L(if (scenes.isEmpty()) "Сцены" else "Весь таймлайн"))
+                })
+                SceneMenu(vm, sceneMenu, scenes, activeSc, playing) { open -> sceneMenu = false; if (open) showScenes = true }
+            }
             OutlinedButton(
                 onClick = vm::toggleKey,
                 enabled = selected != null && !playing,
@@ -355,6 +372,20 @@ fun TimelinePanel(
             OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::deleteSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
+        // ---- Режим ключей (пакет 10): переход и выделение по ключам всех слоёв ----
+        if (!collapsed && keyMode) Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            val kb = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            Text("Слоёв с ключами: ${keyedIds.size}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            OutlinedButton(onClick = { vm.jumpAnyKey(false) }, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("◀ Ключ", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { vm.jumpAnyKey(true) }, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Ключ ▶", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::selectKeysAtFrame, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Ключи кадра", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::selectAllKeys, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Все ключи", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            TextButton(onClick = vm::toggleKeyMode, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) { Text("Все слои", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+        }
         // ---- Панель инструментов таймлайна ----
         if (!collapsed && (!phone || toolsOpen)) Row(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -362,8 +393,8 @@ fun TimelinePanel(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
         ) {
             TlIcon(Icons.Default.Adjust, "Магнит", active = magnet) { vm.toggleMagnet() }
-            TlIcon(Icons.Default.AccountTree, "Иерархия трансформаций") { stub("Иерархия трансформаций") }
-            TlIcon(Icons.Default.Timeline, "Режим ключей") { stub("Режим ключей") }
+            TlIcon(Icons.Default.AccountTree, "Иерархия трансформаций") { showHierarchy = true }
+            TlIcon(Icons.Default.Timeline, "Режим ключей", active = keyMode) { vm.toggleKeyMode() }
             // f(x): плавность сегмента от ключа выделенного слоя на текущем кадре
             Box {
                 TlIcon(Icons.Default.ShowChart, "Кривые (Easing)", enabled = !playing) { vm.openCurveEditor(true) }
@@ -387,7 +418,7 @@ fun TimelinePanel(
             TlIcon(Icons.Default.Brush, "Добавить пустой кадр") { vm.addEmptyFrame() }
             TlIcon(Icons.Default.ContentCopy, "Дублировать кадр") { vm.duplicateFrame() }
             TlIcon(Icons.Default.DeleteSweep, "Удалить кадр") { vm.deleteFrame() }
-            TlIcon(Icons.Default.OpenInFull, "Расширить") { stub("Расширение клипа") }
+            TlIcon(Icons.Default.OpenInFull, "Расширить клип", enabled = selected != null && !playing) { vm.extendSelectedClips() }
             // Ножницы: разрезать клип выделенного слоя на плейхеде на две независимые части
             TlIcon(Icons.Default.ContentCut, "Разрезать клип", enabled = selected != null && !playing) { vm.splitSelected() }
             TlIcon(Icons.Default.ContentCopy, "Дублировать слой", enabled = selected != null && !playing) { vm.duplicateSelected() }
@@ -426,6 +457,17 @@ fun TimelinePanel(
         val frameWPxNow = rememberUpdatedState(frameWPx)
 
         // После щипка playhead остаётся на том же месте экрана
+        // открытие сцены: масштаб «сцена во всё окно» и прокрутка к её началу (пакет 10)
+        LaunchedEffect(activeSc?.id, activeSc?.length, viewportPx) {
+            val sc = activeSc ?: return@LaunchedEffect
+            if (viewportPx <= 0) return@LaunchedEffect
+            val dp = (viewportPx / density.density / sc.length.coerceAtLeast(1)).coerceIn(MIN_FRAME_DP, MAX_FRAME_DP)
+            anchorX = 0f
+            frameDp = dp
+            androidx.compose.runtime.withFrameNanos { }
+            androidx.compose.runtime.withFrameNanos { }
+            hScroll.scrollTo((sc.start * with(density) { dp.dp.toPx() }).toInt().coerceIn(0, hScroll.maxValue))
+        }
         LaunchedEffect(frameDp) {
             if (anchorX != 0f || hScroll.value != 0) hScroll.scrollTo((frame * frameWPx - anchorX).toInt().coerceAtLeast(0))
         }
@@ -439,7 +481,7 @@ fun TimelinePanel(
             }
         }
 
-        if (scenes.isNotEmpty()) SceneStrip(vm, scenes, sceneNow, frameWPx, contentW, NAME_W, hScroll, viewportPx) { showScenes = true }
+        if (scenes.isNotEmpty() && editingSym == null) SceneStrip(vm, scenes, activeSc ?: sceneNow, activeSc != null, frameWPx, contentW, NAME_W, hScroll, viewportPx) { showScenes = true }
         Row {
             Box(Modifier.width(NAME_W).height(RULER_H))
             // Линейка не листается сама (enabled=false): тап и перетаскивание по ней - перемотка.
@@ -503,6 +545,12 @@ fun TimelinePanel(
                     }
                     // Плейхед рисуется ПОД маркерами: раньше красная линия закрывала линию маркера, и был виден только
                     // флажок справа - казалось, что маркер встал правее текущего кадра. Теперь метка симметрична.
+                    // вне открытой сцены линейка притушена (пакет 10)
+                    activeSc?.let { sc ->
+                        val shade = Color.Black.copy(alpha = 0.35f)
+                        if (sc.start > 0) drawRect(shade, Offset.Zero, androidx.compose.ui.geometry.Size(sc.start * frameWPx, size.height))
+                        if (sc.end < duration) drawRect(shade, Offset(sc.end * frameWPx, 0f), androidx.compose.ui.geometry.Size((duration - sc.end) * frameWPx, size.height))
+                    }
                     drawPlayhead(frame * frameWPx, playheadColor)
                     for (m in markers) drawMarkerTag(m * frameWPx, markerColor, 5.dp.toPx(), 10.dp.toPx())
                 }
@@ -1095,7 +1143,8 @@ fun TimelinePanel(
         }
     }
     if (showSettings) TimelineSettingsDialog(duration, fps, vm::setTimeline) { showSettings = false }
-    if (showScenes) ScenesDialog(vm, scenes, sceneNow, fps, scenePlayOnly) { showScenes = false }
+    if (showScenes) ScenesDialog(vm, scenes, activeSc ?: sceneNow, activeSc != null, fps, scenePlayOnly) { showScenes = false }
+    if (showHierarchy) TransformHierarchyDialog(vm, selected) { showHierarchy = false }
 }
 
 /**
@@ -1132,7 +1181,8 @@ private fun CoroutineScope.edgeScroll(
  */
 /** Поле времени читает кадр сам: пересоздаётся оно одно, а не вся панель. */
 @Composable
-private fun FrameFieldHost(frame: State<Int>, fps: Int, max: Int, onFrame: (Int) -> Unit) = FrameField(frame.value, fps, max, onFrame)
+private fun FrameFieldHost(frame: State<Int>, fps: Int, offset: Int, max: Int, onFrame: (Int) -> Unit) =
+    FrameField((frame.value - offset).coerceAtLeast(0), fps, max) { onFrame(it + offset) }
 
 @Composable
 private fun FrameField(frame: Int, fps: Int, max: Int, onFrame: (Int) -> Unit) {
