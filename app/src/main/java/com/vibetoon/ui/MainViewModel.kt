@@ -672,7 +672,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             com.vibetoon.domain.project.PaintSaveBarrier.save(
                 paint = { flushPaintSaves() },
                 metadata = {
-                    val data = ProjectData(m.copy(updatedAt = System.currentTimeMillis()), psdRef, HashMap(base), _animation.value.tracks, media.toList(), deletedPsd, _clips.value, _markers.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupDeformationAnchors.toMap(), warpGridSizes.toMap(), denseWarps.toMap(), pivotOverrides.toMap(), _scenes.value)
+                    val data = ProjectData(m.copy(updatedAt = System.currentTimeMillis()), psdRef, HashMap(base), _animation.value.tracks, media.toList(), deletedPsd, _clips.value, _markers.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupDeformationAnchors.toMap(), warpGridSizes.toMap(), denseWarps.toMap(), pivotOverrides.toMap(), (if (layers.isEmpty()) _scenes.value else com.vibetoon.domain.anim.SceneCanvas.prune(_scenes.value, layers.mapTo(HashSet()) { it.id })))
                     withContext(Dispatchers.IO) { projects.save(data) }
                     meta = data.meta
                     Log.i("VT/Project", "saved ${data.meta.id}: ${data.base.size} base, ${data.tracks.size} tracks")
@@ -2521,6 +2521,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val ids = HashSet<Int>().apply {
             addAll(base.keys); addAll(override.keys); addAll(_animation.value.tracks.keys.filter { it >= 0 }); addAll(_clips.value.keys); addAll(fxLayers.keys); addAll(hiddenIds()); addAll(ghosts.map { it.id })
         }
+        val look = sceneLookNow()   // пакет 24: свои слои сцен и переходы
+        ids.addAll(look.alpha.keys); ids.addAll(look.shiftX.keys)
         // вне клипа слой невидим: нулевая прозрачность (у группы скрывает и всех потомков)
         val rest = _boneMode.value && _bindPose.value   // Bind Pose: кости не деформируют картинку
         val ghostById = if (ghosts.isEmpty()) emptyMap() else ghosts.associateBy { it.id }
@@ -2537,7 +2539,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (layerProps[id]?.visible == false || (c != null && !c.visibleAt(_frame.value))) t.copy(opacity = 0f)   // глаз выключен: слой не рисуется
             else if (id in ctxIds) t.copy(opacity = t.opacity * ctxAlpha)
             else if (id in symHidden) t.copy(opacity = 0f)
-            else t
+            else withSceneLook(id, t, look, canvasW, fit)
         }
     }
 
@@ -2593,7 +2595,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun boneHeads(): Map<Int, Pair<Float, Float>> = _bones.value.associate { it.id to (it.hx to it.hy) }
     private fun boneTails(): Map<Int, Pair<Float, Float>> = _bones.value.associate { it.id to (it.tx to it.ty) }
 
-    private fun buildEditorScene(warpIds: Set<Int> = warpLayers, perspIds: Set<Int> = perspLayers, useGroups: Boolean = true, dense: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = denseWarps): SceneData {
+    private fun buildEditorScene(warpIds: Set<Int> = warpLayers, perspIds: Set<Int> = perspLayers, useGroups: Boolean = true, dense: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = denseWarps): SceneData =
+        buildEditorSceneRaw(warpIds, perspIds, useGroups, dense).also { it.backgroundOverride = sceneLookNow().background }   // пакет 24: фон сцены / переход через цвет
+
+    private fun buildEditorSceneRaw(warpIds: Set<Int>, perspIds: Set<Int>, useGroups: Boolean, dense: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid>): SceneData {
         val options = com.vibetoon.domain.render.SceneOptions.capture(media, layerProps)
         val inputs = com.vibetoon.domain.render.GroupSceneInputs.build(groupDeformationAnchors, warpIds, perspIds,
             _frame.value, base, _animation.value, _fx.value, warpGridSizes)
@@ -8307,7 +8312,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun fxNow(): Map<Int, List<FloatArray>> {
-        val base = fxRecords(fxLayers, _colors.value, _animation.value, _frame.value, _animation.value.settings.fps)
+        val base = sceneLookFx(fxRecords(fxLayers, _colors.value, _animation.value, _frame.value, _animation.value.settings.fps), sceneLookNow(), leafIdsForLook())
         if (ghosts.isEmpty()) return base
         val out = HashMap(base)
         for (g in ghosts) out[g.id] = listOf(floatArrayOf(TINT_FX, g.r, g.g, g.b, 0.85f, 0f, 0f, 0f, 0f, 0f))   // красный/зелёный оттенок кадров-ориентиров
@@ -10153,9 +10158,94 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun currentScene(): com.vibetoon.domain.anim.SceneRange? = com.vibetoon.domain.anim.SceneMath.at(_scenes.value, _frame.value)
 
+    // ---------------------------------------------------------------- холсты сцен и переходы (пакет 24)
+    //
+    // Свой слой сцены (верхний узел: слой, группа, медиа) виден только в своих сценах, общий - во всех. Переход в сцену
+    // из соседней предыдущей: растворение / через чёрный / через белый / сдвиг. Свой фон сцены. Редактор, Play и экспорт
+    // (MP4/GIF/PNG) применяют один и тот же SceneCanvas.look; в контексте символа не действует.
+
+    private fun sceneLookNow(): com.vibetoon.domain.anim.SceneCanvas.Look {
+        val sc = _scenes.value
+        if (_editingSymbol.value != null || !com.vibetoon.domain.anim.SceneCanvas.active(sc)) return com.vibetoon.domain.anim.SceneCanvas.Look.NONE
+        return com.vibetoon.domain.anim.SceneCanvas.look(sc, _frame.value, meta?.background?.toInt() ?: 0)
+    }
+
+    /** Множитель прозрачности и сдвиг (доли ширины холста; у узлов PSD - в единицах PSD через fit) по виду кадра. */
+    private fun withSceneLook(id: Int, t: LayerTransform, look: com.vibetoon.domain.anim.SceneCanvas.Look, cw: Int, fitM: Affine2D): LayerTransform {
+        if (look.isNone) return t
+        val a = look.alpha[id]
+        val sh = look.shiftX[id]
+        if (a == null && sh == null) return t
+        val unit = if (id < MEDIA_ID_BASE) kotlin.math.hypot(fitM.a, fitM.b).takeIf { it > 1e-6f } ?: 1f else 1f
+        return t.copy(opacity = t.opacity * (a ?: 1f), dx = t.dx + (sh ?: 0f) * cw / unit)
+    }
+
+    /** Переход через цвет: в конец цепочки эффектов каждого слоя - оттенок цвета перехода с силой затемнения. */
+    private fun sceneLookFx(fx: Map<Int, List<FloatArray>>, look: com.vibetoon.domain.anim.SceneCanvas.Look, leaves: Set<Int>): Map<Int, List<FloatArray>> {
+        if (look.overlay <= 0f || leaves.isEmpty()) return fx
+        val c = if (look.overlayWhite) 1f else 0f
+        val out = HashMap(fx)
+        for (id in leaves) out[id] = fx[id].orEmpty() + listOf(floatArrayOf(TINT_FX, c, c, c, look.overlay.coerceIn(0f, 1f), 0f, 0f, 0f, 0f, 0f))
+        return out
+    }
+
+    private fun leafIdsForLook(): Set<Int> = layers.asSequence().filter { it.kind == LayerKind.LAYER && it.id < BONE_ID_BASE }.mapTo(HashSet()) { it.id }
+
+    /** Верхние узлы, которые можно сделать своими для сцены (без камеры и null-объектов): id и имя. */
+    fun sceneLayerCandidates(): List<Pair<Int, String>> {
+        val skip = media.filter { it.kind == MediaKind.CAMERA || it.kind == MediaKind.NULLOBJ }.mapTo(HashSet()) { it.id }
+        return roots.filter { it.id < BONE_ID_BASE && it.id !in skip }.reversed().map { it.id to layerName(it.id) }   // сверху вниз, как в панели слоёв
+    }
+
+    fun sceneLayerVisible(sceneId: Int, layer: Int): Boolean = com.vibetoon.domain.anim.SceneCanvas.visibleIn(_scenes.value, layer, sceneId)
+    fun sceneLayerShared(layer: Int): Boolean = _scenes.value.none { layer in it.layers }
+
+    fun setSceneLayer(sceneId: Int, layer: Int, visible: Boolean) {
+        if (_playing.value) return
+        val next = com.vibetoon.domain.anim.SceneCanvas.toggle(_scenes.value, layer, sceneId, visible)
+            ?: run { _state.value = UiState.Message("Слой должен остаться хотя бы в одной сцене: используйте глаз в панели слоёв"); return }
+        applyScenes(next, "scene-layer")
+    }
+
+    fun shareSceneLayer(layer: Int) {
+        if (_playing.value || sceneLayerShared(layer)) return
+        applyScenes(com.vibetoon.domain.anim.SceneCanvas.share(_scenes.value, layer), "scene-layer")
+    }
+
+    /** «+ Сцена с чистым холстом»: новая сцена в конце, все нынешние общие верхние слои остаются только в прежних сценах. */
+    fun addSceneCleanCanvas() {
+        if (_playing.value) return
+        val before = _scenes.value.map { it.id }.toSet()
+        addScene()
+        val added = _scenes.value.firstOrNull { it.id !in before } ?: return
+        val next = com.vibetoon.domain.anim.SceneCanvas.cleanCanvas(_scenes.value, sceneLayerCandidates().map { it.first }, added.id)
+        if (next != _scenes.value) {
+            _scenes.value = next   // тот же шаг Undo, что и добавление сцены
+            pushScene()
+            markDirty()
+        }
+        _state.value = UiState.Message("Сцена с чистым холстом: новые слои в ней можно сделать своими в «Холст и переход»")
+    }
+
+    fun setSceneTransition(sceneId: Int, type: com.vibetoon.domain.anim.SceneTransition, frames: Int) {
+        if (_playing.value) return
+        val next = com.vibetoon.domain.anim.SceneCanvas.setTransition(_scenes.value, sceneId, type, frames) ?: return
+        if (next == _scenes.value) return
+        applyScenes(next, "scene-transition:$sceneId")
+    }
+
+    fun setSceneBackground(sceneId: Int, argb: Int?) {
+        if (_playing.value) return
+        val next = com.vibetoon.domain.anim.SceneCanvas.setBackground(_scenes.value, sceneId, argb) ?: return
+        applyScenes(next, "scene-bg")
+    }
+
+    fun projectBackground(): Int = meta?.background?.toInt() ?: 0
+
     private fun applyScenes(next: List<com.vibetoon.domain.anim.SceneRange>, key: String) {
         checkpoint(key, force = true)
         _scenes.value = com.vibetoon.domain.anim.SceneMath.normalize(next, _animation.value.settings.durationFrames)
+        pushScene()   // пакет 24: холсты сцен и переходы видны сразу
         markDirty()
     }
 
@@ -10628,7 +10718,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // получает в сцене сам) и без общей цепочки эффектов экземпляров у участников - иначе двойной сдвиг/тряска
         val snapCtx = if (symbol != null) symbolSnapshotContext(symbol) else null
         val neutral = snapCtx?.first.orEmpty()
-        val ids = baseCopy.keys + anim.tracks.keys.filter { it >= 0 } + clipsCopy.keys + fxIdsExp + adjCopy.keys + hiddenExp + outsideIds + neutral
+        // пакет 24: свои слои сцен и переходы - в экспорте те же, что в редакторе (не в снимках символов и слоёв)
+        val scenesExp = if (symbol == null && onlyLayers == null && com.vibetoon.domain.anim.SceneCanvas.active(_scenes.value)) _scenes.value else emptyList()
+        val ownedExp = com.vibetoon.domain.anim.SceneCanvas.owned(scenesExp)
+        val bgExp = meta?.background?.toInt() ?: 0
+        val leafExp = if (scenesExp.isEmpty()) emptySet() else leafIdsForLook()
+        val fitExp = fit; val cwExp = canvasW
+        val ids = baseCopy.keys + anim.tracks.keys.filter { it >= 0 } + clipsCopy.keys + fxIdsExp + adjCopy.keys + hiddenExp + outsideIds + neutral + ownedExp
         val r = roots; val cw = canvasW; val ch = canvasH; val f = fit; val tids = textIds; val lnk = if (neutral.isEmpty()) _links.value else _links.value - neutral; val bnd = boneHeads(); val wl = warpLayers; val indep = independentBones(); val ml = meshLayers; val pl = perspLayers; val btl = boneTails(); val sk = effectiveSkins(); val tl = turbLayers; val fxl = if (snapCtx == null || symbol == null) fxLayers else com.vibetoon.domain.project.SymbolPlacement.snapshotFx(fxLayers, symbolMembers(symbol), snapCtx.second, neutral); val camId = if (symbol != null) -1 else cameraIdNow(); val pinl = pinLayers; val lsz = layers.associate { it.id to (it.width.toFloat() to it.height.toFloat()) }
         // Фиксируем те же опции, что и в редакторе: null-объекты не рисуются,
         // а глубина родительских групп применяется и при экспорте кадров.
@@ -10655,6 +10751,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val pf = if (symbol != null) i.coerceAtLeast(0)
                 else if (sceneRange != null) com.vibetoon.domain.anim.SceneMath.exportFrame(i, st.fps, fps, sceneRange)
                 else ExportMath.projectFrame(i, st.fps, fps, st.durationFrames)
+            val lookExp = if (scenesExp.isEmpty()) com.vibetoon.domain.anim.SceneCanvas.Look.NONE else com.vibetoon.domain.anim.SceneCanvas.look(scenesExp, pf, bgExp)
             for (cm in cellLayers) {   // покадровые слои: в текстуре рисунок этого кадра
                 val act = FrameMath.active(cm.cells, pf) ?: continue
                 if (pidExp == null) continue
@@ -10700,7 +10797,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val t0 = clipsCopy[id]?.let { c -> anim.evaluate(id, c.animFrame(pf), baseCopy[id]) } ?: anim.evaluate(id, pf, baseCopy[id])
                 val t = fxl[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.extraRotation(id, l, anim, pf, st.fps)) } ?: t0
                 val c = clipsCopy[id]
-                if (id in hiddenExp || id in outsideIds || (c != null && !c.visibleAt(pf))) t.copy(opacity = 0f) else t
+                if (id in hiddenExp || id in outsideIds || (c != null && !c.visibleAt(pf))) t.copy(opacity = 0f) else withSceneLook(id, t, lookExp, cwExp, fitExp)
             }, f, tids, lnk, bnd, groupInputs.warps, indep,
                 ml.mapValues { (lid, m) ->
                     val v = MeshMath.offsets(lid, m, pf, baseCopy, anim, true)
@@ -10709,8 +10806,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     m to (if (ps != null && sz != null) PuppetMath.addTo(m, v, ps, PuppetMath.offsets(lid, ps.size, pf, baseCopy, anim, true), sz.first, sz.second) else v)
                 },
                 groupInputs.perspectives, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
-                fxRecords(fxl, adjCopy, anim, pf, st.fps), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides,
-                stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxl, anim, pf))
+                sceneLookFx(fxRecords(fxl, adjCopy, anim, pf, st.fps), lookExp, leafExp), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides,
+                stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxl, anim, pf)).also { it.backgroundOverride = lookExp.background }
             } catch (e: IllegalArgumentException) {
                 if (groupInputs.groups.isEmpty() && denseExp.isEmpty()) throw e
                 throw IllegalStateException("Экспорт остановлен: неподдерживаемая деформация или область", e)

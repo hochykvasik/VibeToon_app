@@ -63,7 +63,7 @@ class Package13ProjectImportTest {
             regroup = listOf(cells to group),
             fx = mapOf(img to listOf(Effect(EffectMath.BLUR, List(8) { if (it == 0) 12f else 0f }))),
             layerProps = mapOf(img to LayerProps(name = "Небо", locked = true), cells to LayerProps(visible = false)),
-            scenes = listOf(SceneRange(1, "Начало", 0, 48), SceneRange(2, "Финал", 48, 96))
+            scenes = listOf(SceneRange(1, "Начало", 0, 48, layers = setOf(img)), SceneRange(2, "Финал", 48, 96, transition = "dissolve", transitionFrames = 8, background = 0xFF000000.toInt()))
         )
     }
 
@@ -215,14 +215,14 @@ class Package13ProjectImportTest {
         val m = ProjectArchive.manifest(6, "Мини")
         assertTrue(m.contains("\"format\":2") || m.contains("\"format\": 2"))
         assertNotNull(ProjectArchive.versionOf(ProjectJson.encode(miniProject())))
-        assertEquals(6, ProjectArchive.versionOf(ProjectJson.encode(miniProject())))
+        assertEquals(ProjectJson.VERSION, ProjectArchive.versionOf(ProjectJson.encode(miniProject())))   // пакет 24: холсты сцен - v7
         assertTrue(ProjectArchive.referencedFiles(miniProject()).none { it.isEmpty() })
     }
 
     @Test fun projectJsonFailureIsNotSilentlyIgnored() {
         try {
-            ProjectArchive.prepareJson("""{"version":7,"id":"x"}""", "n", 1L, emptyList()) { true }
-            fail("v7 must be rejected")
+            ProjectArchive.prepareJson("""{"version":${ProjectJson.VERSION + 1},"id":"x"}""", "n", 1L, emptyList()) { true }
+            fail("newer version must be rejected")
         } catch (e: ProjectArchive.ImportException) {
             assertEquals(Reason.NEWER_VERSION, e.reason)
             assertTrue(e.message!!.contains("новее") || e.message!!.contains("более новой"))

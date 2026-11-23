@@ -63,6 +63,9 @@ class SceneData(
      */
     @Volatile var aliases: TextureAliases = TextureAliases.EMPTY
 
+    /** Пакет 24: фон кадра на время перехода «Через чёрный/белый» (null - фон проекта). Едет вместе со сценой - и в экспорте. */
+    @Volatile var backgroundOverride: Int? = null
+
     companion object {
         const val PARAM_STRIDE = 8
     }

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -123,6 +124,7 @@ fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRang
     var editing by remember { mutableStateOf<Int?>(null) }
     var nameText by remember { mutableStateOf("") }
     var exportOnly by remember { mutableStateOf(vm.exportSceneOnly) }
+    var canvasOf by remember { mutableStateOf<Int?>(null) }   // пакет 24: окно «Холст и переход» сцены
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Сцены") },
@@ -150,7 +152,9 @@ fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRang
                                     modifier = Modifier.pointerInput(s.id) { detectTapGestures { vm.selectScene(s.id) } })
                                 Text("${TimeFormat.format(s.start, fps)} – ${TimeFormat.format(s.end, fps)} · ${s.length} кадров", fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), maxLines = 1)
+                                sceneCanvasSummary(s, scenes)?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, maxLines = 1) }
                             }
+                            IconButton(onClick = { canvasOf = s.id }) { Icon(Icons.Default.Layers, L("Холст и переход сцены")) }
                             IconButton(onClick = { editing = s.id; nameText = s.name }) { Icon(Icons.Default.Edit, L("Переименовать сцену")) }
                             IconButton(onClick = { vm.removeScene(s.id) }) { Icon(Icons.Default.Delete, L("Удалить сцену")) }
                         }
@@ -160,6 +164,7 @@ fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRang
                     OutlinedButton(onClick = vm::addScene) { Text("+ Новая сцена", maxLines = 1, softWrap = false) }
                     OutlinedButton(onClick = vm::splitSceneAtPlayhead) { Text("Разрезать на плейхеде", maxLines = 1, softWrap = false) }
                 }
+                OutlinedButton(onClick = vm::addSceneCleanCanvas) { Text("+ Сцена с чистым холстом", maxLines = 1, softWrap = false) }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     OutlinedButton(onClick = { vm.stepScene(-1) }, enabled = scenes.isNotEmpty()) { Text("◀ Предыдущая", maxLines = 1, softWrap = false) }
                     OutlinedButton(onClick = { vm.stepScene(1) }, enabled = scenes.isNotEmpty()) { Text("Следующая ▶", maxLines = 1, softWrap = false) }
@@ -171,6 +176,99 @@ fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRang
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Switch(checked = exportOnly, onCheckedChange = { exportOnly = it; vm.setExportSceneOnly(it) })
                     Text("Экспорт только текущей сцены", fontSize = 13.sp)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } }
+    )
+    val canvasScene = canvasOf?.let { id -> scenes.firstOrNull { it.id == id } }   // сцена удалена - окно просто не показывается
+    if (canvasScene != null) SceneCanvasDialog(vm, canvasScene, scenes, fps) { canvasOf = null }
+}
+
+/** Строка-сводка под сценой: переход, свой фон, свои слои (null - ничего не настроено). */
+@Composable
+private fun sceneCanvasSummary(s: SceneRange, scenes: List<SceneRange>): String? {
+    val parts = ArrayList<String>()
+    val i = scenes.indexOfFirst { it.id == s.id }
+    val n = com.vibetoon.domain.anim.SceneCanvas.transitionLength(scenes, i)
+    if (n > 0) parts += L(com.vibetoon.domain.anim.SceneTransition.of(s.transition).title) + " · " + n
+    if (s.background != null) parts += L("свой фон")
+    if (s.layers.isNotEmpty()) parts += L("своих слоёв") + ": " + s.layers.size
+    return if (parts.isEmpty()) null else parts.joinToString("  ·  ")
+}
+
+private val SCENE_BG_SWATCHES = listOf(0xFFFFFFFF, 0xFF000000, 0xFF808080, 0xFFF5E6C8, 0xFF90CAF9, 0xFFA5D6A7, 0xFFFFAB91, 0xFFCE93D8).map { it.toInt() }
+
+/**
+ * Окно «Холст и переход» сцены (пакет 24): переход в сцену из предыдущей и его длина, свой фон, свои слои
+ * (галочка - слой виден в этой сцене; общий слой виден во всех сценах). Каждое изменение - шаг Undo.
+ */
+@Composable
+fun SceneCanvasDialog(vm: MainViewModel, scene: SceneRange, scenes: List<SceneRange>, fps: Int, onDismiss: () -> Unit) {
+    val sub = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+    val index = scenes.indexOfFirst { it.id == scene.id }
+    val prev = scenes.getOrNull(index - 1)
+    val canTransition = prev != null && prev.end == scene.start
+    val maxLen = if (prev == null) 1 else minOf(scene.length, prev.length, com.vibetoon.domain.anim.SceneCanvas.MAX_TRANSITION).coerceAtLeast(1)
+    val type = com.vibetoon.domain.anim.SceneTransition.of(scene.transition)
+    var len by remember(scene.id, scene.transitionFrames, maxLen) {
+        mutableStateOf((if (scene.transitionFrames > 0) scene.transitionFrames else fps.coerceAtLeast(2) / 2).coerceIn(1, maxLen).toFloat())
+    }
+    val candidates = remember(scenes) { vm.sceneLayerCandidates() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(L("Холст и переход") + ": " + sceneDisplayName(scene.name)) },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Переход в сцену", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                if (!canTransition) Text(if (prev == null) "У первой сцены нет перехода: он идёт из предыдущей сцены." else "Между этой и предыдущей сценой есть промежуток: переход возможен только у соседних сцен.",
+                    fontSize = 12.sp, color = sub)
+                else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        for (t in com.vibetoon.domain.anim.SceneTransition.entries) androidx.compose.material3.FilterChip(
+                            selected = t == type, onClick = { vm.setSceneTransition(scene.id, t, len.toInt()) },
+                            label = { Text(t.title, maxLines = 1, softWrap = false) }
+                        )
+                    }
+                    if (type != com.vibetoon.domain.anim.SceneTransition.CUT) {
+                        Text("${len.toInt()} кадров · ${TimeFormat.format(len.toInt(), fps)}", fontSize = 12.sp)
+                        if (maxLen > 1) androidx.compose.material3.Slider(
+                            value = len, onValueChange = { len = it }, valueRange = 1f..maxLen.toFloat(),
+                            onValueChangeFinished = { vm.setSceneTransition(scene.id, type, len.toInt()) }
+                        )
+                        Text("Переход занимает поровну последние кадры предыдущей сцены и первые кадры этой. Растворение и сдвиг меняют только свои слои сцен; через чёрный/белый - весь кадр.",
+                            fontSize = 11.sp, color = sub)
+                    }
+                }
+                androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text("Фон сцены", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    androidx.compose.material3.FilterChip(selected = scene.background == null, onClick = { vm.setSceneBackground(scene.id, null) },
+                        label = { Text("Как у проекта", maxLines = 1, softWrap = false) })
+                    for (c in SCENE_BG_SWATCHES) Box(
+                        Modifier.size(30.dp)
+                            .background(MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+                            .padding(if (scene.background == c) 3.dp else 1.dp)
+                            .background(Color(c), androidx.compose.foundation.shape.CircleShape)
+                            .pointerInput(c) { detectTapGestures { vm.setSceneBackground(scene.id, c) } }
+                    )
+                }
+                androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text("Слои сцены", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("Галочка - слой виден в этой сцене. Снятая галочка у общего слоя делает его своим для остальных сцен. Свои слои других сцен здесь скрыты.",
+                    fontSize = 11.sp, color = sub)
+                if (candidates.isEmpty()) Text("В проекте пока нет слоёв.", fontSize = 12.sp, color = sub)
+                for ((id, name) in candidates) {
+                    val shared = scenes.none { id in it.layers }
+                    val on = shared || id in scene.layers
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        androidx.compose.material3.Checkbox(checked = on, onCheckedChange = { vm.setSceneLayer(scene.id, id, it) })
+                        Column(Modifier.weight(1f)) {
+                            Text(name, fontSize = 13.sp, maxLines = 1)
+                            Text(if (shared) L("во всех сценах") else L("сцен") + ": " + scenes.count { id in it.layers }, fontSize = 11.sp, color = sub, maxLines = 1)
+                        }
+                        if (!shared) TextButton(onClick = { vm.shareSceneLayer(id) }) { Text("Во всех сценах", maxLines = 1, softWrap = false) }
+                    }
                 }
             }
         },

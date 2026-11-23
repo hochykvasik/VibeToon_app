@@ -65,7 +65,7 @@ class VtRenderer(
         RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY, p.camera.rotDeg, p.camera.flipX, p.camera.flipY)
         RenderNative.setInteractive(handle, p.interactive)
         RenderNative.setSelection(handle, p.selectionQuad)
-        RenderNative.setBackground(handle, p.background)
+        RenderNative.setBackground(handle, lastScene?.backgroundOverride ?: p.background)
         val t0 = if (RenderMetrics.enabled) System.nanoTime() else 0L
         val more = RenderNative.drawFrame(handle)
         if (RenderMetrics.enabled) {
@@ -85,7 +85,7 @@ class VtRenderer(
     fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int = 0): ByteArray? {
         if (handle == 0L) return null
         if (scene != null) applyScene(scene)
-        RenderNative.setBackground(handle, background)
+        RenderNative.setBackground(handle, scene?.backgroundOverride ?: background)
         val r = RenderNative.captureFrame(handle, width, height, transparent, flags)
         if (scene != null) lastScene?.let { applyScene(it) }
         return r
@@ -152,14 +152,17 @@ class VtRenderer(
             }
 
             override fun readFrame(index: Int, width: Int, height: Int): ByteArray? {
-                applyScene(sceneAt(index))
-                RenderNative.setBackground(handle, background)
+                val s = sceneAt(index)
+                applyScene(s)
+                RenderNative.setBackground(handle, s.backgroundOverride ?: background)
                 RenderNative.setSelection(handle, null)
                 return RenderNative.captureFrame(handle, width, height, false, 0)
             }
 
             override fun drawFrame(index: Int) {
-                applyScene(sceneAt(index))
+                val s = sceneAt(index)
+                applyScene(s)
+                RenderNative.setBackground(handle, s.backgroundOverride ?: background)   // пакет 24: переход через цвет
                 // пока в очереди есть загрузки текстур, кадр рисуется повторно (лимит от зависания)
                 var guard = 0
                 while (RenderNative.drawFrame(handle) && guard++ < 500 && !cancel.get()) { /* ждём все текстуры */ }

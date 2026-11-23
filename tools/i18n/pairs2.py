@@ -1192,4 +1192,29 @@ PSD в текущий проект|PSD into current project
 Пустое название или такая папка уже есть|Empty name, or such a folder already exists
 Сначала создайте папку: «+ Папка»|Create a folder first: “+ Folder”
 Убрать из папки|Remove from folder
+Холст и переход сцены|Scene canvas and transition
+Холст и переход|Canvas and transition
+свой фон|own background
+своих слоёв|own layers
++ Сцена с чистым холстом|+ Scene with a clean canvas
+Переход в сцену|Transition into the scene
+У первой сцены нет перехода: он идёт из предыдущей сцены.|The first scene has no transition: a transition comes from the previous scene.
+Между этой и предыдущей сценой есть промежуток: переход возможен только у соседних сцен.|There is a gap between this scene and the previous one: a transition is possible only between adjacent scenes.
+Без перехода|Cut
+Растворение|Dissolve
+Через чёрный|Through black
+Через белый|Through white
+Сдвиг влево|Push left
+{} кадров · {}|{} frames · {}
+Переход занимает поровну последние кадры предыдущей сцены и первые кадры этой. Растворение и сдвиг меняют только свои слои сцен; через чёрный/белый - весь кадр.|The transition takes the last frames of the previous scene and the first frames of this one in equal parts. Dissolve and push change only the scenes’ own layers; through black/white changes the whole frame.
+Фон сцены|Scene background
+Как у проекта|Same as project
+Слои сцены|Scene layers
+Галочка - слой виден в этой сцене. Снятая галочка у общего слоя делает его своим для остальных сцен. Свои слои других сцен здесь скрыты.|Checked: the layer is visible in this scene. Unchecking a shared layer makes it the own layer of the other scenes. Other scenes’ own layers are hidden here.
+В проекте пока нет слоёв.|The project has no layers yet.
+во всех сценах|in all scenes
+Во всех сценах|In all scenes
+сцен|scenes
+Слой должен остаться хотя бы в одной сцене: используйте глаз в панели слоёв|A layer must stay in at least one scene: use the eye in the Layers panel
+Сцена с чистым холстом: новые слои в ней можно сделать своими в «Холст и переход»|Scene with a clean canvas: new layers in it can be made its own in “Canvas and transition”
 """

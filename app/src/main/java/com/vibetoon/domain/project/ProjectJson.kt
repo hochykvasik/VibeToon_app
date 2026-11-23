@@ -13,7 +13,7 @@ import com.vibetoon.domain.render.LayerTransform
  * Неизвестные и отсутствующие поля не ломают чтение; версия новее известной - ошибка.
  */
 object ProjectJson {
-    const val VERSION = 6
+    const val VERSION = 7
     private const val LEGACY_VERSION = 1
     const val FORMAT = "vibetoon-project"
 
@@ -22,7 +22,7 @@ object ProjectJson {
         val root = LinkedHashMap<String, Any?>()
         root["format"] = FORMAT
         // Старые сборки обязаны отказаться от открытия, а не молча удалить новый формат.
-        root["version"] = if (d.scenes.isNotEmpty()) 6 else if (d.pivots.isNotEmpty()) 5 else if (d.denseWarps.isNotEmpty()) 4 else if (d.warpGridSizes.isNotEmpty()) 3 else if (d.groupDeformationAnchors.isNotEmpty()) 2 else LEGACY_VERSION
+        root["version"] = if (com.vibetoon.domain.anim.SceneCanvas.active(d.scenes)) 7 else if (d.scenes.isNotEmpty()) 6 else if (d.pivots.isNotEmpty()) 5 else if (d.denseWarps.isNotEmpty()) 4 else if (d.warpGridSizes.isNotEmpty()) 3 else if (d.groupDeformationAnchors.isNotEmpty()) 2 else LEGACY_VERSION
         root["id"] = m.id
         root["name"] = m.name
         root["width"] = m.width
@@ -65,7 +65,14 @@ object ProjectJson {
                 listOf(a.x.toDouble(), a.y.toDouble(), a.width.toDouble(), a.height.toDouble())
             }
         }
-        if (d.scenes.isNotEmpty()) root["scenes"] = d.scenes.map { linkedMapOf<String, Any?>("id" to it.id, "n" to it.name, "s" to it.start, "e" to it.end) }
+        if (d.scenes.isNotEmpty()) root["scenes"] = d.scenes.map {
+            linkedMapOf<String, Any?>("id" to it.id, "n" to it.name, "s" to it.start, "e" to it.end).apply {
+                // пакет 24: свои слои сцены и переход в неё (поля только при использовании - иначе файл остаётся v6)
+                if (it.layers.isNotEmpty()) put("ly", it.layers.sorted())
+                if (it.transition != com.vibetoon.domain.anim.SceneTransition.CUT.key) { put("tr", it.transition); put("tf", it.transitionFrames) }
+                it.background?.let { c -> put("bg", c.toLong() and 0xFFFFFFFFL) }
+            }
+        }
         if (d.pivots.isNotEmpty()) {
             require(d.pivots.all { (id, p) -> id >= 0 && p.first.isFinite() && p.second.isFinite() }) { "Invalid pivot" }
             root["pivots"] = d.pivots.toSortedMap().mapKeys { it.key.toString() }.mapValues { (_, p) -> listOf(p.first.toDouble(), p.second.toDouble()) }
@@ -303,7 +310,11 @@ object ProjectJson {
             val scenes = com.vibetoon.domain.anim.SceneMath.normalize((root["scenes"] as? List<*>).orEmpty().mapNotNull { item ->
                 val o = item as? Map<*, *> ?: return@mapNotNull null
                 com.vibetoon.domain.anim.SceneRange((o["id"] as? Number)?.toInt() ?: return@mapNotNull null, o["n"] as? String ?: "",
-                    (o["s"] as? Number)?.toInt() ?: return@mapNotNull null, (o["e"] as? Number)?.toInt() ?: return@mapNotNull null)
+                    (o["s"] as? Number)?.toInt() ?: return@mapNotNull null, (o["e"] as? Number)?.toInt() ?: return@mapNotNull null,
+                    layers = (o["ly"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt()?.takeIf { id -> id >= 0 } }.toSet(),
+                    transition = com.vibetoon.domain.anim.SceneTransition.of(o["tr"] as? String).key,
+                    transitionFrames = ((o["tf"] as? Number)?.toInt() ?: 0).coerceIn(0, com.vibetoon.domain.anim.SceneCanvas.MAX_TRANSITION),
+                    background = (o["bg"] as? Number)?.toLong()?.takeIf { it in 0L..0xFFFFFFFFL }?.toInt())
             }, meta.durationFrames)
             Result.success(ProjectData(meta, psd, base, tracks, media, deleted, clips, markers, links, bones, regroup, warps, meshes,
                 (root["persps"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.toSet(), skins, turbs, fx, pins, lprops, groupAnchors, warpSizes, dense, pivots, scenes))
