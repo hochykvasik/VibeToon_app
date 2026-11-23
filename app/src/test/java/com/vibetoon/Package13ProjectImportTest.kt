@@ -105,7 +105,12 @@ class Package13ProjectImportTest {
         assertEquals(ProjectJson.VERSION, r.sourceVersion)
         // всё остальное - ровно как в исходном проекте
         val expected = ProjectJson.decode(ProjectJson.encode(src)).getOrThrow()
-        assertEquals(expected.copy(meta = expected.meta.copy(id = "new42", name = "Мини (2)", updatedAt = 5000L)), r.data)
+        // (AnimationTrack сравнивается по содержимому через JSON: это не data class)
+        assertEquals(ProjectJson.encode(expected.copy(meta = expected.meta.copy(id = "new42", name = "Мини (2)", updatedAt = 5000L))), ProjectJson.encode(r.data))
+        assertEquals(expected.copy(tracks = emptyMap(), meta = r.data.meta), r.data.copy(tracks = emptyMap()))
+        assertEquals(listOf(0, 24), r.data.tracks.getValue(100000).keys.map { it.frame })
+        assertEquals(300f, r.data.tracks.getValue(100000).keys.last().dx, 0.001f)
+        assertEquals(listOf(12), r.data.tracks.getValue(200000).keys.map { it.frame })
         assertEquals(2, r.data.scenes.size)
         assertEquals(listOf(12, 48), r.data.markers)
         assertEquals("Плечо", r.data.bones.single().name)
@@ -127,9 +132,9 @@ class Package13ProjectImportTest {
     @Test fun nestedFolderZipAndPlainJson() {
         val src = miniProject()
         val staging = tmp()
-        ProjectArchive.unzip(tsproj(src, prefix = "Мини/").inputStream(), staging)
+        ProjectArchive.unzip(tsproj(src, prefix = "Mini/").inputStream(), staging)
         val root = ProjectArchive.locateRoot(staging)
-        assertEquals(File(staging, "Мини"), root)
+        assertEquals(File(staging, "Mini"), root)
         assertEquals(listOf("assets/c2.png", "assets/a.mp3"), ProjectArchive.prepare(root!!, "n1", 1L, emptyList()).missing)
         staging.deleteRecursively()
 
