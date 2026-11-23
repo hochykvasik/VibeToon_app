@@ -4,8 +4,8 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 /** Вид векторного примитива: линия от руки (сглаженный путь), прямая, прямоугольник, эллипс или пресет фигуры (звезда, сердце...). */
-/** POLY - ломаная пера (разомкнутый контур), POLYGON - замкнутый контур пера. */
-enum class VecKind { PATH, LINE, RECT, ELLIPSE, PRESET, POLY, POLYGON }
+/** POLY - ломаная пера (разомкнутый контур), POLYGON - замкнутый контур пера, BOOL - булева операция двух фигур (пакет 18). */
+enum class VecKind { PATH, LINE, RECT, ELLIPSE, PRESET, POLY, POLYGON, BOOL }
 
 /**
  * Векторный примитив слоя. Точки [pts] - плоский список x0,y0,x1,y1,... в пикселях холста проекта (слой занимает весь холст):
@@ -18,7 +18,10 @@ data class VectorShape(
     val stroke: Long = 0xFF000000L,
     val fill: Long = 0L,
     val width: Float = 8f,
-    val preset: String = ""
+    val preset: String = "",
+    /** BOOL: операция ([VectorBool.OPS]) и две фигуры (нижняя, верхняя); их точки - части [pts] по порядку. */
+    val op: String = "",
+    val parts: List<VectorShape> = emptyList()
 )
 
 /** Чистая математика векторного слоя (без Android): отбор точек жеста, сборка примитива, границы. */
@@ -64,7 +67,7 @@ object VectorMath {
             VecKind.LINE -> if (hypot(ex - sx, ey - sy) < MIN_EXTENT) null else VectorShape(VecKind.LINE, twoPoint, stroke, 0L, width)
             VecKind.RECT, VecKind.ELLIPSE ->
                 if (abs(ex - sx) < MIN_EXTENT || abs(ey - sy) < MIN_EXTENT) null else VectorShape(kind, twoPoint, stroke, fill, width)
-            VecKind.PRESET, VecKind.POLY, VecKind.POLYGON -> null
+            VecKind.PRESET, VecKind.POLY, VecKind.POLYGON, VecKind.BOOL -> null
         }
     }
 
@@ -97,4 +100,62 @@ object VectorMath {
 
     const val MIN_POINT_DIST = 2f
     const val MIN_EXTENT = 3f
+}
+
+/**
+ * Пакет 18: булевы операции векторных фигур (без разрушения): выбранная фигура и фигура под ней в списке слоя
+ * становятся одной фигурой BOOL - объединение, вычитание верхней из нижней, пересечение или исключение (XOR).
+ * Узлы фигуры BOOL - узлы её частей подряд, поэтому правка узлов работает как раньше; «Разобрать» возвращает части
+ * с их текущими узлами. Стиль (обводка, заливка, толщина) берётся у нижней фигуры. Линии и ломаные - не площади,
+ * в операциях не участвуют.
+ */
+object VectorBool {
+    const val UNION = "union"
+    const val SUBTRACT = "subtract"
+    const val INTERSECT = "intersect"
+    const val EXCLUDE = "exclude"
+    val OPS = listOf(UNION, SUBTRACT, INTERSECT, EXCLUDE)
+
+    enum class Error { NO_SHAPE, NO_SHAPE_BELOW, NOT_AREA, BAD_OP, NOT_COMPOUND }
+
+    /** Результат: новый список и индекс получившейся фигуры, либо ошибка. */
+    data class Result(val shapes: List<VectorShape>, val index: Int, val error: Error? = null)
+
+    /** Замкнутая площадь: участвует в операциях. */
+    fun isArea(s: VectorShape): Boolean = when (s.kind) {
+        VecKind.LINE, VecKind.POLY -> false
+        VecKind.BOOL -> s.op in OPS && s.parts.size == 2
+        else -> s.pts.size >= 4
+    }
+
+    fun combine(shapes: List<VectorShape>, index: Int, op: String): Result {
+        if (op !in OPS) return Result(shapes, index, Error.BAD_OP)
+        val upper = shapes.getOrNull(index) ?: return Result(shapes, index, Error.NO_SHAPE)
+        val lower = shapes.getOrNull(index - 1) ?: return Result(shapes, index, Error.NO_SHAPE_BELOW)
+        if (!isArea(upper) || !isArea(lower)) return Result(shapes, index, Error.NOT_AREA)
+        val fill = if (lower.fill != 0L) lower.fill else upper.fill
+        val c = VectorShape(VecKind.BOOL, lower.pts + upper.pts, lower.stroke, fill, lower.width, "", op, listOf(lower, upper))
+        val out = shapes.toMutableList()
+        out[index - 1] = c
+        out.removeAt(index)
+        return Result(out, index - 1)
+    }
+
+    /** Части фигуры BOOL с их текущими узлами (срезы [VectorShape.pts]); при несовпадении размеров - как сохранены. */
+    fun parts(c: VectorShape): List<VectorShape> {
+        if (c.kind != VecKind.BOOL) return emptyList()
+        if (c.parts.sumOf { it.pts.size } != c.pts.size) return c.parts
+        var at = 0
+        return c.parts.map { part -> part.copy(pts = c.pts.subList(at, at + part.pts.size).toList()).also { at += part.pts.size } }
+    }
+
+    /** «Разобрать»: фигура BOOL заменяется своими частями (нижняя, верхняя). */
+    fun release(shapes: List<VectorShape>, index: Int): Result {
+        val c = shapes.getOrNull(index) ?: return Result(shapes, index, Error.NO_SHAPE)
+        if (c.kind != VecKind.BOOL) return Result(shapes, index, Error.NOT_COMPOUND)
+        val out = shapes.toMutableList()
+        out.removeAt(index)
+        out.addAll(index, parts(c))
+        return Result(out, index + 1)
+    }
 }

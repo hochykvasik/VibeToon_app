@@ -1126,4 +1126,18 @@ GIF не прочитан: файл повреждён или слишком б�
 Не удалось прочитать рисунок слоя|Could not read the layer drawing
 Не удалось вставить картинку в рисунок|Could not insert the picture into the drawing
 PNG не записан|PNG was not written
+Объединить|Union
+Вычесть|Subtract
+Пересечь|Intersect
+Исключить|Exclude
+Разобрать|Release
+Фигуры объединены|Shapes united
+Выбранная фигура вычтена из фигуры под ней|The selected shape was subtracted from the shape below it
+Осталось пересечение фигур|Only the overlap of the shapes remains
+Осталось то, что не перекрывается|Only the non-overlapping parts remain
+Под выбранной фигурой нет другой фигуры: операция берёт выбранную и предыдущую нарисованную|There is no shape below the selected one: the operation uses the selected shape and the one drawn before it
+Линии и ломаные не участвуют в булевых операциях: нужны замкнутые фигуры|Lines and open polylines can’t be used in boolean operations: closed shapes are needed
+Разобрать можно только фигуру булевой операции|Only a boolean operation shape can be released
+Фигура разобрана на две|The shape was released into two shapes
+Узлы фигуры булевой операции можно двигать; чтобы удалить узел, сначала нажмите «Разобрать»|Nodes of a boolean operation shape can be moved; to delete a node, tap “Release” first
 """

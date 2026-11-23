@@ -1434,4 +1434,18 @@
     <string name="ui_could_not_read_the_layer_drawing">Could not read the layer drawing</string>
     <string name="ui_could_not_insert_the_picture_into_th">Could not insert the picture into the drawing</string>
     <string name="ui_png_was_not_written">PNG was not written</string>
+    <string name="ui_union">Union</string>
+    <string name="ui_subtract">Subtract</string>
+    <string name="ui_intersect">Intersect</string>
+    <string name="ui_exclude">Exclude</string>
+    <string name="ui_release">Release</string>
+    <string name="ui_shapes_united">Shapes united</string>
+    <string name="ui_the_selected_shape_was_subtracted_fr">The selected shape was subtracted from the shape below it</string>
+    <string name="ui_only_the_overlap_of_the_shapes_remai">Only the overlap of the shapes remains</string>
+    <string name="ui_only_the_non_overlapping_parts_remai">Only the non-overlapping parts remain</string>
+    <string name="ui_there_is_no_shape_below_the_selected">There is no shape below the selected one: the operation uses the selected shape and the one drawn before it</string>
+    <string name="ui_lines_and_open_polylines_can_t_be_us">Lines and open polylines can’t be used in boolean operations: closed shapes are needed</string>
+    <string name="ui_only_a_boolean_operation_shape_can_b">Only a boolean operation shape can be released</string>
+    <string name="ui_the_shape_was_released_into_two_shap">The shape was released into two shapes</string>
+    <string name="ui_nodes_of_a_boolean_operation_shape_c">Nodes of a boolean operation shape can be moved; to delete a node, tap “Release” first</string>
 </resources>

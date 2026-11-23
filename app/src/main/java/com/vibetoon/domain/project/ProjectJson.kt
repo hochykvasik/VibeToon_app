@@ -314,6 +314,31 @@ object ProjectJson {
 
     fun colorToString(argb: Long) = "#%08X".format(argb and 0xFFFFFFFFL)
 
+    /** Векторная фигура; у BOOL (пакет 18) - ещё операция "op" и части "parts" (вложенные фигуры). */
+    fun vectorJson(v: com.vibetoon.domain.vector.VectorShape): Map<String, Any?> = linkedMapOf<String, Any?>(
+        "k" to v.kind.name, "p" to v.pts.map { f -> f.toDouble() }, "s" to colorToString(v.stroke), "w" to v.width.toDouble()
+    ).also { mm ->
+        if (v.fill != 0L) mm["f"] = colorToString(v.fill); if (v.preset.isNotEmpty()) mm["n"] = v.preset
+        if (v.op.isNotEmpty()) mm["op"] = v.op
+        if (v.parts.isNotEmpty()) mm["parts"] = v.parts.map { vectorJson(it) }
+    }
+
+    /** Чтение фигуры; неизвестный вид, мало точек или BOOL без двух частей - фигура пропускается. */
+    fun vectorOf(c: Any?, depth: Int = 0): com.vibetoon.domain.vector.VectorShape? {
+        val m = c as? Map<*, *> ?: return null
+        if (depth > 16) return null
+        val kind = runCatching { com.vibetoon.domain.vector.VecKind.valueOf(m["k"] as? String ?: return null) }.getOrNull() ?: return null
+        val pts = (m["p"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toFloat() }
+        if (pts.size < 4) return null
+        val parts = (m["parts"] as? List<*>).orEmpty().mapNotNull { vectorOf(it, depth + 1) }
+        val op = m["op"] as? String ?: ""
+        if (kind == com.vibetoon.domain.vector.VecKind.BOOL && (parts.size != 2 || op !in com.vibetoon.domain.vector.VectorBool.OPS)) return null
+        return com.vibetoon.domain.vector.VectorShape(
+            kind, pts, parseColor(m["s"] as? String ?: "#FF000000"), (m["f"] as? String)?.let { parseColor(it) } ?: 0L,
+            (m["w"] as? Number)?.toFloat() ?: 8f, m["n"] as? String ?: "", op, parts
+        )
+    }
+
     fun parseColor(s: String): Long {
         val hex = s.removePrefix("#")
         val v = hex.toLongOrNull(16) ?: return 0L
@@ -343,11 +368,7 @@ object ProjectJson {
         if (m.volKeys.isNotEmpty()) it["vk"] = m.volKeys.map { k -> linkedMapOf<String, Any?>("f" to k.frame, "v" to k.value.toDouble()) }
         if (m.background) it["bg"] = true
         if (m.muted) it["mu"] = true
-        if (m.vectors.isNotEmpty()) it["vec"] = m.vectors.map { v ->
-            linkedMapOf<String, Any?>(
-                "k" to v.kind.name, "p" to v.pts.map { f -> f.toDouble() }, "s" to colorToString(v.stroke), "w" to v.width.toDouble()
-            ).also { mm -> if (v.fill != 0L) mm["f"] = colorToString(v.fill); if (v.preset.isNotEmpty()) mm["n"] = v.preset }
-        }
+        if (m.vectors.isNotEmpty()) it["vec"] = m.vectors.map { v -> vectorJson(v) }
         if (m.cells.isNotEmpty()) it["cells"] = m.cells.map { c -> linkedMapOf<String, Any?>("s" to c.start, "f" to c.file) }
         if (m.isText) {
             it["text"] = m.text
@@ -393,17 +414,7 @@ object ProjectJson {
             volKeys = (o["vk"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { m -> VolKey((m["f"] as? Number)?.toInt() ?: 0, ((m["v"] as? Number)?.toFloat() ?: 1f).coerceIn(0f, 1f)) } }.sortedBy { it.frame },
             background = o["bg"] as? Boolean ?: false,
             muted = o["mu"] as? Boolean ?: false,
-            vectors = (o["vec"] as? List<*>).orEmpty().mapNotNull { c ->
-                (c as? Map<*, *>)?.let { m ->
-                    val kind = runCatching { com.vibetoon.domain.vector.VecKind.valueOf(m["k"] as? String ?: return@let null) }.getOrNull() ?: return@let null
-                    val pts = (m["p"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toFloat() }
-                    if (pts.size < 4) return@let null
-                    com.vibetoon.domain.vector.VectorShape(
-                        kind, pts, parseColor(m["s"] as? String ?: "#FF000000"), (m["f"] as? String)?.let { parseColor(it) } ?: 0L,
-                        (m["w"] as? Number)?.toFloat() ?: 8f, m["n"] as? String ?: ""
-                    )
-                }
-            },
+            vectors = (o["vec"] as? List<*>).orEmpty().mapNotNull { c -> vectorOf(c) },
             symDur = o.int("sdur", 0), symRef = o.int("sref", 0),
             markers = (o["mk"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { m -> FrameMarker((m["f"] as? Number)?.toInt() ?: 0, m["n"] as? String ?: return@let null, m["t"] as? String ?: "", (m["fm"] as? Number)?.toInt()?.takeIf { it >= 0 } ?: -1).normalized() } },
             timeKeys = (o["tk"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { m -> TimeKey((m["f"] as? Number)?.toInt() ?: 0, (m["v"] as? Number)?.toInt() ?: 0, ((m["e"] as? Number)?.toInt() ?: TimeEase.HOLD).takeIf { e -> TimeEase.valid(e) } ?: TimeEase.HOLD) } },

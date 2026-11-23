@@ -1266,6 +1266,20 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Не удалось прочитать рисунок слоя" to R.string.ui_could_not_read_the_layer_drawing,
     "Не удалось вставить картинку в рисунок" to R.string.ui_could_not_insert_the_picture_into_th,
     "PNG не записан" to R.string.ui_png_was_not_written,
+    "Объединить" to R.string.ui_union,
+    "Вычесть" to R.string.ui_subtract,
+    "Пересечь" to R.string.ui_intersect,
+    "Исключить" to R.string.ui_exclude,
+    "Разобрать" to R.string.ui_release,
+    "Фигуры объединены" to R.string.ui_shapes_united,
+    "Выбранная фигура вычтена из фигуры под ней" to R.string.ui_the_selected_shape_was_subtracted_fr,
+    "Осталось пересечение фигур" to R.string.ui_only_the_overlap_of_the_shapes_remai,
+    "Осталось то, что не перекрывается" to R.string.ui_only_the_non_overlapping_parts_remai,
+    "Под выбранной фигурой нет другой фигуры: операция берёт выбранную и предыдущую нарисованную" to R.string.ui_there_is_no_shape_below_the_selected,
+    "Линии и ломаные не участвуют в булевых операциях: нужны замкнутые фигуры" to R.string.ui_lines_and_open_polylines_can_t_be_us,
+    "Разобрать можно только фигуру булевой операции" to R.string.ui_only_a_boolean_operation_shape_can_b,
+    "Фигура разобрана на две" to R.string.ui_the_shape_was_released_into_two_shap,
+    "Узлы фигуры булевой операции можно двигать; чтобы удалить узел, сначала нажмите «Разобрать»" to R.string.ui_nodes_of_a_boolean_operation_shape_c,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */

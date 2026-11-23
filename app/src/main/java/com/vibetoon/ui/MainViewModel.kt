@@ -7188,6 +7188,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (i < 0 || !canEditSelectedVectorNode()) { _state.value = UiState.Message("Сначала коснитесь узла выбранного незаблокированного слоя"); return }
         val s = media[i].vectors.getOrNull(nodeShape) ?: return
         if (nodePt !in 0 until s.pts.size / 2) { _state.value = UiState.Message("Сначала коснитесь узла примитива"); return }
+        if (s.kind == com.vibetoon.domain.vector.VecKind.BOOL) { _state.value = UiState.Message("Узлы фигуры булевой операции можно двигать; чтобы удалить узел, сначала нажмите «Разобрать»"); return }
         val canDrop = (s.kind == com.vibetoon.domain.vector.VecKind.PATH || s.kind == com.vibetoon.domain.vector.VecKind.POLY || s.kind == com.vibetoon.domain.vector.VecKind.POLYGON) &&
             s.pts.size / 2 > (if (s.kind == com.vibetoon.domain.vector.VecKind.POLYGON) 3 else 2)
         if (!canDrop) { deleteVectorShape(); return }
@@ -7195,6 +7196,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         setVectors(nodeSelId, media[i].vectors.toMutableList().also { it[nodeShape] = s.copy(pts = pts) })
         nodePt = -1
         refreshPenOverlay()
+    }
+
+    /**
+     * Пакет 18: булева операция выбранной фигуры (узел которой выбран) с фигурой под ней в списке слоя:
+     * union / subtract (нижняя минус выбранная) / intersect / exclude. Undo/Redo - как у любой правки вектора.
+     */
+    fun booleanVector(op: String) {
+        val i = media.indexOfFirst { it.id == nodeSelId }
+        if (i < 0 || !canEditSelectedVectorNode()) { _state.value = UiState.Message("Сначала коснитесь узла выбранного незаблокированного слоя"); return }
+        val r = com.vibetoon.domain.vector.VectorBool.combine(media[i].vectors, nodeShape, op)
+        when (r.error) {
+            null -> {
+                setVectors(nodeSelId, r.shapes)
+                nodeShape = r.index; nodePt = 0
+                nodeSelectionSnapshot = r.shapes.toList()
+                refreshPenOverlay()
+                _state.value = UiState.Message(when (op) {
+                    com.vibetoon.domain.vector.VectorBool.UNION -> "Фигуры объединены"
+                    com.vibetoon.domain.vector.VectorBool.SUBTRACT -> "Выбранная фигура вычтена из фигуры под ней"
+                    com.vibetoon.domain.vector.VectorBool.INTERSECT -> "Осталось пересечение фигур"
+                    else -> "Осталось то, что не перекрывается"
+                })
+            }
+            com.vibetoon.domain.vector.VectorBool.Error.NO_SHAPE_BELOW -> _state.value = UiState.Message("Под выбранной фигурой нет другой фигуры: операция берёт выбранную и предыдущую нарисованную")
+            com.vibetoon.domain.vector.VectorBool.Error.NOT_AREA -> _state.value = UiState.Message("Линии и ломаные не участвуют в булевых операциях: нужны замкнутые фигуры")
+            else -> _state.value = UiState.Message("Сначала коснитесь узла примитива")
+        }
+    }
+
+    /** Пакет 18: «Разобрать» - фигура булевой операции снова становится двумя фигурами с текущими узлами. */
+    fun releaseVectorShape() {
+        val i = media.indexOfFirst { it.id == nodeSelId }
+        if (i < 0 || !canEditSelectedVectorNode()) { _state.value = UiState.Message("Сначала коснитесь узла выбранного незаблокированного слоя"); return }
+        val r = com.vibetoon.domain.vector.VectorBool.release(media[i].vectors, nodeShape)
+        if (r.error != null) { _state.value = UiState.Message("Разобрать можно только фигуру булевой операции"); return }
+        setVectors(nodeSelId, r.shapes)
+        nodeShape = -1; nodePt = -1
+        nodeSelectionSnapshot = r.shapes.toList()
+        refreshPenOverlay()
+        _state.value = UiState.Message("Фигура разобрана на две")
     }
 
     fun deleteVectorShape() {

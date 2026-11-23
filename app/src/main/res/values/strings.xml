@@ -1434,4 +1434,18 @@
     <string name="ui_could_not_read_the_layer_drawing">Не удалось прочитать рисунок слоя</string>
     <string name="ui_could_not_insert_the_picture_into_th">Не удалось вставить картинку в рисунок</string>
     <string name="ui_png_was_not_written">PNG не записан</string>
+    <string name="ui_union">Объединить</string>
+    <string name="ui_subtract">Вычесть</string>
+    <string name="ui_intersect">Пересечь</string>
+    <string name="ui_exclude">Исключить</string>
+    <string name="ui_release">Разобрать</string>
+    <string name="ui_shapes_united">Фигуры объединены</string>
+    <string name="ui_the_selected_shape_was_subtracted_fr">Выбранная фигура вычтена из фигуры под ней</string>
+    <string name="ui_only_the_overlap_of_the_shapes_remai">Осталось пересечение фигур</string>
+    <string name="ui_only_the_non_overlapping_parts_remai">Осталось то, что не перекрывается</string>
+    <string name="ui_there_is_no_shape_below_the_selected">Под выбранной фигурой нет другой фигуры: операция берёт выбранную и предыдущую нарисованную</string>
+    <string name="ui_lines_and_open_polylines_can_t_be_us">Линии и ломаные не участвуют в булевых операциях: нужны замкнутые фигуры</string>
+    <string name="ui_only_a_boolean_operation_shape_can_b">Разобрать можно только фигуру булевой операции</string>
+    <string name="ui_the_shape_was_released_into_two_shap">Фигура разобрана на две</string>
+    <string name="ui_nodes_of_a_boolean_operation_shape_c">Узлы фигуры булевой операции можно двигать; чтобы удалить узел, сначала нажмите «Разобрать»</string>
 </resources>
