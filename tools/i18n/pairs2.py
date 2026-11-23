@@ -1155,4 +1155,14 @@ PNG не записан|PNG was not written
 У узла нет ручек: сначала «Сгладить узел» или вытяните ручки пером|The node has no handles: tap “Smooth node” first or pull handles out with the pen
 Ручки узла независимы: каждая двигается отдельно|The node’s handles are independent: each moves on its own
 Ручки узла связаны: вторая снова напротив первой|The node’s handles are linked: the second one is opposite the first again
+При редактировании символа слои главной сцены видны полупрозрачно вокруг него, выровненные по экземпляру; не выбираются и не экспортируются|While editing a symbol, main scene layers are shown semi-transparent around it, aligned to the instance; they can’t be selected and aren’t exported
+Насколько видна главная сцена вокруг открытого символа (5-100%)|How visible the main scene is around the open symbol (5–100%)
+Видео как символ|Video as Symbol
+Видео обрезано до {} кадров (больше за раз не импортируется)|Video trimmed to {} frames (more cannot be imported at once)
+Видео ({} кадров) импортировано как символ «Символ {}»: крутится по кругу|Video ({} frames) imported as symbol “Symbol {}”: it plays in a loop
+{}. Звук - отдельная дорожка|{}. The sound is on a separate track
+{}. Проект продлён до конца видео|{}. Project extended to the end of the video
+В файле нет видео|The file contains no video
+Не удалось получить кадры видео|Could not read the video frames
+Не удалось импортировать видео|Could not import the video
 """

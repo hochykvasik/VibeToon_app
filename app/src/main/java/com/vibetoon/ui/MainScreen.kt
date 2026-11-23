@@ -155,6 +155,9 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
     val openVideo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.VIDEO, uri)
     }
+    val openVideoAsSymbol = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importVideoAsSymbol(uri)   // пакет 22
+    }
     val openAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.AUDIO, uri)
     }
@@ -165,7 +168,8 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
         audio = { openAudio.launch(arrayOf("audio/mpeg", "audio/wav", "audio/x-wav", "audio/*")) },
         text = { showTextDialog = true },
         imageAsSymbol = { openImageAsSymbol.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
-        sequence = { asSymbol -> sequenceAsSymbol = asSymbol; openSequence.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) }
+        sequence = { asSymbol -> sequenceAsSymbol = asSymbol; openSequence.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
+        videoAsSymbol = { openVideoAsSymbol.launch(arrayOf("video/mp4", "video/*")) }
     )
 
     com.vibetoon.ui.shell.EditorShell(vm, onBack, addActions) { showExport = true }
@@ -213,7 +217,9 @@ class AddActions(
     val text: () -> Unit,
     val imageAsSymbol: () -> Unit = {},
     /** Пакет 11: секвенция картинок (true - как символ). */
-    val sequence: (Boolean) -> Unit = {}
+    val sequence: (Boolean) -> Unit = {},
+    /** Пакет 22: видео как символ (кадры - покадровый слой внутри символа). */
+    val videoAsSymbol: () -> Unit = {}
 )
 
 @Composable

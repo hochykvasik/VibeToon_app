@@ -1463,4 +1463,14 @@
     <string name="ui_the_node_has_no_handles_tap_smooth_n">The node has no handles: tap “Smooth node” first or pull handles out with the pen</string>
     <string name="ui_the_node_s_handles_are_independent_e">The node’s handles are independent: each moves on its own</string>
     <string name="ui_the_node_s_handles_are_linked_the_se">The node’s handles are linked: the second one is opposite the first again</string>
+    <string name="ui_while_editing_a_symbol_main_scene_la">While editing a symbol, main scene layers are shown semi-transparent around it, aligned to the instance; they can’t be selected and aren’t exported</string>
+    <string name="ui_how_visible_the_main_scene_is_around">How visible the main scene is around the open symbol (5–100%)</string>
+    <string name="ui_video_as_symbol">Video as Symbol</string>
+    <string name="ui_video_trimmed_to_frames_more_cannot_">Video trimmed to {} frames (more cannot be imported at once)</string>
+    <string name="ui_video_frames_imported_as_symbol_symb">Video ({} frames) imported as symbol “Symbol {}”: it plays in a loop</string>
+    <string name="ui_the_sound_is_on_a_separate_track">{}. The sound is on a separate track</string>
+    <string name="ui_project_extended_to_the_end_of_the_v">{}. Project extended to the end of the video</string>
+    <string name="ui_the_file_contains_no_video">The file contains no video</string>
+    <string name="ui_could_not_read_the_video_frames">Could not read the video frames</string>
+    <string name="ui_could_not_import_the_video">Could not import the video</string>
 </resources>

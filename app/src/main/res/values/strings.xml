@@ -1463,4 +1463,14 @@
     <string name="ui_the_node_has_no_handles_tap_smooth_n">У узла нет ручек: сначала «Сгладить узел» или вытяните ручки пером</string>
     <string name="ui_the_node_s_handles_are_independent_e">Ручки узла независимы: каждая двигается отдельно</string>
     <string name="ui_the_node_s_handles_are_linked_the_se">Ручки узла связаны: вторая снова напротив первой</string>
+    <string name="ui_while_editing_a_symbol_main_scene_la">При редактировании символа слои главной сцены видны полупрозрачно вокруг него, выровненные по экземпляру; не выбираются и не экспортируются</string>
+    <string name="ui_how_visible_the_main_scene_is_around">Насколько видна главная сцена вокруг открытого символа (5-100%)</string>
+    <string name="ui_video_as_symbol">Видео как символ</string>
+    <string name="ui_video_trimmed_to_frames_more_cannot_">Видео обрезано до {} кадров (больше за раз не импортируется)</string>
+    <string name="ui_video_frames_imported_as_symbol_symb">Видео ({} кадров) импортировано как символ «Символ {}»: крутится по кругу</string>
+    <string name="ui_the_sound_is_on_a_separate_track">{}. Звук - отдельная дорожка</string>
+    <string name="ui_project_extended_to_the_end_of_the_v">{}. Проект продлён до конца видео</string>
+    <string name="ui_the_file_contains_no_video">В файле нет видео</string>
+    <string name="ui_could_not_read_the_video_frames">Не удалось получить кадры видео</string>
+    <string name="ui_could_not_import_the_video">Не удалось импортировать видео</string>
 </resources>

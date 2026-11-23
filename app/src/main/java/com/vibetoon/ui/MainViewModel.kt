@@ -990,6 +990,114 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Пакет 22: видео как символ. Кадры видео (по одному на кадр проекта, до [VideoSymbolPlan.MAX_FRAMES]) становятся
+     * рисунками покадрового слоя внутри нового символа, экземпляр крутится по кругу; звук видео - отдельная дорожка.
+     */
+    fun importVideoAsSymbol(uri: Uri) {
+        val pid = projectId ?: return
+        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        val id = nextMediaId()
+        _state.value = UiState.Loading
+        importJob = viewModelScope.launch {
+            val written = ArrayList<java.io.File>()
+            var inserted = false
+            val src = java.io.File(getApplication<Application>().cacheDir, "vsym_${java.util.UUID.randomUUID()}.mp4")
+            val tmp = java.io.File(getApplication<Application>().cacheDir, "vsym_${java.util.UUID.randomUUID()}.png")
+            try {
+                val fps = _animation.value.settings.fps
+                val name = withContext(Dispatchers.IO) { importer.displayName(uri) }
+                val maxSide = if (resolutionLimitOn()) minOf(com.vibetoon.domain.project.ImportLimit.maxSide(canvasW, canvasH), com.vibetoon.domain.project.VideoSymbolPlan.MAX_SIDE)
+                    else com.vibetoon.domain.project.VideoSymbolPlan.MAX_SIDE
+                val result = withContext(decodeDispatcher) {
+                    importer.copy(uri, src)
+                    val r = android.media.MediaMetadataRetriever()
+                    try {
+                        r.setDataSource(src.absolutePath)
+                        val dur = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                        val rot = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                        val (vw, vh) = com.vibetoon.domain.project.VideoSymbolPlan.oriented(
+                            r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0,
+                            r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0, rot)
+                        val hasAudio = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes"
+                        check(vw > 0 && vh > 0) { "В файле нет видео" }
+                        val plan = com.vibetoon.domain.project.VideoSymbolPlan.plan(dur, fps)
+                        val (dw, dh) = com.vibetoon.domain.project.VideoSymbolPlan.decodeSize(vw, vh, maxSide)
+                        val cells = ArrayList<com.vibetoon.domain.project.FrameCell>()
+                        var first: MediaItem? = null
+                        for ((i, ms) in plan.timesMs.withIndex()) {
+                            if (projectId != pid || closing) throw kotlinx.coroutines.CancellationException()
+                            val us = ms * 1000L
+                            var bmp = (if (android.os.Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(us, android.media.MediaMetadataRetriever.OPTION_CLOSEST, dw, dh)
+                                else r.getFrameAtTime(us, android.media.MediaMetadataRetriever.OPTION_CLOSEST)) ?: continue   // кадр не декодировался: держится предыдущий
+                            if (bmp.config != android.graphics.Bitmap.Config.ARGB_8888) bmp = bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false).also { bmp.recycle() }
+                            try {
+                                if (first == null) {
+                                    tmp.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                                    val item = importMediaBlocking(pid, id, MediaKind.IMAGE, Uri.fromFile(tmp))
+                                    written += projects.fileOf(pid, item.file)
+                                    first = item
+                                    cells += com.vibetoon.domain.project.FrameCell(i, item.file)
+                                } else {
+                                    val cellName = "m${id}_c${cells.size}.png"   // служебные кадры покадрового слоя
+                                    val dest = projects.mediaFile(pid, cellName)
+                                    dest.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                                    written += dest
+                                    cells += com.vibetoon.domain.project.FrameCell(i, "assets/$cellName")
+                                }
+                            } finally { bmp.recycle() }
+                        }
+                        Triple(checkNotNull(first) { "Не удалось получить кадры видео" }, cells.toList(), Triple(plan, hasAudio, dur))
+                    } finally { runCatching { r.release() } }
+                }
+                val (item, cells, rest) = result
+                val (plan, hasAudio, dur) = rest
+                if (projectId != pid || closing) { withContext(Dispatchers.IO) { written.forEach { it.delete() } }; return@launch }
+                // звук видео: тот же файл - аудиодорожка проекта (поверх символа, один раз от кадра 0)
+                val audio = if (!hasAudio) null else withContext(Dispatchers.IO) {
+                    val aid = nextMediaId()   // идентификаторы монотонны: не совпадёт со слоем кадров
+                    val fileName = "m${aid}_${java.util.UUID.randomUUID()}.mp4"
+                    val dest = projects.mediaFile(pid, fileName)
+                    runCatching { src.copyTo(dest, overwrite = true); written += dest; MediaItem(aid, MediaKind.AUDIO, "${name.substringBeforeLast('.')} (звук)", "assets/$fileName", durationMs = dur) }.getOrNull()
+                }
+                checkpoint("add", force = true)
+                val title = name.substringBeforeLast('.').ifBlank { "Видео" }
+                val layer = item.copy(name = title, cells = if (cells.size > 1) cells else emptyList())
+                val total = plan.frames
+                val gid = nextMediaId()
+                val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
+                media += MediaItem(gid, MediaKind.GROUP, "Символ $n", "", symDur = total)
+                regroup = regroup + (layer.id to gid)
+                media += layer
+                val iid = nextMediaId()
+                media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
+                if (audio != null) media += audio
+                // проект короче видео - продлевается, чтобы символ проигрался целиком
+                val st = _animation.value.settings
+                val extend = total > st.durationFrames
+                if (extend) {
+                    val d = total.coerceAtMost(TimeFormat.MAX_DURATION_FRAMES)
+                    meta = meta?.copy(durationFrames = d)
+                    _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, d))
+                }
+                inserted = true
+                rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
+                _state.value = UiState.Message(buildString {
+                    append(if (plan.cut) "Видео обрезано до ${cells.size} кадров (больше за раз не импортируется)" else "Видео (${cells.size} кадров) импортировано как символ «Символ $n»: крутится по кругу")
+                    if (audio != null) append(". Звук - отдельная дорожка")
+                    if (extend) append(". Проект продлён до конца видео")
+                })
+            } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+            catch (t: Throwable) {
+                Log.e("VT/Media", "import video as symbol failed", t)
+                if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось импортировать видео")
+            } finally {
+                if (!inserted) withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { written.forEach { it.delete() } }
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { src.delete(); tmp.delete() }
+            }
+        }
+    }
+
+    /**
      * Пакет 11: секвенция картинок (несколько файлов) - один покадровый слой, рисунок на кадр, порядок по именам
      * (frame2 раньше frame10). [asSymbol] - слой кладётся в новый символ, экземпляр крутится по кругу.
      */
@@ -1909,7 +2017,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val seq = tapSequence.incrementAndGet()
         RenderHost.view?.hitTest(x, y) { hit -> viewModelScope.launch {
             if (tapSequence.get() != seq) return@launch
-            val id = if (hit >= GHOST_BASE || (hit >= 0 && (isLockedId(hit) || layerProps[hit]?.visible == false))) -1 else hit   // закрытый и скрытый слои на холсте не выбираются
+            val id = if (hit >= GHOST_BASE || (hit >= 0 && (isLockedId(hit) || layerProps[hit]?.visible == false || hit in symbolContextIds()))) -1 else hit   // закрытый и скрытый слои и контекст символа на холсте не выбираются
             val tapNow = SystemClock.uptimeMillis()
             val dbl = id >= 0 && id == lastTapId && tapNow - lastTapAt < 380
             lastTapId = id; lastTapAt = tapNow
@@ -2183,14 +2291,69 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // вне клипа слой невидим: нулевая прозрачность (у группы скрывает и всех потомков)
         val rest = _boneMode.value && _bindPose.value   // Bind Pose: кости не деформируют картинку
         val ghostById = if (ghosts.isEmpty()) emptyMap() else ghosts.associateBy { it.id }
+        // Пакет 22: скрытые символами слои (содержимое символов на главной сцене, вне открытого символа - всё прочее)
+        // не рисуются; слои контекста символа видны с прозрачностью Symbol Context Opacity
+        val symHidden = symbolHidden(_editingSymbol.value)
+        val ctxIds = symbolContextIds()
+        val ctxAlpha = symbolContextAlpha()
         return ids.filter { !(rest && it >= BONE_ID_BASE) }.associateWith { id ->
             ghostById[id]?.let { g -> return@associateWith effective(g.owner).let { o -> o.copy(opacity = o.opacity * g.alpha) } }   // призрак кальки идёт за своим слоем
             val t0 = effective(id)
             val t = fxLayers[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.extraRotation(id, l, _animation.value, _frame.value, _animation.value.settings.fps)) } ?: t0
             val c = _clips.value[id]
-            if (layerProps[id]?.visible == false || (c != null && !c.visibleAt(_frame.value))) t.copy(opacity = 0f) else t   // глаз выключен: слой не рисуется
+            if (layerProps[id]?.visible == false || (c != null && !c.visibleAt(_frame.value))) t.copy(opacity = 0f)   // глаз выключен: слой не рисуется
+            else if (id in ctxIds) t.copy(opacity = t.opacity * ctxAlpha)
+            else if (id in symHidden) t.copy(opacity = 0f)
+            else t
         }
     }
+
+    // ---------------------------------------------------------------- контекст символа (пакет 22)
+
+    /** Экземпляр, через который открыт символ: по нему выравнивается главная сцена вокруг символа. */
+    private var symbolEditInstance: Int? = null
+
+    private fun appPrefs() = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+
+    private fun symbolContextAlpha(): Float = com.vibetoon.domain.render.SymbolContext.opacity(
+        appPrefs().getInt("symbol_context_opacity", com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT))
+
+    /**
+     * Слои главной сцены, видимые вокруг открытого символа (Show Symbol Context): листья вне всех определений символов,
+     * кроме самого экземпляра (его место занимает редактируемое содержимое), камеры, null-объектов и костей.
+     */
+    private fun symbolContextIds(): Set<Int> {
+        val ctx = _editingSymbol.value ?: return emptySet()
+        val inst = symbolEditInstance ?: return emptySet()
+        if (media.none { it.id == inst && it.kind == MediaKind.SYMBOL && it.symRef == ctx }) return emptySet()
+        if (!appPrefs().getBoolean("symbol_context", true)) return emptySet()
+        val inside = HashSet<Int>()
+        for (d in media) if (d.kind == MediaKind.GROUP && d.symDur > 0) inside += symbolMembers(d.id)
+        val skip = media.filter { it.kind == MediaKind.CAMERA || it.kind == MediaKind.NULLOBJ }.mapTo(HashSet()) { it.id }
+        return layers.asSequence().filter { it.kind == LayerKind.LAYER && it.id < BONE_ID_BASE && it.id != inst && it.id !in inside && it.id !in skip }
+            .map { it.id }.toHashSet()
+    }
+
+    /** Пакет 22: выравнивание контекста по экземпляру; без экземпляра или при вырожденной матрице контекст не показывается. */
+    private fun applySymbolContext(sc: SceneData): SceneData {
+        val ids = symbolContextIds()
+        if (ids.isEmpty()) return sc
+        val ctx = _editingSymbol.value ?: return sc
+        val inst = media.firstOrNull { it.id == symbolEditInstance } ?: return sc
+        val unit = com.vibetoon.domain.render.SymbolContext.layerMatrix(sc, inst.id) ?: return sc
+        val parentOf = layers.associate { it.id to it.parentId }
+        val shared = symbolSnapshotContext(ctx, parentOf).first
+        val deep = com.vibetoon.domain.render.SymbolContext.deepest(shared) { parentOf[it] }
+        val cam = cameraIdNow()
+        // снимок формы: общие предки нейтральны, PSD по-прежнему вписан матрицей fit -> у группы PSD мир * fit⁻¹
+        val formToEdit = deep?.let { g -> sc.groupWorlds[g]?.let { w -> if (g >= MEDIA_ID_BASE) w else w * (fit.inverse() ?: Affine2D.IDENTITY) } }
+            ?: SceneBuilder.cameraView(if (cam >= 0) effective(cam) else null, canvasW, canvasH)
+        val m = com.vibetoon.domain.render.SymbolContext.mainToEdit(formToEdit, unit, 0f, 0f, canvasW.toFloat(), canvasH.toFloat()) ?: return sc   // форма - снимок всего холста
+        return com.vibetoon.domain.render.SymbolContext.apply(sc, ids, m)
+    }
+
+    /** Настройки контекста символа изменились: сцена перестраивается сразу. */
+    fun refreshSymbolContext() { if (_editingSymbol.value != null) pushScene() }
 
     private fun independentBones(): Set<Int> = _bones.value.filter { it.independentRot }.mapTo(HashSet()) { it.id }
 
@@ -2209,11 +2372,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun pushScene() {
         refreshGridView()
-        val sc = try { buildEditorScene() } catch (e: IllegalArgumentException) {
+        val sc0 = try { buildEditorScene() } catch (e: IllegalArgumentException) {
             // Сложные группы временно пропускаются без удаления исходных данных.
             _state.value = UiState.Message("Деформация пропущена: неподдерживаемое содержимое или область")
             buildEditorScene(useGroups = false, dense = emptyMap())
         }
+        val sc = applySymbolContext(sc0)   // пакет 22: главная сцена вокруг открытого символа
         // формы символов едут вместе со сценой: на любом кадре экземпляр показывает форму именно этого кадра
         if (projectId != null && !appBackground) sc.aliases = buildAliases(_frame.value)
         scene = sc
@@ -3602,6 +3766,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val gid = when { m == null -> return; m.kind == MediaKind.SYMBOL -> m.symRef; m.kind == MediaKind.GROUP && m.symDur > 0 -> m.id; else -> { _state.value = UiState.Message("Это не символ: сначала выберите «Создать символ»"); return } }
         val def = media.firstOrNull { it.id == gid && it.symDur > 0 } ?: return
         _editingSymbol.value = gid
+        // пакет 22: экземпляр для контекста - открытый двойным тапом, иначе первый экземпляр на главной сцене
+        val inside = HashSet<Int>().also { st -> media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.forEach { st += symbolMembers(it.id) } }
+        symbolEditInstance = if (m.kind == MediaKind.SYMBOL) m.id else media.firstOrNull { it.kind == MediaKind.SYMBOL && it.symRef == gid && it.id !in inside }?.id
         selectLayer(null)
         refreshSymbolState(); rebuildRows(); pushScene()
         _state.value = UiState.Message("Редактирование «${def.name}»: правки видны во всех экземплярах")
@@ -3613,6 +3780,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val i = media.indexOfFirst { it.id == gid }
         if (i >= 0) media[i] = media[i].copy(symDur = computeSymbolDuration(gid))
         _editingSymbol.value = null
+        symbolEditInstance = null
         selectLayer(null)
         invalidateForms()   // содержимое могли поменять: формы пересъёмка (старые - запасная картинка до готовности)
         refreshSymbolState(); rebuildRows(); pushScene(); updateSymbols(_frame.value); markDirty()

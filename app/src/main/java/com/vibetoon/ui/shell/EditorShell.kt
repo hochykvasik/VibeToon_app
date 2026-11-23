@@ -517,6 +517,7 @@ private fun TopBar(
                     DropdownMenuItem(text = { Text("Секвенция картинок (покадровый слой)") }, onClick = { actions = false; add.sequence(false) })
                     DropdownMenuItem(text = { Text("Секвенция картинок как символ") }, onClick = { actions = false; add.sequence(true) })
                     DropdownMenuItem(text = { Text("Видео (MP4)") }, onClick = { actions = false; add.video() })
+                    DropdownMenuItem(text = { Text("Видео как символ") }, onClick = { actions = false; add.videoAsSymbol() })
                     DropdownMenuItem(text = { Text("Аудио (MP3, WAV)") }, onClick = { actions = false; add.audio() })
                     DropdownMenuItem(text = { Text("Текст") }, onClick = { actions = false; add.text() })
                     DropdownMenuItem(text = { Text("Камера (Pan & Zoom)") }, onClick = { actions = false; vm.addCameraLayer() })

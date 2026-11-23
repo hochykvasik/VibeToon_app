@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -195,7 +197,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         when (item) {
                             is Toggle -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 val st = com.vibetoon.ui.theme.LocalAppSettings.current
-                                val available = (vm != null && item.title.startsWith("Flip Canvas")) || st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers", "Import Images as Symbols", "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer", "Insert Images into Existing Drawing")
+                                val available = (vm != null && item.title.startsWith("Flip Canvas")) || st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers", "Import Images as Symbols", "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer", "Insert Images into Existing Drawing", "Show Symbol Context", "Symbol Context Opacity")
                                 Column(Modifier.weight(1f)) {
                                     Text(ru(item.title), fontSize = 14.sp)
                                     if (!available) Text("В разработке", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -224,6 +226,8 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                         "Insert Images into Existing Drawing" -> Text("Выбран слой-картинка: «+ Изображение» вписывает картинку в его рисунок на плейхеде (пропорции, по центру) вместо нового слоя; Undo возвращает рисунок", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Import Layer Locked States" -> Text("Новый PSD: замок слоя (пиксели, положение, весь слой) - замок, замок прозрачности - «Замок прозрачности»; уже открытые проекты не меняются", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Import Text as Pixel Layer" -> Text("Выкл.: текстовые слои нового PSD становятся редактируемым текстом (текст, размер, цвет, выравнивание; шрифт по умолчанию, поверх слоёв PSD)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Show Symbol Context" -> Text("При редактировании символа слои главной сцены видны полупрозрачно вокруг него, выровненные по экземпляру; не выбираются и не экспортируются", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Symbol Context Opacity" -> Text("Насколько видна главная сцена вокруг открытого символа (5-100%)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Import Images as Symbols" -> Text("«+ Изображение» сразу создаёт символ: картинка - определение, на холсте - экземпляр", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)" -> Text("Отражение только вида холста; экспорт не меняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Layer Pivot Editing" -> Text("Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -263,6 +267,16 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                 else if (item.title == "Rotate Canvas 2 Fingers" && st != null) Switch(checked = st.rotateCanvas, onCheckedChange = { st.rotateCanvas = it; st.savePixelModes() })
                                 else if (item.title == "Layer Pivot Editing" && st != null) Switch(checked = st.pivotEditing, onCheckedChange = { st.pivotEditing = it; st.savePixelModes() })
                                 else if (item.title == "Resolution Limit" && st != null) Switch(checked = st.resolutionLimit, onCheckedChange = { st.resolutionLimit = it; st.saveImport() })
+                                else if (item.title == "Show Symbol Context" && st != null) Switch(checked = st.symbolContext, onCheckedChange = { st.symbolContext = it; st.saveSymbolContext(); vm?.refreshSymbolContext() })
+                                else if (item.title == "Symbol Context Opacity" && st != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("${st.symbolContextOpacity}%", fontSize = 12.sp)
+                                    androidx.compose.material3.Slider(
+                                        value = st.symbolContextOpacity.toFloat(), valueRange = com.vibetoon.domain.render.SymbolContext.MIN_OPACITY_PERCENT.toFloat()..100f,
+                                        onValueChange = { st.symbolContextOpacity = it.roundToInt() },
+                                        onValueChangeFinished = { st.saveSymbolContext(); vm?.refreshSymbolContext() },
+                                        enabled = st.symbolContext, modifier = Modifier.width(140.dp)
+                                    )
+                                }
                                 else if (item.title == "Insert Images into Existing Drawing" && st != null) Switch(checked = st.importIntoDrawing, onCheckedChange = { st.importIntoDrawing = it; st.saveImport() })
                                 else if (item.title == "Import Layer Locked States" && st != null) Switch(checked = st.importLayerLocks, onCheckedChange = { st.importLayerLocks = it; st.saveImport() })
                                 else if (item.title == "Import Text as Pixel Layer" && st != null) Switch(checked = st.importTextAsPixels, onCheckedChange = { st.importTextAsPixels = it; st.saveImport() })

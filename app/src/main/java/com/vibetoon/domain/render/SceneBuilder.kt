@@ -123,6 +123,15 @@ object SceneBuilder {
     /** Слой выделяется тапом по всей рамке, а не только по непрозрачным пикселям (тонкий текст). */
     const val FLAG_HIT_BBOX = 2
 
+    /** Вид камеры (без параллакса): тот же, что у корней сцены; null - камеры нет. */
+    fun cameraView(cam: LayerTransform?, canvasWidth: Int, canvasHeight: Int): Affine2D {
+        if (cam == null) return Affine2D.IDENTITY
+        val cx = canvasWidth / 2f
+        val cy = canvasHeight / 2f
+        val z = cam.scaleX.coerceIn(LayerTransform.MIN_SCALE, LayerTransform.MAX_SCALE)
+        return Affine2D.translate(cx, cy) * Affine2D.scale(z, z) * Affine2D.rotate(-cam.rotation) * Affine2D.translate(-(cx + cam.dx), -(cy + cam.dy))
+    }
+
     fun blendCode(key: String): Int = when (key) {
         "norm" -> BLEND_NORMAL
         "mul " -> BLEND_MULTIPLY
@@ -202,12 +211,7 @@ object SceneBuilder {
         }
         // Камера: dx, dy - смещение центра кадра, scaleX - приближение, rotation - поворот вида
         val cam = transforms[cameraId]
-        val camView = if (cam == null) Affine2D.IDENTITY else {
-            val cx = canvasWidth / 2f
-            val cy = canvasHeight / 2f
-            val z = cam.scaleX.coerceIn(LayerTransform.MIN_SCALE, LayerTransform.MAX_SCALE)
-            Affine2D.translate(cx, cy) * Affine2D.scale(z, z) * Affine2D.rotate(-cam.rotation) * Affine2D.translate(-(cx + cam.dx), -(cy + cam.dy))
-        }
+        val camView = cameraView(cam, canvasWidth, canvasHeight)
         // Параллакс: слой с глубиной d видит камеру ослабленной в 1/(1+d) раз: сдвиг и приближение (z-1) меньше, дальние слои "стоят" почти на месте
         fun camViewFor(d: Float): Affine2D {
             if (cam == null || d == 0f) return camView

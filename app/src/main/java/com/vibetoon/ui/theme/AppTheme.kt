@@ -71,6 +71,10 @@ class AppSettings(context: Context) {
     var checkerThumbnails by mutableStateOf(p.getBoolean("checker_thumbnails", false))
     // До появления настройки звук при скраббинге был включён всегда.
     var audioWhileScrubbing by mutableStateOf(p.getBoolean("audio_while_scrubbing", true))
+    /** Пакет 22: Show Symbol Context (по умолчанию вкл.) и Symbol Context Opacity в процентах (5-100, по умолчанию 30). */
+    var symbolContext by mutableStateOf(p.getBoolean("symbol_context", true))
+    var symbolContextOpacity by mutableStateOf(p.getInt("symbol_context_opacity", com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT))
+    fun saveSymbolContext() { p.edit().putBoolean("symbol_context", symbolContext).putInt("symbol_context_opacity", symbolContextOpacity).apply() }
     fun savePlaybackAndDisplay() { p.edit().putBoolean("reset_frame_after_pause", resetFrameAfterPause).putBoolean("checker_thumbnails", checkerThumbnails).putBoolean("audio_while_scrubbing", audioWhileScrubbing).apply() }
     // Значения по умолчанию сохраняют прежнее поведение редактора.
     var autoKeyframes by mutableStateOf(p.getBoolean("auto_keyframes", false))
@@ -130,7 +134,8 @@ class AppSettings(context: Context) {
     fun resetDisplay() {
         leftHanded = false; showGrid = false; gridCells = com.vibetoon.domain.render.CanvasGrid.density(16)
         checkerThumbnails = false; selectionMaskVisible = true; boneColors = false
-        save(); saveGrid(); savePlaybackAndDisplay(); saveSprint67()
+        symbolContext = true; symbolContextOpacity = com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT
+        save(); saveGrid(); savePlaybackAndDisplay(); saveSprint67(); saveSymbolContext()
     }
 
     /** Пакет 10: резервная копия всех настроек (JSON) для «Manual Backup». */
@@ -175,6 +180,8 @@ class AppSettings(context: Context) {
         pivotEditing = p.getBoolean("pivot_editing", true)
         rotateCanvas = p.getBoolean("rotate_canvas_2f", true)
         checkerThumbnails = p.getBoolean("checker_thumbnails", false)
+        symbolContext = p.getBoolean("symbol_context", true)
+        symbolContextOpacity = p.getInt("symbol_context_opacity", com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT)
         audioWhileScrubbing = p.getBoolean("audio_while_scrubbing", true)
         autoKeyframes = p.getBoolean("auto_keyframes", false)
         shapeAssist = p.getBoolean("shape_assist", false)
