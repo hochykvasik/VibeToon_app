@@ -190,7 +190,18 @@ private fun EffectsTab(vm: MainViewModel) {
                     }
                     def.params.forEachIndexed { pi, p ->
                         val isColor = def.colorAt >= 0 && pi in def.colorAt..def.colorAt + 2
-                        if (!isColor) TurbSlider(p.name, e.p[pi], p.min..p.max, "%.2f".format(e.p[pi])) { vm.setEffectParam(idx, pi, it) }
+                        if (isColor) Unit
+                        else if (p.options.isNotEmpty()) {
+                            // дискретный выбор (волна Swing): чипы вместо ползунка
+                            val cur = kotlin.math.round(e.p[pi]).toInt()
+                            Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(p.name, fontSize = 12.sp)
+                                p.options.forEachIndexed { oi, label ->
+                                    androidx.compose.material3.FilterChip(selected = cur == oi, onClick = { vm.setEffectParam(idx, pi, oi.toFloat()) },
+                                        label = { Text(label, fontSize = 12.sp) })
+                                }
+                            }
+                        } else TurbSlider(p.name, e.p[pi], p.min..p.max, if (p.name.contains("°")) "%.1f°".format(e.p[pi]) else "%.2f".format(e.p[pi])) { vm.setEffectParam(idx, pi, it) }
                     }
                 }
             }

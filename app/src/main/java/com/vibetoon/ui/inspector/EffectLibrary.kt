@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -173,6 +174,21 @@ private fun DrawScope.preview(type: Int) {
         EffectMath.SPIN -> {
             drawLine(Pink, Offset(w * 0.2f, h * 0.8f), Offset(w * 0.8f, h * 0.2f), strokeWidth = 12f)
             drawCircle(Orange.copy(alpha = 0.5f), w * 0.32f, c, style = Stroke(3f))
+        }
+        EffectMath.STRETCH_AXIS -> {
+            // круг, растянутый вдоль диагональной оси
+            drawLine(Color(0xFFE8E0F0), Offset(w * 0.1f, h * 0.9f), Offset(w * 0.9f, h * 0.1f), strokeWidth = 2f)
+            rotate(-45f, c) { drawOval(Pink, Offset(c.x - r * 1.5f, c.y - r * 0.75f), Size(r * 3f, r * 1.5f)) }
+        }
+        EffectMath.SWING -> {
+            // маятник: два крайних положения и текущее
+            val top = Offset(w * 0.5f, h * 0.12f)
+            for ((a, alpha) in listOf(-30f to 0.3f, 30f to 0.3f, 12f to 1f)) {
+                val rad = Math.toRadians(a.toDouble())
+                val end = top + Offset(kotlin.math.sin(rad).toFloat(), kotlin.math.cos(rad).toFloat()) * h * 0.62f
+                drawLine(Orange.copy(alpha = alpha), top, end, strokeWidth = 5f)
+                disc(end, r * 0.42f, Pink.copy(alpha = alpha))
+            }
         }
         EffectMath.MOTION -> {
             for (i in 0 until 6) disc(Offset(w * (0.25f + i * 0.1f), h * 0.5f), r * 0.7f, Pink.copy(alpha = 0.12f + i * 0.1f))

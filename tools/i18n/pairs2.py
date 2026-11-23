@@ -927,4 +927,32 @@ Hold - резкая смена формы. Плавно/Линейно - кад�
 Общая кривая: ключи времени символа|Shared curve: symbol time keys
 Общий переход: {} (ключей: {})|Shared transition: {} (keys: {})
 Переход от каждого выделенного ключа к следующему. Между разными формами символ всегда меняет форму резко (Hold) - промежуточные формы не показываются.|Transition from each selected key to the next. Between different forms the symbol always switches sharply (Hold) - intermediate forms are never shown.
+Ось растяжения|Stretch Axis
+Качание|Swing
+Масштаб|Scale
+Угол 1, °|Angle 1, °
+Угол 2, °|Angle 2, °
+Начальная фаза|Starting Phase
+Синусоида|Sine
+Меандр|Square
+Пила|Sawtooth
+Вращение, Качание и Ось растяжения для группы - В разработке: сделайте из группы символ, его экземпляр качается и растягивается целиком|Spin, Swing and Stretch Axis for a group are in development: turn the group into a symbol - its instance swings and stretches as a whole
+Остановите воспроизведение: ключ времени ставится на кадр паузы|Stop playback: a time key is placed on the paused frame
+Импортировано как символ «Символ {}»: двойной тап открывает редактирование|Imported as symbol “Symbol {}”: double-tap opens editing
+Вставлено из библиотеки: {}|Inserted from the library: {}
+Область группы уже сохранена|Group bounds are already saved
+Область группы сохранена: теперь нажмите «Включить для группы»|Group bounds saved: now tap “Enable for group”
+Смаз действует только на выбранных слоях-контурах: выберите векторный слой|Smudge works only on selected path layers: select a vector layer
+Пивот в центр|Pivot to center
+Пивот по умолчанию|Default pivot
+Изображение как символ|Image as symbol
+Повернуть холст на 90°|Rotate canvas by 90°
+Сбросить поворот холста (0°)|Reset canvas rotation (0°)
+Цвет/толщина|Color/width
+Кисть на векторном слое рисует примитивы (путь, линия, прямоугольник, эллипс); на растровом - пиксели|On a vector layer the brush draws primitives (path, line, rectangle, ellipse); on a raster layer - pixels
+При выборе кисти/ластика слой выбирается или создаётся автоматически|Picking the brush/eraser selects or creates a layer automatically
+Ластик и смаз действуют только на выбранных слоях-контурах|Eraser and smudge work only on selected path layers
+Пивот действует только на время перетаскивания и не сохраняется|The pivot applies only while dragging and is not saved
+Поворот после 8° двумя пальцами, снап к 0/90/180/270°; только вид, экспорт не меняется|Two-finger rotation after 8°, snaps to 0/90/180/270°; view only, export is unchanged
+Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе|Drag the layer pivot on the canvas; “Pivot to center” is in the inspector
 """

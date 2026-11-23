@@ -10,7 +10,7 @@ class EffectLocalizationTest {
     @Test fun everyEffectTitleAndParameterHasAnEnglishTranslation() {
         val pairs = listOf("../tools/i18n/pairs.py", "../tools/i18n/pairs2.py").flatMap { File(it).readLines() }
             .filter { '|' in it }.associate { it.substringBefore('|') to it.substringAfter('|') }
-        val names = EffectMath.DEFS.flatMap { listOf(it.title, it.subtitle) + it.params.map { p -> p.name } } +
+        val names = EffectMath.DEFS.flatMap { listOf(it.title, it.subtitle) + it.params.flatMap { p -> listOf(p.name) + p.options } } +
             EffectCategory.values().map { it.title }
         val cyrillic = Regex("[А-Яа-яЁё]")
         for (name in names) {

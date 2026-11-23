@@ -166,6 +166,8 @@ fun TimelinePanel(
     val hasMarkerClip by vm.hasMarkerClip.collectAsStateWithLifecycle()
     val editingSym by vm.editingSymbol.collectAsStateWithLifecycle()
     val instMarkers by vm.instanceMarkers.collectAsStateWithLifecycle()
+    // короткие подписи форм считаются один раз на изменение маркеров, а не в каждом кадре отрисовки строки
+    val instShort = remember(instMarkers) { instMarkers.mapValues { (_, ms) -> com.vibetoon.domain.project.SymbolForms.compactLabels(ms.map { it.name }) } }
     val haptic = LocalHapticFeedback.current
     val keyScope = rememberCoroutineScope()
     var keyDragDelta by remember { mutableIntStateOf(0) }
@@ -487,7 +489,7 @@ fun TimelinePanel(
         if (editingSym != null) Row {
             Row(Modifier.width(NAME_W).height(MARKER_H).padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Flag, null, Modifier.size(14.dp), tint = Color(0xFFAB47BC))
-                Text(" Маркеры форм", fontSize = 11.sp, maxLines = 1, softWrap = false)
+                Text("Маркеры форм", modifier = Modifier.padding(start = 3.dp), fontSize = 11.sp, maxLines = 1, softWrap = false)
             }
             val markersNow = rememberUpdatedState(symMarkers)
             val mSelNow = rememberUpdatedState(markerSel)
@@ -860,7 +862,7 @@ fun TimelinePanel(
                                 val purple = Color(0xFFAB47BC)
                                 // отрезки одинаковой формы: сплошная полупрозрачная полоса + подпись; переход - клин к следующей форме
                                 val names = instMarkers[l.id].orEmpty()
-                                val short = com.vibetoon.domain.project.SymbolForms.compactLabels(names.map { it.name })
+                                val short = instShort[l.id].orEmpty()
                                 for (run in com.vibetoon.domain.project.SymbolMath.formRuns(tks, duration)) {
                                     val x0 = run.start * frameWPx
                                     val x1 = run.end * frameWPx

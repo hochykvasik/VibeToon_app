@@ -1837,7 +1837,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return ids.filter { !(rest && it >= BONE_ID_BASE) }.associateWith { id ->
             ghostById[id]?.let { g -> return@associateWith effective(g.owner).let { o -> o.copy(opacity = o.opacity * g.alpha) } }   // призрак кальки идёт за своим слоем
             val t0 = effective(id)
-            val t = fxLayers[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.spinAngle(id, l, _animation.value, _frame.value, _animation.value.settings.fps)) } ?: t0
+            val t = fxLayers[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.extraRotation(id, l, _animation.value, _frame.value, _animation.value.settings.fps)) } ?: t0
             val c = _clips.value[id]
             if (layerProps[id]?.visible == false || (c != null && !c.visibleAt(_frame.value))) t.copy(opacity = 0f) else t   // глаз выключен: слой не рисуется
         }
@@ -1854,7 +1854,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _frame.value, base, _animation.value, _fx.value, warpGridSizes)
         return SceneBuilder.buildTree(sceneRoots(), canvasW, canvasH, transformsNow(), fit, textIds, _links.value, boneHeads(), inputs.warps,
             independentBones(), meshesNow(), inputs.perspectives, boneTails(), effectiveSkins(), turbNow(), fxNow(), cameraIdNow(),
-            options.nullIds, options.depths, groupDeformations = if (useGroups) inputs.groups else emptyMap(), denseWarps = dense, leafPivots = pivotOverrides)
+            options.nullIds, options.depths, groupDeformations = if (useGroups) inputs.groups else emptyMap(), denseWarps = dense, leafPivots = pivotOverrides,
+            stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxLayers, _animation.value, _frame.value))
     }
 
     private fun pushScene() {
@@ -3200,7 +3201,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         media[gi] = media[gi].copy(name = "Символ $n", symDur = plan?.duration ?: computeSymbolDuration(gid), markers = plan?.markers ?: emptyList())
         plan?.clips?.forEach { (id, s, e) -> storeClip(id, Clip(s, e)) }   // слой виден только на своём кадре
         val iid = nextMediaId()
-        media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid)
+        // Новый экземпляр - без ключей времени и без цикла: на всех кадрах первая форма (Hold), пока пользователь сам
+        // не выберет маркер. Выделение ключей сбрасывается - операции ключей не задевают новый экземпляр.
+        media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid,
+            timeKeys = emptyList(), symLoop = false)
+        _keySel.value = emptySet()
         rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
         if (plan != null) regenMarkerThumbs(gid, force = false)
         _state.value = UiState.Message(
@@ -3258,6 +3263,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun editInstance(id: Int, message: String?, change: (MediaItem) -> MediaItem) {
         val i = media.indexOfFirst { it.id == id && it.kind == MediaKind.SYMBOL }
         if (i < 0) return
+        // Во время Play кадр бежит: тап по маркеру ставил ключ на случайный кадр, и символ «сам» расставлялся по таймлайну.
+        if (_playing.value) { _state.value = UiState.Message("Остановите воспроизведение: ключ времени ставится на кадр паузы"); return }
         checkpoint("timekey", force = true)
         media[i] = change(media[i])
         refreshSymbolState(); markDirty()
@@ -7314,6 +7321,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Добавляет эффект выбранного типа в конец цепочки выделенного слоя. */
     fun addEffect(type: Int) {
         val e = EffectMath.create(type) ?: return
+        if (EffectMath.isTransform(type) && selectedEffectGroup() != null) {
+            // пакетные эффекты группы ставятся на каждый вложенный слой - качание/растяжение разорвали бы рисунок на куски
+            _state.value = UiState.Message("Вращение, Качание и Ось растяжения для группы - В разработке: сделайте из группы символ, его экземпляр качается и растягивается целиком")
+            _fxLibrary.value = false
+            return
+        }
         if (editGroupFx("group-fx-add", force = true) { list ->
             if (list.size >= EffectMath.MAX_PER_LAYER) {
                 _state.value = UiState.Message("На слое не больше ${EffectMath.MAX_PER_LAYER} эффектов"); list
@@ -9163,7 +9176,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
             SceneBuilder.buildTree(r, cw, ch, ids.associateWith { id ->
                 val t0 = clipsCopy[id]?.let { c -> anim.evaluate(id, c.animFrame(pf), baseCopy[id]) } ?: anim.evaluate(id, pf, baseCopy[id])
-                val t = fxl[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.spinAngle(id, l, anim, pf, st.fps)) } ?: t0
+                val t = fxl[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.extraRotation(id, l, anim, pf, st.fps)) } ?: t0
                 val c = clipsCopy[id]
                 if (id in hiddenExp || id in outsideIds || (c != null && !c.visibleAt(pf))) t.copy(opacity = 0f) else t
             }, f, tids, lnk, bnd, groupInputs.warps, indep,
@@ -9174,7 +9187,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     m to (if (ps != null && sz != null) PuppetMath.addTo(m, v, ps, PuppetMath.offsets(lid, ps.size, pf, baseCopy, anim, true), sz.first, sz.second) else v)
                 },
                 groupInputs.perspectives, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
-                fxRecords(fxl, adjCopy, anim, pf, st.fps), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides)
+                fxRecords(fxl, adjCopy, anim, pf, st.fps), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides,
+                stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxl, anim, pf))
             } catch (e: IllegalArgumentException) {
                 if (groupInputs.groups.isEmpty() && denseExp.isEmpty()) throw e
                 throw IllegalStateException("Экспорт остановлен: неподдерживаемая деформация или область", e)
