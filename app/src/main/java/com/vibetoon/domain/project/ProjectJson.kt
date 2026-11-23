@@ -13,7 +13,7 @@ import com.vibetoon.domain.render.LayerTransform
  * Неизвестные и отсутствующие поля не ломают чтение; версия новее известной - ошибка.
  */
 object ProjectJson {
-    const val VERSION = 7
+    const val VERSION = 8
     private const val LEGACY_VERSION = 1
     const val FORMAT = "vibetoon-project"
 
@@ -22,7 +22,7 @@ object ProjectJson {
         val root = LinkedHashMap<String, Any?>()
         root["format"] = FORMAT
         // Старые сборки обязаны отказаться от открытия, а не молча удалить новый формат.
-        root["version"] = if (com.vibetoon.domain.anim.SceneCanvas.active(d.scenes)) 7 else if (d.scenes.isNotEmpty()) 6 else if (d.pivots.isNotEmpty()) 5 else if (d.denseWarps.isNotEmpty()) 4 else if (d.warpGridSizes.isNotEmpty()) 3 else if (d.groupDeformationAnchors.isNotEmpty()) 2 else LEGACY_VERSION
+        root["version"] = if (d.stackOrder.isNotEmpty()) 8 else if (com.vibetoon.domain.anim.SceneCanvas.active(d.scenes)) 7 else if (d.scenes.isNotEmpty()) 6 else if (d.pivots.isNotEmpty()) 5 else if (d.denseWarps.isNotEmpty()) 4 else if (d.warpGridSizes.isNotEmpty()) 3 else if (d.groupDeformationAnchors.isNotEmpty()) 2 else LEGACY_VERSION
         root["id"] = m.id
         root["name"] = m.name
         root["width"] = m.width
@@ -72,6 +72,11 @@ object ProjectJson {
                 if (it.transition != com.vibetoon.domain.anim.SceneTransition.CUT.key) { put("tr", it.transition); put("tf", it.transitionFrames) }
                 it.background?.let { c -> put("bg", c.toLong() and 0xFFFFFFFFL) }
             }
+        }
+        if (d.stackOrder.isNotEmpty()) {
+            // пакет 25: смешанный порядок PSD и медиа - дети группы снизу вверх
+            require(d.stackOrder.keys.all { it >= -1 } && d.stackOrder.values.all { l -> l.all { it >= 0 } }) { "Invalid stack order" }
+            root["order"] = d.stackOrder.toSortedMap().mapKeys { it.key.toString() }.mapValues { it.value }
         }
         if (d.pivots.isNotEmpty()) {
             require(d.pivots.all { (id, p) -> id >= 0 && p.first.isFinite() && p.second.isFinite() }) { "Invalid pivot" }
@@ -316,8 +321,14 @@ object ProjectJson {
                     transitionFrames = ((o["tf"] as? Number)?.toInt() ?: 0).coerceIn(0, com.vibetoon.domain.anim.SceneCanvas.MAX_TRANSITION),
                     background = (o["bg"] as? Number)?.toLong()?.takeIf { it in 0L..0xFFFFFFFFL }?.toInt())
             }, meta.durationFrames)
+            val stackOrder = LinkedHashMap<Int, List<Int>>()
+            (root["order"] as? Map<*, *>)?.forEach { (k, v) ->
+                val parent = (k as? String)?.toIntOrNull()?.takeIf { it >= -1 } ?: return@forEach
+                val list = (v as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt()?.takeIf { id -> id >= 0 } }.distinct()
+                if (list.isNotEmpty()) stackOrder[parent] = list
+            }
             Result.success(ProjectData(meta, psd, base, tracks, media, deleted, clips, markers, links, bones, regroup, warps, meshes,
-                (root["persps"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.toSet(), skins, turbs, fx, pins, lprops, groupAnchors, warpSizes, dense, pivots, scenes))
+                (root["persps"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.toSet(), skins, turbs, fx, pins, lprops, groupAnchors, warpSizes, dense, pivots, scenes, stackOrder))
         }
     } catch (e: JsonException) {
         Result.failure(IllegalStateException("Повреждённый файл проекта: ${e.message}"))

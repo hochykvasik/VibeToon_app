@@ -333,10 +333,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val warpSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap(),
         val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap(),
         val pivots: Map<Int, Pair<Float, Float>> = emptyMap(),
-        val scenes: List<com.vibetoon.domain.anim.SceneRange> = emptyList()
+        val scenes: List<com.vibetoon.domain.anim.SceneRange> = emptyList(),
+        val stackOrder: Map<Int, List<Int>> = emptyMap()
     ) {
-        fun withPaint(op: PaintOp?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, op, textureOp, groupAnchors, warpSizes, denseWarps, pivots, scenes)
-        fun withTexture(op: com.vibetoon.domain.raster.ExpandedLayerHistory?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, paintOp, op, groupAnchors, warpSizes, denseWarps, pivots, scenes)
+        fun withPaint(op: PaintOp?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, op, textureOp, groupAnchors, warpSizes, denseWarps, pivots, scenes, stackOrder)
+        fun withTexture(op: com.vibetoon.domain.raster.ExpandedLayerHistory?) = Snapshot(base, animation, media, deleted, clips, links, bones, regroup, warps, meshes, persps, skins, turbs, fx, pins, lprops, paintOp, op, groupAnchors, warpSizes, denseWarps, pivots, scenes, stackOrder)
     }
     // Пока нет UI для создания рамки и она не активирует деформер.
     private var groupDeformationAnchors: Map<Int, com.vibetoon.domain.project.GroupDeformationAnchor> = emptyMap()
@@ -360,6 +361,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Записи PSD (из файла) и все слои дерева (PSD + синтетические записи картинок и видео). */
     private var psdLayers: List<LayerInfo> = emptyList()
     private var regroup: List<Pair<Int, Int>> = emptyList()
+    /** Пакет 25: явный порядок детей групп (смешанный порядок PSD и медиа), см. StackOrder. */
+    private var stackOrder: Map<Int, List<Int>> = emptyMap()
     /** Свойства слоёв (Opacity, Blend, Alpha Lock, Clip) поверх данных PSD; сохраняются в project.json. */
     private val _layerProps = MutableStateFlow<Map<Int, LayerProps>>(emptyMap())
     val layerPropsState: StateFlow<Map<Int, LayerProps>> = _layerProps.asStateFlow()
@@ -482,6 +485,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _links.value = data.links
             _bones.value = data.bones
             regroup = data.regroup
+            stackOrder = data.stackOrder
             groupDeformationAnchors = data.groupDeformationAnchors.toMap()
             warpGridSizes = data.warpGridSizes.toMap()
             denseWarps = data.denseWarps.toMap()
@@ -616,6 +620,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _links.value = emptyMap()
         _bones.value = emptyList()
         regroup = emptyList()
+        stackOrder = emptyMap()
         groupDeformationAnchors = emptyMap()
         warpGridSizes = emptyMap()
         denseWarps = emptyMap()
@@ -672,7 +677,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             com.vibetoon.domain.project.PaintSaveBarrier.save(
                 paint = { flushPaintSaves() },
                 metadata = {
-                    val data = ProjectData(m.copy(updatedAt = System.currentTimeMillis()), psdRef, HashMap(base), _animation.value.tracks, media.toList(), deletedPsd, _clips.value, _markers.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupDeformationAnchors.toMap(), warpGridSizes.toMap(), denseWarps.toMap(), pivotOverrides.toMap(), (if (layers.isEmpty()) _scenes.value else com.vibetoon.domain.anim.SceneCanvas.prune(_scenes.value, layers.mapTo(HashSet()) { it.id })))
+                    val data = ProjectData(m.copy(updatedAt = System.currentTimeMillis()), psdRef, HashMap(base), _animation.value.tracks, media.toList(), deletedPsd, _clips.value, _markers.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupDeformationAnchors.toMap(), warpGridSizes.toMap(), denseWarps.toMap(), pivotOverrides.toMap(), (if (layers.isEmpty()) _scenes.value else com.vibetoon.domain.anim.SceneCanvas.prune(_scenes.value, layers.mapTo(HashSet()) { it.id })),
+                        stackOrder = if (layers.isEmpty()) stackOrder else com.vibetoon.domain.model.StackOrder.prune(stackOrder, layers.mapTo(HashSet()) { it.id }))
                     withContext(Dispatchers.IO) { projects.save(data) }
                     meta = data.meta
                     Log.i("VT/Project", "saved ${data.meta.id}: ${data.base.size} base, ${data.tracks.size} tracks")
@@ -782,7 +788,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Пакет 16: замки слоёв PSD (`lspf`) -> замок / замок прозрачности VibeToon; текстовые слои PSD (`TySh`) ->
      * редактируемый текст (растровый слой PSD скрывается как удалённый, Undo не нужен: это новый импорт).
-     * Текст ставится по рамке слоя PSD, но поверх слоёв PSD и вне их групп (смешанный порядок - в разработке).
+     * Текст ставится по рамке слоя PSD в его группу и на его место в стопке (пакет 25: смешанный порядок PSD и медиа).
      * Ошибка чтения или отрисовки одного слоя не мешает импорту: этот слой остаётся картинкой.
      */
     private fun applyPsdExtras(summary: ParseSummary, locks: Boolean, editableText: Boolean): String? {
@@ -793,6 +799,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val props = HashMap(layerProps)
         fun base(info: LayerInfo) = props[info.id] ?: LayerProps(info.opacity, info.blendMode, false, info.isClipped).normalized()
         var locked = 0; var texts = 0; var failed = 0
+        val textFor = HashMap<Int, Int>()   // пакет 25: растровый слой PSD -> редактируемый текст на его месте
         for (e in extras) {
             val info = infoById[e.index] ?: continue
             if (info.kind == LayerKind.GROUP_END) continue
@@ -813,6 +820,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     props[id] = if (locks && e.locked) p.copy(locked = true) else p
                     props.remove(info.id)
                     deletedPsd = deletedPsd + info.id
+                    textFor[info.id] = id
                     texts++
                     if (locks && e.locked) locked++
                 }.onFailure { Log.w("VT/Psd", "text layer ${info.id} stays raster", it) }.isSuccess
@@ -825,6 +833,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         setProps(props)
+        if (textFor.isNotEmpty()) {
+            // текст - в ту же группу PSD и на место своего слоя (координаты холста внутри группы PSD переводит SceneDomain)
+            val parents = summary.layers.filter { it.id in textFor }.map { it.parentId }.toSet()
+            for (p in parents) {
+                val sibs = summary.layers.filter { it.parentId == p && it.kind != LayerKind.GROUP_END }.map { it.id }
+                stackOrder = stackOrder + (p to sibs.map { textFor[it] ?: it })
+            }
+            for (l in summary.layers) { val tid = textFor[l.id] ?: continue; if (l.parentId >= 0) regroup = regroup + (tid to l.parentId) }
+        }
         return when {
             failed > 0 -> "Текстовые слои PSD стали редактируемым текстом: $texts; остались картинкой: $failed"
             texts > 0 && locked > 0 -> "Текстовые слои PSD стали редактируемым текстом: $texts; перенесено замков: $locked"
@@ -848,6 +865,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (!keepState) {
                 // Новый PSD: id слоёв другие, прежние правки PSD теряют смысл. Правки медиа-слоёв остаются.
                 deletedPsd = emptySet()
+                stackOrder = com.vibetoon.domain.model.StackOrder.dropPsd(stackOrder, media.mapTo(HashSet()) { it.id })   // пакет 25
                 _clips.value = _clips.value.filterKeys { it >= MEDIA_ID_BASE }
                 clearHistory()
                 base.keys.removeAll { it < MEDIA_ID_BASE }
@@ -931,10 +949,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val psdVisible = psdLayers.filter { it.id !in deletedPsd }
         val movedMap = regroup.toMap()
         val moved = regroup.mapNotNull { (id, p) -> psdVisible.firstOrNull { it.id == id }?.copy(parentId = p) }
-        layers = (psdVisible.filter { it.id !in movedMap } + moved + mediaInfos).map { l ->
+        layers = com.vibetoon.domain.model.StackOrder.apply((psdVisible.filter { it.id !in movedMap } + moved + mediaInfos).map { l ->
             val p = layerProps[l.id] ?: return@map l
             l.copy(name = p.name ?: l.name, opacity = p.opacity, blendMode = p.blend, isClipped = p.clip && l.kind == LayerKind.LAYER)
-        }
+        }, stackOrder)   // пакет 25: явный порядок детей групп - PSD и медиа вперемешку
         textIds = media.filter { it.isText }.map { it.id }.toSet()
         roots = SceneTree.build(layers, pivotOverrides)
         pivots = computePivots(roots)
@@ -2920,7 +2938,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- Undo / Redo
 
-    private fun snapshot() = Snapshot(HashMap(base), _animation.value, media.toList(), deletedPsd, _clips.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupAnchors = groupDeformationAnchors.toMap(), warpSizes = warpGridSizes.toMap(), denseWarps = denseWarps.toMap(), pivots = pivotOverrides.toMap(), scenes = _scenes.value)
+    private fun snapshot() = Snapshot(HashMap(base), _animation.value, media.toList(), deletedPsd, _clips.value, _links.value, _bones.value, regroup, warpLayers, meshLayers, perspLayers, skinLayers, turbLayers, fxLayers, pinLayers, layerProps, groupAnchors = groupDeformationAnchors.toMap(), warpSizes = warpGridSizes.toMap(), denseWarps = denseWarps.toMap(), pivots = pivotOverrides.toMap(), scenes = _scenes.value, stackOrder = stackOrder)
 
     private fun updateHistoryFlags() {
         _canUndo.value = undoStack.isNotEmpty()
@@ -3082,6 +3100,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _links.value = snap.links
         _bones.value = snap.bones
         regroup = snap.regroup
+        stackOrder = snap.stackOrder
         groupDeformationAnchors = snap.groupAnchors.toMap()
         warpGridSizes = snap.warpSizes.toMap()
         denseWarps = snap.denseWarps.toMap()
@@ -4613,9 +4632,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             checkpoint("merge", force = true)
             // место слитого слоя: там, где стоял самый нижний из сливаемых слоёв-медиа (иначе - над всеми медиа)
             val insertAt = media.indexOfFirst { it.id in leaf }.let { if (it < 0) media.size else it }
+            // пакет 25: слитый слой (снимок в координатах холста, поэтому в корне) встаёт на место самого нижнего из
+            // сливаемых, а если тот был в группе - над верхней группой, в которой он лежал (слой PSD или медиа - всё равно)
+            val lowest = com.vibetoon.domain.model.StackOrder.visual(layers).firstOrNull { it in leaf }
+            val parentOf = layers.associate { it.id to it.parentId }
+            var anchor = lowest
+            while (anchor != null && (parentOf[anchor] ?: -1) >= 0) anchor = parentOf[anchor]
+            val rootBefore = com.vibetoon.domain.model.StackOrder.children(layers, -1)
             applySelection(leaf, leaf.last())
             deleteSelected(cp = false)
             media.add(insertAt.coerceIn(0, media.size), item)
+            if (anchor != null && anchor in rootBefore) {
+                val list = if (anchor == lowest) com.vibetoon.domain.model.StackOrder.substitute(rootBefore, leaf, anchor, newId)
+                    else rootBefore.filter { it !in leaf }.flatMap { if (it == anchor) listOf(it, newId) else listOf(it) }
+                stackOrder = stackOrder + (-1 to list)
+            }
             rebuildLayers()
             withContext(decodeDispatcher) { runCatching { uploadTextureFor(pid, item) } }
             pushScene()
@@ -4630,8 +4661,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * «Объединить в группу»: выделенные слои переезжают в новую группу (она получает трансформацию Pan/Scale/Rotate
-     * для всех вложенных). Слои PSD и слои-медиа живут в разных системах координат, поэтому группа собирается
-     * либо только из слоёв PSD, либо только из медиа-слоёв.
+     * для всех вложенных). Пакет 25: слои PSD и медиа можно собрать в одну группу - внутри они остаются в прежнем видимом
+     * порядке (вперемешку), группа встаёт на место верхнего из них. Группа со слоями PSD живёт в координатах PSD
+     * (медиа внутри переводит SceneDomain), только из медиа - в координатах холста.
      */
     fun groupSelected() {
         if (_playing.value) return
@@ -4640,7 +4672,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (ids.any { isLockedId(it) }) { lockedNotice(); return }
         val psd = ids.filter { it < MEDIA_ID_BASE }
         val med = ids.filter { it >= MEDIA_ID_BASE }
-        if (psd.isNotEmpty() && med.isNotEmpty()) { _state.value = UiState.Message("Слои PSD и картинки/текст нельзя смешивать в одной группе: соберите их по отдельности"); return }
         val byId = layers.associateBy { it.id }
         val topParent = byId[ids.first()]?.parentId ?: -1
         var gid: Int
@@ -4649,13 +4680,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (ids.any { it in ancestorsOf(topParent) }) { _state.value = UiState.Message("Нельзя: группа внутри выбранного слоя"); return }
         checkpoint("group", force = true)
         val count = media.count { it.kind == MediaKind.GROUP } + 1
+        val before = layers
         media += MediaItem(gid, MediaKind.GROUP, "Группа $count", "")
         regroup = regroup.filter { it.first !in ids && it.first != gid } + ids.map { it to gid } + (if (topParent >= 0) listOf(gid to topParent) else emptyList())
+        rebuildLayers()
+        // пакет 25: внутри группы - прежний видимый порядок (PSD и медиа вперемешку), группа - на месте верхнего слоя
+        stackOrder = com.vibetoon.domain.model.StackOrder.group(before, layers, stackOrder, ids, gid, topParent)
         rebuildLayers()
         pushScene()
         selectLayer(gid)
         markDirty()
-        _state.value = UiState.Message("Группа создана: слоёв ${ids.size}")
+        _state.value = UiState.Message(if (psd.isNotEmpty() && med.isNotEmpty()) "Группа создана: слоёв ${ids.size} (PSD и картинки вперемешку)" else "Группа создана: слоёв ${ids.size}")
     }
 
     fun mergeDown(id: Int) {
@@ -6377,12 +6412,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (projectId != pid || closing) return@launch
                 checkpoint("add", force = true)
                 if (atBottom) media.add(0, item) else media += item
-                rebuildLayers(); pushScene(); selectLayer(item.id); markDirty()
+                rebuildLayers()
+                // пакет 25: фон - под всеми слоями, и под слоями PSD тоже (явный порядок корня)
+                if (atBottom && (layers.any { it.parentId == -1 && it.id < MEDIA_ID_BASE } || stackOrder.containsKey(-1))) {
+                    stackOrder = com.vibetoon.domain.model.StackOrder.bottom(layers, stackOrder, item.id)
+                    rebuildLayers()
+                }
+                pushScene(); selectLayer(item.id); markDirty()
                 if (lock) toggleLocked(item.id)
                 _state.value = UiState.Message(when {
                     vector -> "Векторный слой «${item.name}»: рисуйте кистью (путь, линия, прямоугольник, эллипс) или добавляйте «Фигуры»"
                     animated -> "Анимационный слой «${item.name}»: рисуйте, «Добавить пустой кадр» ставит следующий рисунок"
-                    lock -> "Фон «${item.name}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв)" + if (psdRef != null) ". В проекте с PSD он ложится над слоями PSD" else ""
+                    lock -> "Фон «${item.name}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв)"
                     else -> "Новый слой «${item.name}»"
                 })
                 delay(400)
@@ -9708,8 +9749,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Drop слоя [dragId] на строку [targetId]: на группу - слой становится её дочерним (наверху),
      * на обычный слой - встаёт в тот же родитель, что и цель (так слой "вытаскивается" из группы).
-     * [targetId] = null - бросили в пустое место: слой уходит в корень. Работает для слоёв PSD;
-     * картинки, видео и текст лежат в координатах холста и в группы PSD не кладутся.
+     * [targetId] = null - бросили в пустое место: слой уходит в корень. Пакет 25: слои PSD и медиа
+     * (картинки, видео, текст, символы) кладутся в любые группы и встают вперемешку; координаты переводит SceneDomain.
      */
     fun dropLayer(dragId: Int, targetId: Int?) {
         if (_playing.value) return
@@ -9718,9 +9759,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // порядок: бросок на слой (не группу) ставит слой на его место; на группу - внутрь группы
         val tgt = targetId?.let { byId[it] }
         if (tgt != null && tgt.id != dragId && tgt.kind == com.vibetoon.nativebridge.LayerKind.LAYER) {
+            // пакет 25: слой PSD и медиа в одной группе (или группа уже с явным порядком) - общий порядок вперемешку
+            if (src.parentId == tgt.parentId && ((dragId >= MEDIA_ID_BASE) != (tgt.id >= MEDIA_ID_BASE) || stackOrder.containsKey(src.parentId))) {
+                reorderStack(dragId, tgt.id); return
+            }
             // одна группа - порядок; цель в другой группе (например, слой в папке головы) - перенос в её группу
             if (dragId >= MEDIA_ID_BASE && tgt.id >= MEDIA_ID_BASE && src.parentId == tgt.parentId) { reorderMedia(dragId, tgt.id); return }
-            if (dragId < MEDIA_ID_BASE && tgt.id < MEDIA_ID_BASE) {
+            if (dragId < MEDIA_ID_BASE && tgt.id < MEDIA_ID_BASE && !stackOrder.containsKey(tgt.parentId)) {
                 if (tgt.parentId >= 0 && dragId in ancestorsOf(tgt.parentId)) {
                     _state.value = UiState.Message("Нельзя: группа не может войти сама в себя")
                     return
@@ -9738,8 +9783,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // Пакет 9: картинки, рисунки, вектор и экземпляры символов - в любые группы, включая группы PSD
                     // (рот-символ в папке головы); координаты переводит SceneBuilder (SceneDomain)
                     if (tIsGroup) t.id else t.parentId
-                } else if (t.id >= MEDIA_ID_BASE) (if (t.parentId in 0 until MEDIA_ID_BASE) t.parentId else -1)
-                else if (tIsGroup) t.id else t.parentId
+                } else if (tIsGroup) t.id else t.parentId   // пакет 25: слои PSD - и в группы картинок/текста (SceneDomain переводит координаты)
             }
         }
         if (newParent == src.parentId) return
@@ -9758,6 +9802,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         checkpoint("regroup", force = true)
         regroup = regroup.filter { it.first != dragId } + (dragId to newParent)
         rebuildLayers()
+        // пакет 25: брошен на слой другой группы - встаёт над ним (PSD и медиа вперемешку), а не просто наверх группы
+        if (tgt != null && tgt.kind == LayerKind.LAYER && tgt.parentId == newParent) {
+            com.vibetoon.domain.model.StackOrder.place(layers, stackOrder, dragId, tgt.id, above = true)?.let { stackOrder = it; rebuildLayers() }
+        }
         // слой в группе с общим эффектом (например, «Тряска» головы) получает тот же эффект с ключами
         val inherited = if (newParent >= 0 && src.kind == LayerKind.LAYER) inheritGroupFx(dragId, newParent) else false
         if (inst != null) invalidateForms()   // контекст экземпляра поменялся: формы символа переснимаются
@@ -9769,6 +9817,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             inherited -> "Слой перенесён в группу и получил её эффекты"
             else -> "Слой перенесён в «${layerName(newParent)}»"
         })
+    }
+
+    /** Пакет 25: общий порядок детей группы (PSD и медиа вперемешку): тянутый снизу встаёт над целью, сверху - под неё. */
+    private fun reorderStack(dragId: Int, targetId: Int) {
+        val next = com.vibetoon.domain.model.StackOrder.drop(layers, stackOrder, dragId, targetId) ?: return
+        checkpoint("reorder", force = true)
+        stackOrder = next
+        rebuildLayers()
+        pushScene()
+        markDirty()
+        _state.value = UiState.Message("Порядок слоёв изменён")
+    }
+
+    /** Пакет 25: «На самый верх группы» / «На самый низ группы» - для слоёв PSD и медиа одинаково. */
+    fun moveLayerToEdge(id: Int, top: Boolean) {
+        if (_playing.value) return
+        val next = com.vibetoon.domain.model.StackOrder.toEdge(layers, stackOrder, id, top)
+            ?: run { _state.value = UiState.Message(if (top) "Слой уже наверху группы" else "Слой уже внизу группы"); return }
+        checkpoint("reorder", force = true)
+        stackOrder = next
+        rebuildLayers()
+        pushScene()
+        markDirty()
+        _state.value = UiState.Message(if (top) "Слой перенесён наверх группы" else "Слой перенесён вниз группы")
     }
 
     /** Картинки и рисунки лежат в списке media: порядок списка = порядок отрисовки (снизу вверх). */

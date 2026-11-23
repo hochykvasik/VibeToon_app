@@ -1337,7 +1337,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                     DropdownMenu(expanded = menuFor == l.id, onDismissRequest = { menuFor = null }) {
                         for (title in listOf(
                             "Выбрать несколько", "Переименовать", "Заблокировать / разблокировать", "Копировать", "Вставить выше",
-                            "Дублировать", "Удалить", "Очистить", "Маска вкл/выкл",
+                            "Дублировать", "Наверх группы", "Вниз группы", "Удалить", "Очистить", "Маска вкл/выкл",
                             "Растрировать", "Слить вниз", "Слить все видимые", "Создать символ"
                         ) + (if (vm.isSymbolInstance(l.id)) listOf("Редактировать символ", "Выбрать маркер (фонему)") else emptyList())) {
                             DropdownMenuItem(text = { Text(title) }, onClick = {
@@ -1349,6 +1349,8 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                                     "Копировать" -> vm.copyLayer(l.id)
                                     "Вставить выше" -> vm.pasteAbove(l.id)
                                     "Дублировать" -> { vm.selectLayer(l.id); vm.duplicateSelected() }
+                                    "Наверх группы" -> vm.moveLayerToEdge(l.id, top = true)   // пакет 25: PSD и медиа вперемешку
+                                    "Вниз группы" -> vm.moveLayerToEdge(l.id, top = false)
                                     "Удалить" -> { vm.selectLayer(l.id); vm.deleteSelected() }
                                     "Очистить" -> vm.clearLayer(l.id)
                                     "Маска вкл/выкл" -> vm.toggleClipMask(l.id)

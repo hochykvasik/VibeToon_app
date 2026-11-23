@@ -259,7 +259,9 @@ data class ProjectData(
     /** Переопределения опорных точек (пивотов) узлов: id -> (x, y) в координатах холста. */
     val pivots: Map<Int, Pair<Float, Float>> = emptyMap(),
     /** Сцены: именованные части таймлайна (пакет 9). */
-    val scenes: List<com.vibetoon.domain.anim.SceneRange> = emptyList()
+    val scenes: List<com.vibetoon.domain.anim.SceneRange> = emptyList(),
+    /** Пакет 25: явный порядок детей групп (id родителя, -1 - корень -> дети снизу вверх) - смешанный порядок PSD и медиа. */
+    val stackOrder: Map<Int, List<Int>> = emptyMap()
 ) {
     fun animation() = Animation(ProjectSettings(meta.fps, meta.durationFrames), tracks)
 }

@@ -339,11 +339,11 @@ object SceneBuilder {
         fun linkDelta(id: Int): Affine2D = links[id]?.let { delta(it) } ?: Affine2D.IDENTITY
 
         /** Обход списка братьев; в [out] накапливаются рамки видимых слоёв (для рамки группы). */
-        fun walk(nodes: List<Node>, parentWorld0: Affine2D, out: MutableList<FloatArray>, parentMedia: Boolean) {
+        fun walk(nodes: List<Node>, parentWorld0: Affine2D, out: MutableList<FloatArray>, parentMedia: Boolean, clipInit: Boolean? = null): Boolean? {
             // Видима ли база текущей clipping-цепочки; null - базы-слоя нет (начало списка или
             // между ними группа). Clipping к группе-базе пока не поддерживается: такой слой
-            // рисуется как обычный, а не пропадает.
-            var clipBaseVisible: Boolean? = null
+            // рисуется как обычный, а не пропадает. [clipInit] - состояние цепочки предыдущего отрезка корней (пакет 25).
+            var clipBaseVisible: Boolean? = clipInit
             for (n in nodes) {
                 val t = transforms[n.id] ?: LayerTransform()
                 val parentWorld = crossed(parentWorld0, parentMedia, n.id)
@@ -453,24 +453,27 @@ object SceneBuilder {
                     }
                 }
             }
+            return clipBaseVisible
         }
 
-        // PSD вписывается в холст матрицей rootWorld; медиа-слои (id >= MEDIA_ID_BASE) заданы сразу в
-        // координатах холста и рисуются поверх PSD в порядке добавления.
-        val (media, psd) = roots.partition { it.id >= MEDIA_ID_BASE }
-        // подряд идущие корни с одинаковой глубиной обходятся вместе (цепочки обтравки не рвутся), у каждой группы глубин своя матрица камеры
-        fun walkByDepth(list: List<Node>, pre: Affine2D, media: Boolean) {
-            var i = 0
-            while (i < list.size) {
-                val d = depths[list[i].id] ?: 0f
-                var j = i + 1
-                while (j < list.size && (depths[list[j].id] ?: 0f) == d) j++
-                walk(list.subList(i, j), camViewFor(d) * pre, ArrayList(), media)
-                i = j
-            }
+        // PSD вписывается в холст матрицей rootWorld; медиа-слои (id >= MEDIA_ID_BASE) заданы сразу в координатах холста.
+        // Пакет 25: корни рисуются в своём порядке - слои PSD и медиа вперемешку (по умолчанию медиа идут после PSD, как
+        // раньше). Подряд идущие корни одного пространства и одной глубины обходятся вместе (цепочки обтравки не рвутся),
+        // у каждой группы глубин своя матрица камеры.
+        // На стыке PSD/медиа одной глубины цепочка обтравки продолжается: картинка с Clip над слоем PSD обтравливается по нему.
+        var ri = 0
+        var prevDepth: Float? = null
+        var clipState: Boolean? = null
+        while (ri < roots.size) {
+            val media = roots[ri].id >= MEDIA_ID_BASE
+            val d = depths[roots[ri].id] ?: 0f
+            var rj = ri + 1
+            while (rj < roots.size && (roots[rj].id >= MEDIA_ID_BASE) == media && (depths[roots[rj].id] ?: 0f) == d) rj++
+            clipState = walk(roots.subList(ri, rj), camViewFor(d) * (if (media) Affine2D.IDENTITY else rootWorld0), ArrayList(), media,
+                if (prevDepth == d) clipState else null)
+            prevDepth = d
+            ri = rj
         }
-        walkByDepth(psd, rootWorld0, false)
-        walkByDepth(media, Affine2D.IDENTITY, true)
         require(visitedGroups == groupDeformations.keys) { "Group deformer targets a missing or hidden group" }
         val allGroupMeshes = preparedGroupMeshes + generatedGroupMeshes + generatedDenseMeshes
         val nativeWarps = warps - generatedDenseMeshes.keys

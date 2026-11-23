@@ -222,7 +222,6 @@ Liquify: выберите один слой (картинка или слой PS
 Векторный слой «{}»: рисуйте кистью (путь, линия, прямоугольник, эллипс) или добавляйте «Фигуры»|Vector layer “{}”: draw with the brush (path, line, rectangle, ellipse) or add “Shapes”
 Анимационный слой «{}»: рисуйте, «Добавить пустой кадр» ставит следующий рисунок|Animation layer “{}”: draw, “Add empty frame” creates the next drawing
 Фон «{}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв)|Background “{}” is filled with the project color and locked (unlock it in the layer list)
-Фон «{}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв). В проекте с PSD он ложится над слоями PSD|Background “{}” is filled with the project color and locked (unlock it in the layer list). In a PSD project it sits above the PSD layers
 Новый слой «{}»|New layer “{}”
 Пустая группа «Группа {}»: перетащите в неё слои ручкой ≡|Empty group “Group {}”: drag layers into it with the ≡ handle
 Фигура «{}» добавлена в векторный слой|Shape “{}” added to the vector layer
@@ -1217,4 +1216,11 @@ PSD в текущий проект|PSD into current project
 сцен|scenes
 Слой должен остаться хотя бы в одной сцене: используйте глаз в панели слоёв|A layer must stay in at least one scene: use the eye in the Layers panel
 Сцена с чистым холстом: новые слои в ней можно сделать своими в «Холст и переход»|Scene with a clean canvas: new layers in it can be made its own in “Canvas and transition”
+Наверх группы|To top of group
+Вниз группы|To bottom of group
+Слой уже наверху группы|The layer is already at the top of the group
+Слой уже внизу группы|The layer is already at the bottom of the group
+Слой перенесён наверх группы|Layer moved to the top of the group
+Слой перенесён вниз группы|Layer moved to the bottom of the group
+Группа создана: слоёв {} (PSD и картинки вперемешку)|Group created: {} layers (PSD and images mixed)
 """

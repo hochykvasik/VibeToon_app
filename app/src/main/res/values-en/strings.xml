@@ -544,7 +544,6 @@
     <string name="ui_vector_layer_draw_with_the_brush_pat">Vector layer “{}”: draw with the brush (path, line, rectangle, ellipse) or add “Shapes”</string>
     <string name="ui_animation_layer_draw_add_empty_frame">Animation layer “{}”: draw, “Add empty frame” creates the next drawing</string>
     <string name="ui_background_is_filled_with_the_projec">Background “{}” is filled with the project color and locked (unlock it in the layer list)</string>
-    <string name="ui_background_is_filled_with_the_projec_2">Background “{}” is filled with the project color and locked (unlock it in the layer list). In a PSD project it sits above the PSD layers</string>
     <string name="ui_new_layer_2">New layer “{}”</string>
     <string name="ui_empty_group_group_drag_layers_into_i">Empty group “Group {}”: drag layers into it with the ≡ handle</string>
     <string name="ui_shape_added_to_the_vector_layer">Shape “{}” added to the vector layer</string>
@@ -1524,4 +1523,11 @@
     <string name="ui_scenes_2">scenes</string>
     <string name="ui_a_layer_must_stay_in_at_least_one_sc">A layer must stay in at least one scene: use the eye in the Layers panel</string>
     <string name="ui_scene_with_a_clean_canvas_new_layers">Scene with a clean canvas: new layers in it can be made its own in “Canvas and transition”</string>
+    <string name="ui_to_top_of_group">To top of group</string>
+    <string name="ui_to_bottom_of_group">To bottom of group</string>
+    <string name="ui_the_layer_is_already_at_the_top_of_t">The layer is already at the top of the group</string>
+    <string name="ui_the_layer_is_already_at_the_bottom_o">The layer is already at the bottom of the group</string>
+    <string name="ui_layer_moved_to_the_top_of_the_group">Layer moved to the top of the group</string>
+    <string name="ui_layer_moved_to_the_bottom_of_the_gro">Layer moved to the bottom of the group</string>
+    <string name="ui_group_created_layers_psd_and_images_">Group created: {} layers (PSD and images mixed)</string>
 </resources>

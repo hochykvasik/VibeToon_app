@@ -544,7 +544,6 @@
     <string name="ui_vector_layer_draw_with_the_brush_pat">Векторный слой «{}»: рисуйте кистью (путь, линия, прямоугольник, эллипс) или добавляйте «Фигуры»</string>
     <string name="ui_animation_layer_draw_add_empty_frame">Анимационный слой «{}»: рисуйте, «Добавить пустой кадр» ставит следующий рисунок</string>
     <string name="ui_background_is_filled_with_the_projec">Фон «{}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв)</string>
-    <string name="ui_background_is_filled_with_the_projec_2">Фон «{}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв). В проекте с PSD он ложится над слоями PSD</string>
     <string name="ui_new_layer_2">Новый слой «{}»</string>
     <string name="ui_empty_group_group_drag_layers_into_i">Пустая группа «Группа {}»: перетащите в неё слои ручкой ≡</string>
     <string name="ui_shape_added_to_the_vector_layer">Фигура «{}» добавлена в векторный слой</string>
@@ -1524,4 +1523,11 @@
     <string name="ui_scenes_2">сцен</string>
     <string name="ui_a_layer_must_stay_in_at_least_one_sc">Слой должен остаться хотя бы в одной сцене: используйте глаз в панели слоёв</string>
     <string name="ui_scene_with_a_clean_canvas_new_layers">Сцена с чистым холстом: новые слои в ней можно сделать своими в «Холст и переход»</string>
+    <string name="ui_to_top_of_group">Наверх группы</string>
+    <string name="ui_to_bottom_of_group">Вниз группы</string>
+    <string name="ui_the_layer_is_already_at_the_top_of_t">Слой уже наверху группы</string>
+    <string name="ui_the_layer_is_already_at_the_bottom_o">Слой уже внизу группы</string>
+    <string name="ui_layer_moved_to_the_top_of_the_group">Слой перенесён наверх группы</string>
+    <string name="ui_layer_moved_to_the_bottom_of_the_gro">Слой перенесён вниз группы</string>
+    <string name="ui_group_created_layers_psd_and_images_">Группа создана: слоёв {} (PSD и картинки вперемешку)</string>
 </resources>

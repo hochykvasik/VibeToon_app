@@ -1347,6 +1347,12 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "сцен" to R.string.ui_scenes_2,
     "Слой должен остаться хотя бы в одной сцене: используйте глаз в панели слоёв" to R.string.ui_a_layer_must_stay_in_at_least_one_sc,
     "Сцена с чистым холстом: новые слои в ней можно сделать своими в «Холст и переход»" to R.string.ui_scene_with_a_clean_canvas_new_layers,
+    "Наверх группы" to R.string.ui_to_top_of_group,
+    "Вниз группы" to R.string.ui_to_bottom_of_group,
+    "Слой уже наверху группы" to R.string.ui_the_layer_is_already_at_the_top_of_t,
+    "Слой уже внизу группы" to R.string.ui_the_layer_is_already_at_the_bottom_o,
+    "Слой перенесён наверх группы" to R.string.ui_layer_moved_to_the_top_of_the_group,
+    "Слой перенесён вниз группы" to R.string.ui_layer_moved_to_the_bottom_of_the_gro,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -1356,7 +1362,6 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Ключей:\\ (.+?)\\.\\ Громкость\\ меняется\\ линейно\\ между\\ ключами;\\ до\\ первого\\ и\\ после\\ последнего\\ держится\\.\\ Работает\\ при\\ воспроизведении,\\ прослушивании\\ линейки\\ и\\ в\\ WAV\\.\\ В\\ MP4\\ звука\\ пока\\ нет\\.\$" to R.string.ui_keys_volume_changes_linearly_between,
     "^Ключей:\\ (.+?)\\.\\ Новый\\ ключ\\ из\\ маркера\\ \\-\\ Hold:\\ символ\\ мгновенно\\ переключается\\ на\\ форму\\ и\\ держит\\ её\\ до\\ следующего\\ ключа\\.\\ Без\\ ключей\\ символ\\ стоит\\ на\\ первом\\ кадре\\.\$" to R.string.ui_keys_a_new_key_from_a_marker_is_hold,
     "^На\\ том\\ же\\ месте\\ ещё\\ экземпляров\\ этого\\ символа:\\ (.+?)\\.\\ Каждый\\ показывает\\ свою\\ форму\\ \\-\\ лишний\\ удалите\\ или\\ скройте,\\ иначе\\ видны\\ две\\ формы\\ сразу\\.\$" to R.string.ui_more_instances_of_this_symbol_at_the,
-    "^Фон\\ «(.+?)»\\ залит\\ цветом\\ фона\\ проекта\\ и\\ заблокирован\\ \\(замок\\ снимается\\ в\\ списке\\ слоёв\\)\\.\\ В\\ проекте\\ с\\ PSD\\ он\\ ложится\\ над\\ слоями\\ PSD\$" to R.string.ui_background_is_filled_with_the_projec_2,
     "^Ключей:\\ (.+?)\\.\\ Ключ\\ времени\\ всегда\\ Hold:\\ символ\\ мгновенно\\ переключается\\ на\\ кадр\\ маркера\\ и\\ держит\\ его\\ до\\ следующего\\ ключа\\.\$" to R.string.ui_keys_a_time_key_is_always_hold_the_s,
     "^Transform\\ Layer\\ «Transform\\ (.+?)»:\\ привяжите\\ к\\ нему\\ слои\\ через\\ «Родитель»,\\ двигайте\\ и\\ вращайте\\ его\\ в\\ Свойствах\$" to R.string.ui_transform_layer_transform_link_layer,
     "^Кадр\\ \\(UI\\):\\ ср\\ (.+?)\\ /\\ p95\\ (.+?)\\ мс\\ ·\\ GL:\\ (.+?)\\ мс\\ ·\\ медленных\\ (.+?)%\\ ·\\ слоёв\\ (.+?),\\ вне\\ экрана\\ (.+?)\\ ·\\ FX\\ в\\ рамке\\ (.+?),\\ проходов\\ (.+?),\\ из\\ кэша\\ (.+?)\$" to R.string.ui_frame_ui_avg_p95_ms_gl_ms_slow_layer,
@@ -1395,6 +1400,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Нет\\ шрифтов:\\ (.+?)\\ \\-\\ текст\\ покажется\\ шрифтом\\ по\\ умолчанию\$" to R.string.ui_missing_fonts_the_text_will_use_the_,
     "^Редактирование\\ «(.+?)»:\\ правки\\ видны\\ во\\ всех\\ экземплярах\$" to R.string.ui_editing_changes_show_in_all_instance,
     "^Видео\\ (.+?)×(.+?),\\ (.+?)\\ кадров,\\ со\\ звуком\\ \\(AAC,\\ стерео\\ 44,1\\ кГц\\)\$" to R.string.ui_video_frames_with_sound_aac_stereo_4,
+    "^Группа\\ создана:\\ слоёв\\ (.+?)\\ \\(PSD\\ и\\ картинки\\ вперемешку\\)\$" to R.string.ui_group_created_layers_psd_and_images_,
     "^Проект\\ создан\\ в\\ более\\ новой\\ версии\\ приложения\\ \\(v(.+?)\\)\$" to R.string.ui_project_was_created_by_a_newer_app_v,
     "^Слишком\\ глубокая\\ вложенность\\ символов\\ \\(максимум\\ (.+?)\\)\$" to R.string.ui_symbols_are_nested_too_deeply_maximu,
     "^Холст\\ обрезан\\ до\\ (.+?)×(.+?)\\.\\ Отмена\\ через\\ Undo\\ недоступна\$" to R.string.ui_canvas_cropped_to_undo_is_unavailabl,
