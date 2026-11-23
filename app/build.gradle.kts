@@ -18,6 +18,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1"
+        // пакет 14: короткий хеш коммита сборки (в CI - GITHUB_SHA) - виден в окне экспорта, чтобы проверять, какая сборка установлена
+        buildConfigField("String", "BUILD_ID", "\"" + (System.getenv("GITHUB_SHA")?.take(7) ?: "local") + "\"")
 
         externalNativeBuild {
             cmake {
@@ -62,7 +64,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
 }
 
 dependencies {

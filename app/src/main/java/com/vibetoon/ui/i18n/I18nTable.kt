@@ -1248,6 +1248,12 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Выбрать другой файл" to R.string.ui_choose_another_file,
     "PSD откроется в новом проекте: слои загружаются" to R.string.ui_the_psd_opens_in_a_new_project_loadi,
     "Импорт отменён: проект удалён" to R.string.ui_import_undone_the_project_was_delete,
+    "Звук выключен - видео без звука" to R.string.ui_sound_is_off_the_video_will_be_silen,
+    "Все звуковые дорожки «Без звука» - видео без звука" to R.string.ui_all_sound_tracks_are_muted_the_video,
+    "Звук не попадает в экспортируемый отрезок - видео без звука" to R.string.ui_the_sound_is_outside_the_exported_ra,
+    "Громкость звука на нуле - видео без звука" to R.string.ui_sound_volume_is_at_zero_the_video_wi,
+    "Файл звука не найден в проекте - видео без звука" to R.string.ui_the_sound_file_is_missing_from_the_p,
+    "Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука" to R.string.ui_could_not_prepare_the_sound_the_file,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -1318,6 +1324,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Вставлено\\ ключей\\ времени:\\ (.+?)\$" to R.string.ui_time_keys_pasted,
     "^Общий\\ переход:\\ (.+?)\\ \\(ключей:\\ (.+?)\\)\$" to R.string.ui_shared_transition_keys,
     "^Интерполяция\\ всем\\ ключам:\\ (.+?)\$" to R.string.ui_interpolation_applied_to_all_keys,
+    "^Звуковых\\ дорожек\\ в\\ видео:\\ (.+?)\$" to R.string.ui_sound_tracks_in_the_video,
     "^Сетка\\ по\\ контуру:\\ (.+?)\\ вершин\$" to R.string.ui_outline_mesh_vertices,
     "^Кость\\ создана,\\ родитель:\\ (.+?)\$" to R.string.ui_bone_created_parent,
     "^Вставлено\\ из\\ библиотеки:\\ (.+?)\$" to R.string.ui_inserted_from_the_library,
@@ -1403,6 +1410,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Слоёв:\\ (.+?)\$" to R.string.ui_layers_2,
     "^Кость:\\ (.+?)\$" to R.string.ui_bone_3,
     "^Узлов:\\ (.+?)\$" to R.string.ui_nodes,
+    "^Сборка\\ (.+?)\$" to R.string.ui_build,
     "^Кость\\ (.+?)\$" to R.string.ui_bone_2,
     "^Слой:\\ (.+?)\$" to R.string.ui_layer,
     "^Пин\\ (.+?)/(.+?)\$" to R.string.ui_pin_3,

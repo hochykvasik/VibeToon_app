@@ -238,6 +238,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Удалённые записи PSD (слои и группы с потомками). */
     private var deletedPsd: Set<Int> = emptySet()
     private val audioEngine = AudioEngine()
+    private val _audioRevision = MutableStateFlow(0)
+    /** Пакет 14: меняется, когда дорожка декодирована (окно экспорта пересчитывает состояние звука). */
+    val audioRevision: StateFlow<Int> = _audioRevision.asStateFlow()
+
     private val _waveforms = MutableStateFlow<Map<Int, FloatArray>>(emptyMap())
     /** Пики громкости аудио-слоёв (100 значений в секунду) для волновой формы на таймлайне. */
     val waveforms: StateFlow<Map<Int, FloatArray>> = _waveforms.asStateFlow()
@@ -880,7 +884,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (pid == null) emptyMap() else media.filter { it.hasSoundTrack }.associate { it.id to projects.fileOf(pid, it.file) }
         )
         pushAudioMix()
-        audioEngine.onDecoded = { viewModelScope.launch { refreshWaveforms() } }
+        audioEngine.onDecoded = { viewModelScope.launch { refreshWaveforms(); fixAudioDurations(); _audioRevision.value++ } }
         refreshWaveforms()
     }
 
@@ -4299,9 +4303,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _export.value = ExportUi.Running(0, 1)
         viewModelScope.launch {
             try {
-                audioEngine.awaitAllDecoded()   // пакет 12: ждём декодирования вместо отказа
                 val range = exportRange()
-                val src = audioEngine.exportSources(::clipOf)
+                val src = prepareExportAudio(exportAudioStatus())   // пакет 14: то же правило, что у MP4 и окна экспорта
                 val mix = if (src.isEmpty()) null else withContext(Dispatchers.Default) {
                     val rate = audioEngine.mixSampleRate()
                     val len = range?.length ?: st.durationFrames
@@ -9932,10 +9935,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Пакет 12: снимок звука на момент запуска (дорожки, клипы, громкость, «Без звука»); отрезок - как у картинки
                 val audioStart = range?.start ?: 0
                 val audioLen = range?.length ?: st.durationFrames
-                val audioSrc = if (!withAudio) emptyList() else {
-                    audioEngine.awaitAllDecoded()
-                    audioEngine.exportSources(::clipOf).takeIf { com.vibetoon.domain.export.AudioMix.audibleIn(it, audioStart, audioLen) }.orEmpty()
-                }
+                val audioStatus = if (withAudio) exportAudioStatus() else null
+                val audioSrc = if (audioStatus == null) emptyList() else
+                    prepareExportAudio(audioStatus).takeIf { com.vibetoon.domain.export.AudioMix.audibleIn(it, audioStart, audioLen) }.orEmpty()
+                // звук был, но подготовить его не удалось - не молчим, а говорим об этом в итоге
+                val audioProblem = if (audioStatus?.ready == true && audioSrc.isEmpty()) "Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука" else null
                 val compatible = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("compatible_video_export", false)
                 view.exportVideo(
                     ExportSpec(w, h, fps, frames, file, compatible), bg, sceneAt,
@@ -9945,7 +9949,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         runCatching { restoreAfterExport() }
                         result.onSuccess {
                             try {
-                                var note: String? = null
+                                var note: String? = audioProblem
                                 if (audioSrc.isNotEmpty()) {
                                     _export.value = ExportUi.Running(0, 100, "Звук")
                                     val rate = audioEngine.mixSampleRate()
@@ -9989,7 +9993,68 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Пакет 12: есть ли в проекте звучащие дорожки (аудио или видео со звуком, не «Без звука») - для переключателя «Звук в видео». */
-    fun projectHasSound(): Boolean = media.any { it.hasSoundTrack && !it.muted && !(it.kind == MediaKind.VIDEO && videoWithoutSound(it.id)) }
+    fun projectHasSound(): Boolean = exportAudioStatus().hasTracks
+
+    /** Звуковые дорожки проекта (аудио и видео-слои) -> файлы: тот же список, что получает аудио-движок. */
+    private fun soundFiles(pid: String): Map<Int, java.io.File> =
+        com.vibetoon.domain.export.ExportAudio.soundItems(media).associate { it.id to projects.fileOf(pid, it.file) }
+
+    /**
+     * Пакет 14: звук для экспорта - одно правило для окна экспорта, MP4 и WAV: дорожки берутся из проекта,
+     * отрезок - как у картинки (весь проект или сцена).
+     */
+    fun exportAudioStatus(): com.vibetoon.domain.export.ExportAudio.Status {
+        val pid = projectId ?: return com.vibetoon.domain.export.ExportAudio.status(emptyList(), 0, 0)
+        val range = exportRange()
+        val items = com.vibetoon.domain.export.ExportAudio.soundItems(media)
+        val tracks = items.map { m ->
+            val f = projects.fileOf(pid, m.file)
+            com.vibetoon.domain.export.ExportAudio.Track(m.id, m.label, m.kind == MediaKind.VIDEO, m.muted, f.isFile && f.length() > 0,
+                audioEngine.hasNoAudio(f), clipOf(m.id), m.volKeys)
+        } + exportExtraTracks(items.mapTo(HashSet()) { it.id })
+        return com.vibetoon.domain.export.ExportAudio.status(tracks, range?.start ?: 0, range?.length ?: duration())
+    }
+
+    /**
+     * Пакет 14: у части MP3 (VBR без заголовка, нестандартные теги) метаданные не дают длительность, и дорожка получала
+     * клип в 1 кадр - звук обрывался, а экспорт видел её «вне отрезка». После декодирования длительность берётся из PCM.
+     */
+    private fun fixAudioDurations() {
+        val pid = projectId ?: return
+        var changed = false
+        for (i in media.indices) {
+            val m = media[i]
+            if (m.kind != MediaKind.AUDIO || m.durationMs > 0L || m.file.isBlank()) continue
+            val d = audioEngine.decodedDurationMs(projects.fileOf(pid, m.file))
+            if (d > 0L) { media[i] = m.copy(durationMs = d); changed = true }
+        }
+        if (!changed) return
+        val fps = _animation.value.settings.fps
+        _audio.value = media.filter { !it.isVisual }.map { AudioTrackInfo(it.id, it.name, ProjectMath.framesFor(it.durationMs, fps)) }
+        markDirty()
+    }
+
+    /** Дорожки, которые звучат при Play, но которых нет в списке звуковых слоёв проекта: тоже идут в экспорт (что слышно - то и в файле). */
+    private fun exportExtraTracks(known: Set<Int>): List<com.vibetoon.domain.export.ExportAudio.Track> =
+        audioEngine.sourceFiles().filterKeys { it !in known }.map { (id, f) ->
+            com.vibetoon.domain.export.ExportAudio.Track(id, f.name, false, id in audioEngine.muted, f.isFile && f.length() > 0, audioEngine.hasNoAudio(f), clipOf(id))
+        }
+
+    /**
+     * Источники сведения для экспорта: движок сверяется с проектом, нужные файлы декодируются (ждём до 2 минут),
+     * в сведение идут только дорожки, которые окно показало как звучащие. Пусто - звука нет.
+     */
+    private suspend fun prepareExportAudio(status: com.vibetoon.domain.export.ExportAudio.Status): List<com.vibetoon.domain.project.ScrubAudio.Source> {
+        val pid = projectId ?: return emptyList()
+        if (!status.ready) return emptyList()
+        val all = audioEngine.sourceFiles() + soundFiles(pid)
+        audioEngine.ensureSources(all)
+        pushAudioMix()
+        audioEngine.awaitDecoded(status.audibleIds.mapNotNull { all[it] })
+        val src = audioEngine.exportSources(::clipOf, status.audibleIds)
+        Log.i("VT/Export", "export audio: ${src.size}/${status.audibleCount} tracks ready")
+        return src
+    }
 
     fun cancelExport() { exportCancel.set(true) }
     fun dismissExport() { if (_export.value !is ExportUi.Running) _export.value = ExportUi.Idle }

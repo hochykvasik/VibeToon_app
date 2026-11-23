@@ -1405,4 +1405,12 @@
     <string name="ui_choose_another_file">Choose another file</string>
     <string name="ui_the_psd_opens_in_a_new_project_loadi">The PSD opens in a new project: loading layers</string>
     <string name="ui_import_undone_the_project_was_delete">Import undone: the project was deleted</string>
+    <string name="ui_sound_is_off_the_video_will_be_silen">Sound is off - the video will be silent</string>
+    <string name="ui_sound_tracks_in_the_video">Sound tracks in the video: {}</string>
+    <string name="ui_all_sound_tracks_are_muted_the_video">All sound tracks are muted - the video will be silent</string>
+    <string name="ui_the_sound_is_outside_the_exported_ra">The sound is outside the exported range - the video will be silent</string>
+    <string name="ui_sound_volume_is_at_zero_the_video_wi">Sound volume is at zero - the video will be silent</string>
+    <string name="ui_the_sound_file_is_missing_from_the_p">The sound file is missing from the project - the video will be silent</string>
+    <string name="ui_could_not_prepare_the_sound_the_file">Could not prepare the sound (the file cannot be decoded) - the video was saved without sound</string>
+    <string name="ui_build">Build {}</string>
 </resources>

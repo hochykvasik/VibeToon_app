@@ -1405,4 +1405,12 @@
     <string name="ui_choose_another_file">Выбрать другой файл</string>
     <string name="ui_the_psd_opens_in_a_new_project_loadi">PSD откроется в новом проекте: слои загружаются</string>
     <string name="ui_import_undone_the_project_was_delete">Импорт отменён: проект удалён</string>
+    <string name="ui_sound_is_off_the_video_will_be_silen">Звук выключен - видео без звука</string>
+    <string name="ui_sound_tracks_in_the_video">Звуковых дорожек в видео: {}</string>
+    <string name="ui_all_sound_tracks_are_muted_the_video">Все звуковые дорожки «Без звука» - видео без звука</string>
+    <string name="ui_the_sound_is_outside_the_exported_ra">Звук не попадает в экспортируемый отрезок - видео без звука</string>
+    <string name="ui_sound_volume_is_at_zero_the_video_wi">Громкость звука на нуле - видео без звука</string>
+    <string name="ui_the_sound_file_is_missing_from_the_p">Файл звука не найден в проекте - видео без звука</string>
+    <string name="ui_could_not_prepare_the_sound_the_file">Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука</string>
+    <string name="ui_build">Сборка {}</string>
 </resources>

@@ -1097,4 +1097,12 @@ PSD проекта уже разложен на слои; вставка дру�
 Выбрать другой файл|Choose another file
 PSD откроется в новом проекте: слои загружаются|The PSD opens in a new project: loading layers
 Импорт отменён: проект удалён|Import undone: the project was deleted
+Звук выключен - видео без звука|Sound is off - the video will be silent
+Звуковых дорожек в видео: {}|Sound tracks in the video: {}
+Все звуковые дорожки «Без звука» - видео без звука|All sound tracks are muted - the video will be silent
+Звук не попадает в экспортируемый отрезок - видео без звука|The sound is outside the exported range - the video will be silent
+Громкость звука на нуле - видео без звука|Sound volume is at zero - the video will be silent
+Файл звука не найден в проекте - видео без звука|The sound file is missing from the project - the video will be silent
+Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука|Could not prepare the sound (the file cannot be decoded) - the video was saved without sound
+Сборка {}|Build {}
 """

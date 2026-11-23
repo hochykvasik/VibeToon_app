@@ -72,7 +72,8 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
             var sequenceAlpha by remember { mutableStateOf(false) }
             var jpeg by remember { mutableStateOf(false) }
             // пакет 12: звук прямо в MP4 (по умолчанию включён, если в проекте есть звук)
-            val hasSound = remember { vm.projectHasSound() }
+            // пакет 14: состояние звука пересчитывается при смене «Только сцена» и когда дорожка декодирована
+            val audioRev by vm.audioRevision.collectAsStateWithLifecycle()
             var withAudio by remember { mutableStateOf(true) }
             // пакет 9: экспорт только сцены под плейхедом
             val scene = remember { vm.activeRange() ?: vm.currentScene() }
@@ -93,6 +94,8 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
             }
             vm.setExportSceneOnly(sceneOnly)
             val (w, h, frames) = vm.exportInfo(quality, exportFps)
+            val audio = remember(audioRev, sceneOnly) { vm.exportAudioStatus() }
+            val hasSound = audio.ready
             AlertDialog(
                 onDismissRequest = onHide,
                 shape = RoundedCornerShape(24.dp),
@@ -160,11 +163,16 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                                 }
                             }
                         }
-                        if (mode == ExportMode.VIDEO && hasSound) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
-                            androidx.compose.material3.Switch(checked = withAudio, onCheckedChange = { withAudio = it })
+                        // пакет 14: переключатель виден, если в проекте есть звуковые дорожки; недоступен, когда звучать нечему
+                        if (mode == ExportMode.VIDEO && audio.hasTracks) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                            androidx.compose.material3.Switch(checked = hasSound && withAudio, enabled = hasSound, onCheckedChange = { withAudio = it })
                             Text("Звук в видео", fontSize = 13.sp)
                         }
                         if (mode == ExportMode.VIDEO) Text(if (hasSound && withAudio) "Видео ${w}×$h, $frames кадров, со звуком (AAC, стерео 44,1 кГц)" else "Видео ${w}×$h, $frames кадров, без звука", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                        if (mode == ExportMode.VIDEO && audio.hasTracks) Text(com.vibetoon.domain.export.ExportAudio.label(audio, withAudio), fontSize = 12.sp,
+                            color = if (hasSound) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                        // пакет 14: какая сборка установлена (хеш коммита CI) - для сверки при проверке на телефоне
+                        Text("Сборка ${com.vibetoon.BuildConfig.BUILD_ID}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f), modifier = Modifier.padding(top = 6.dp))
                     }
                 },
                 confirmButton = {

@@ -191,11 +191,36 @@ class AudioEngine {
      * Пакет 12: источники сведения для экспорта (MP4 и WAV) - снимок PCM, клипов и ключей громкости;
      * дорожки «Без звука» и файлы без звуковой дорожки не входят. Пусто - звука нет или он не декодирован.
      */
-    fun exportSources(clipOf: (Int) -> Clip): List<com.vibetoon.domain.project.ScrubAudio.Source> =
+    fun exportSources(clipOf: (Int) -> Clip, only: Set<Int>? = null): List<com.vibetoon.domain.project.ScrubAudio.Source> =
         files.mapNotNull { (id, f) ->
-            if (id in muted || f in noAudio) null
+            if (id in muted || f in noAudio || (only != null && id !in only)) null
             else pcm[f]?.let { p -> com.vibetoon.domain.project.ScrubAudio.Source(p.data, p.sampleRate, p.channels, clipOf(id), volumes[id].orEmpty()) }
         }
+
+    /**
+     * Пакет 14: перед экспортом движок сверяется с проектом - дорожки, о которых он не знает (или знает со старым
+     * файлом), добавляются и декодируются; иначе окно видело звук, а сведение - нет.
+     */
+    fun ensureSources(map: Map<Int, File>) {
+        val merged = HashMap(files).apply { putAll(map) }   // только добавляем: то, что звучит при Play, не выкидываем
+        if (merged != files) setSources(merged)
+    }
+
+    /** Дорожки, которые сейчас звучат при Play и скраббинге (id -> файл). */
+    fun sourceFiles(): Map<Int, File> = HashMap(files)
+
+    /** Ждёт PCM именно этих файлов (не дольше [timeoutMs]); файлы без звука и ошибки декодирования пропускаются. */
+    suspend fun awaitDecoded(list: Collection<File>, timeoutMs: Long = 120_000) {
+        val todo = list.filter { it !in noAudio && !pcm.containsKey(it) }
+        if (todo.isEmpty()) return
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { for (f in todo) runCatching { awaitScrubReady(f) } }
+    }
+
+    /** Длительность декодированного файла (мс) или 0: у части MP3 (VBR без заголовка) метаданные длительности пустые. */
+    fun decodedDurationMs(f: File): Long = pcm[f]?.let { it.frames.toLong() * 1000 / it.sampleRate.coerceAtLeast(1) } ?: 0L
+
+    /** PCM файла готов (для сообщения, какой дорожке не хватило декодирования). */
+    fun isDecoded(f: File): Boolean = pcm.containsKey(f)
 
     /** Ждёт декодирования всех звучащих дорожек (не дольше [timeoutMs]); ошибки отдельных файлов не прерывают экспорт. */
     suspend fun awaitAllDecoded(timeoutMs: Long = 60_000) {
