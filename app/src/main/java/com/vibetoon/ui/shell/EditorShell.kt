@@ -31,6 +31,8 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onSizeChanged
+import com.vibetoon.ui.dragEdgeAutoScroll
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Arrangement
@@ -1116,7 +1118,19 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
     var dragDy by remember { mutableStateOf(0f) }
     var dragStartIdx by remember { mutableStateOf(0) }
     val rowPx = with(androidx.compose.ui.platform.LocalDensity.current) { 40.dp.toPx() }
-    val targetIdx = if (dragId == null) -1 else dragStartIdx + Math.round(dragDy / rowPx)
+    // Пакет 8: автопрокрутка списка при перетаскивании у верхнего/нижнего края (проекты на 60+ слоёв)
+    val listScroll = rememberScrollState()
+    var listViewportPx by remember { mutableStateOf(0) }
+    val rowsNow = androidx.compose.runtime.rememberUpdatedState(rows)
+    // строка-цель пересчитывается при каждом движении пальца, но панель (60+ строк) перекомпонуется только при смене цели
+    val targetIdx by remember(rowPx) {
+        androidx.compose.runtime.derivedStateOf {
+            if (dragId == null) -1 else com.vibetoon.domain.input.EdgeAutoScroll.targetIndex(dragStartIdx, dragDy, rowPx, rowsNow.value.size)
+        }
+    }
+    val dragScope = androidx.compose.runtime.rememberCoroutineScope()
+    val edgePx = with(androidx.compose.ui.platform.LocalDensity.current) { 56.dp.toPx() }
+    val maxStepPx = with(androidx.compose.ui.platform.LocalDensity.current) { 18.dp.toPx() }
     renameFor?.let { rid ->
         var nm by remember(rid) { mutableStateOf(vm.layerNameOrNull(rid) ?: "") }
         androidx.compose.material3.AlertDialog(
@@ -1171,7 +1185,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
             TextButton(onClick = { vm.setParent(null) }) { Text("Отвязать", fontSize = 11.sp) }
             if (bonesList.isEmpty()) Text("Костей нет: создайте кость инструментом «Кости»", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
         }
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+        Column(Modifier.weight(1f).fillMaxWidth().onSizeChanged { listViewportPx = it.height }.verticalScroll(listScroll)) {
             if (rows.isEmpty()) Text(
                 "Слоёв пока нет. Нажмите «+» вверху, чтобы добавить PSD, картинку, видео или текст.",
                 fontSize = 12.sp, modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -1271,10 +1285,16 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false)
                                     down.consume()
-                                    dragId = l.id; dragDy = 0f; dragStartIdx = rows.indexOfFirst { it.layer.id == l.id }
-                                    val lifted = drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() }
-                                    val steps = Math.round(dragDy / rowPx)
-                                    if (lifted && steps != 0) vm.dropLayer(l.id, rows.getOrNull(dragStartIdx + steps)?.layer?.id)
+                                    val list = rowsNow.value
+                                    dragId = l.id; dragDy = 0f; dragStartIdx = list.indexOfFirst { it.layer.id == l.id }
+                                    val downY = down.position.y
+                                    // палец у края окна списка - список едет сам, строка остаётся под пальцем
+                                    val auto = dragScope.dragEdgeAutoScroll(listScroll, { listViewportPx }, edgePx, maxStepPx,
+                                        { com.vibetoon.domain.input.EdgeAutoScroll.contentPos(dragStartIdx, rowPx, downY, dragDy) - listScroll.value }) { used -> dragDy += used }
+                                    val lifted = try { drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() } } finally { auto.cancel() }
+                                    val t = com.vibetoon.domain.input.EdgeAutoScroll.targetIndex(dragStartIdx, dragDy, rowPx, list.size)
+                                    val target = list.getOrNull(t)?.layer?.id
+                                    if (lifted && dragStartIdx >= 0 && t != dragStartIdx && target != null && target != l.id) vm.dropLayer(l.id, target)
                                     dragId = null; dragDy = 0f
                                 }
                             },
@@ -1439,8 +1459,29 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
         else com.vibetoon.ui.i18n.layerDisplayName(vm.layerNameOrNull(parent) ?: "#$parent", props[parent]?.name != null)
     val bound = remember(bone.id, links, rows, props, audio) { vm.boundLayers(bone.id, links) }
     val checker = com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true
+    // Пакет 8: имя кости («Предплечье») - видно на таймлайне и в списке костей, сохраняется в проекте, Undo/Redo
+    var renaming by remember(bone.id) { mutableStateOf(false) }
+    if (renaming) {
+        val shown = com.vibetoon.ui.i18n.boneDisplayName(bone.name)
+        var nm by remember(bone.id) { mutableStateOf(shown) }
+        val ok = com.vibetoon.domain.project.BoneRename.sanitize(nm, bone.name) != null && nm.trim() != shown
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text("Имя кости") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(value = nm, onValueChange = { nm = it.take(com.vibetoon.domain.project.BoneRename.MAX_LEN) }, singleLine = true,
+                    placeholder = { Text("Например: Предплечье") }, modifier = Modifier.fillMaxWidth())
+            },
+            confirmButton = { TextButton({ vm.renameBone(bone.id, nm); renaming = false }, enabled = ok) { Text("Готово") } },
+            dismissButton = { TextButton({ renaming = false }) { Text("Отмена") } }
+        )
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Кость: ${com.vibetoon.ui.i18n.boneDisplayName(bone.name)}", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Кость: ${com.vibetoon.ui.i18n.boneDisplayName(bone.name)}", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            IconButton(onClick = { renaming = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Edit, "Переименовать кость", modifier = Modifier.size(18.dp)) }
+        }
         Text("Длина: ${bone.length.toInt()} px", fontSize = 12.sp)
         Text("Родитель: $parentName", fontSize = 12.sp)
         Text("Привязано слоёв: ${bound.size}", fontSize = 12.sp)

@@ -8291,6 +8291,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         markDirty()
     }
 
+    /** Пакет 8: имя кости из свойств (видно на таймлайне и в списке костей, сохраняется в проекте, Undo/Redo). */
+    fun renameBone(id: Int, input: String) {
+        val b = _bones.value.firstOrNull { it.id == id } ?: return
+        val name = com.vibetoon.domain.project.BoneRename.sanitize(input, b.name) ?: return
+        checkpoint("bone-name", force = true)
+        _bones.value = com.vibetoon.domain.project.BoneRename.apply(_bones.value, id, name)
+        refreshBoneOverlay()
+        markDirty()
+    }
+
+    /**
+     * Пакет 8: выделение ключей с таймлайна (долгое нажатие, рамка, повторный тап). Если все выделенные ключи костей
+     * принадлежат одной кости - она становится выбранной, и свойства показывают её ключ (раньше оставалась прежняя кость).
+     */
+    fun selectKeysFocused(keys: Set<Pair<Int, Int>>) {
+        val focus = com.vibetoon.domain.anim.QuickDeselect.focusBone(keys, _bones.value.map { it.id })
+        if (focus != null && !_playing.value && selectedBone()?.id != focus) selectBoneRow(focus)
+        _keySel.value = keys
+        refreshInspector()
+    }
+
     // ---- ключи костей (пакет 7): ромбы ◆ на таймлайне и кнопки в свойствах кости
 
     /** Кадры ключей кости по возрастанию. */

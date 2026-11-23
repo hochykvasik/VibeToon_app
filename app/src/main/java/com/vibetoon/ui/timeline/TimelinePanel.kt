@@ -88,6 +88,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
+import com.vibetoon.ui.dragEdgeAutoScroll
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -307,6 +308,10 @@ fun TimelinePanel(
                 if (keySel.isEmpty()) (if (selectMode) "Рамкой по ключам" else "Ключи") else "Выбрано: ${keySel.size}",
                 fontSize = 12.sp, maxLines = 1, softWrap = false
             )
+            // пакет 8: снять выделение одним нажатием (раньше - только повторным долгим нажатием по каждому ключу)
+            if (keySel.isNotEmpty()) TextButton(onClick = vm::clearKeySelection, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
+                Text("✕ Снять выделение", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
             val keyBtn = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
             OutlinedButton(onClick = vm::copySelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::cutSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вырезать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -333,6 +338,9 @@ fun TimelinePanel(
         ) {
             val mb = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
             Text(if (markerSel.isEmpty()) "Маркеры" else "Маркеров: ${markerSel.size}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            if (markerSel.isNotEmpty()) TextButton(onClick = vm::clearMarkerSelection, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
+                Text("✕ Снять выделение", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
             OutlinedButton(onClick = vm::copySelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::cutSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Вырезать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::pasteMarkers, enabled = hasMarkerClip && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -340,7 +348,6 @@ fun TimelinePanel(
             OutlinedButton(onClick = vm::mirrorSelectedMarkers, enabled = markerSel.size >= 2 && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Зеркало", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::deleteSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
-            TextButton(onClick = vm::clearMarkerSelection, enabled = markerSel.isNotEmpty()) { Text("Снять", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
         // ---- Панель инструментов таймлайна ----
         if (!collapsed && (!phone || toolsOpen)) Row(
@@ -392,6 +399,7 @@ fun TimelinePanel(
         if (!collapsed) {
         // ---- Линейка и дерево слоёв ----
         val vScroll = rememberScrollState()
+        var vViewportPx by remember { mutableIntStateOf(0) }
         val rowPxScroll = with(LocalDensity.current) { ROW_H.toPx() }
         LaunchedEffect(selected) {
             val i = shownRows.indexOfFirst { it.layer.id == selected }
@@ -516,6 +524,8 @@ fun TimelinePanel(
                                 val hit = hitAt(pt.x)
                                 when {
                                     hit == null -> { vm.clearMarkerSelection(); vm.scrubTo((pt.x / frameWPx).roundToInt().coerceIn(0, duration - 1)) }
+                                    // пакет 8: повторный тап по выделенному маркеру снимает с него выделение
+                                    hit in mSelNow.value -> com.vibetoon.domain.anim.QuickDeselect.afterTap(mSelNow.value, hit)?.let { vm.selectMarkers(it) }
                                     multiNow.value -> vm.toggleMarkerSelected(hit)
                                     else -> { vm.selectMarkers(setOf(hit)); vm.scrubTo(hit) }
                                 }
@@ -582,6 +592,7 @@ fun TimelinePanel(
             Modifier
                 .fillMaxWidth()
                 .then(if (fill) Modifier.weight(1f) else Modifier.height(ROW_H * visibleRows))
+                .onSizeChanged { vViewportPx = it.height }
                 .verticalScroll(vScroll)
         ) {
             // Дерево слоёв: отступы по вложенности, группы сворачиваются тапом, длинные имена обрезаются
@@ -637,10 +648,15 @@ fun TimelinePanel(
                                     val down = awaitFirstDown(requireUnconsumed = false)
                                     down.consume()
                                     dragId = l.id; dragDy = 0f
-                                    val lifted = drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() }
-                                    if (lifted) {
-                                        val list = rowsForDrag.value
-                                        val t = list.getOrNull(list.indexOfFirst { it.layer.id == l.id } + Math.round(dragDy / rowPx))
+                                    val list = rowsForDrag.value
+                                    val start = list.indexOfFirst { it.layer.id == l.id }
+                                    val downY = down.position.y
+                                    // Пакет 8: палец у верхнего/нижнего края окна дорожек - список прокручивается сам
+                                    val auto = keyScope.dragEdgeAutoScroll(vScroll, { vViewportPx }, 40.dp.toPx(), 16.dp.toPx(),
+                                        { com.vibetoon.domain.input.EdgeAutoScroll.contentPos(start, rowPx, downY, dragDy) - vScroll.value }) { used -> dragDy += used }
+                                    val lifted = try { drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() } } finally { auto.cancel() }
+                                    if (lifted && start >= 0) {
+                                        val t = list.getOrNull(com.vibetoon.domain.input.EdgeAutoScroll.targetIndex(start, dragDy, rowPx, list.size))
                                         if (t != null && t.layer.id != l.id) vm.dropLayer(l.id, t.layer.id)
                                     }
                                     dragId = null; dragDy = 0f
@@ -687,7 +703,8 @@ fun TimelinePanel(
             val timeKeysNow = rememberUpdatedState(timeKeyMap)
             val layerRowIds = remember(shownRows) { shownRows.map { it.layer.id } }
             val layerRowIdsNow = rememberUpdatedState(layerRowIds)
-            val boneRowIdsNow = rememberUpdatedState(boneRows.map { it.id })
+            val boneRowIds = remember(boneRows) { boneRows.map { it.id } }
+            val boneRowIdsNow = rememberUpdatedState(boneRowIds)
             // строка ключей по индексу: сначала слои и группы, затем кости
             fun keyRowId(index: Int): Int? = com.vibetoon.domain.anim.BoneKeys.rowIdAt(index, layerRowIdsNow.value, boneRowIdsNow.value)
             fun keyRowCount() = layerRowIdsNow.value.size + boneRowIdsNow.value.size
@@ -712,20 +729,37 @@ fun TimelinePanel(
                                 val frameHit = rowId?.let { rowKeyFrames(it)
                                     .minByOrNull { f -> abs(f * frameWPx - down.position.x) }
                                     ?.takeIf { f -> abs(f * frameWPx - down.position.x) <= grab } }
-                                if (rowId == null || frameHit == null) return@awaitEachGesture
-                                val cancelled = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                // пакет 8: короткий тап по пустому месту дорожек снимает выделение ключей, по выделенному ключу -
+                                // снимает выделение с него; долгое нажатие, как раньше, добавляет ключ и тянет группу
+                                if ((rowId == null || frameHit == null) && keySelNow.value.isEmpty()) return@awaitEachGesture
+                                var tapUp: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                                val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
                                     while (true) {
                                         val ev = awaitPointerEvent(PointerEventPass.Initial)
                                         val c = ev.changes.firstOrNull { it.id == down.id }
+                                        if (c != null && !c.pressed && ev.changes.none { it.pressed }) { tapUp = c; return@withTimeoutOrNull TAP_UP }
                                         if (c == null || !c.pressed || ev.changes.count { it.pressed } != 1 ||
-                                            (c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull true
+                                            (c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull TAP_CANCEL
                                     }
-                                    @Suppress("UNREACHABLE_CODE") false
-                                } ?: false
-                                if (cancelled) return@awaitEachGesture
+                                    @Suppress("UNREACHABLE_CODE") TAP_CANCEL
+                                } ?: TAP_LONG
+                                if (rowId == null || frameHit == null) {
+                                    // пустое место: только тап снимает выделение, обычное действие тапа (выбор слоя) остаётся
+                                    if (outcome == TAP_UP) com.vibetoon.domain.anim.QuickDeselect.afterTap(keySelNow.value, null)?.let { vm.selectKeys(it) }
+                                    return@awaitEachGesture
+                                }
+                                if (outcome == TAP_UP) {
+                                    val next = com.vibetoon.domain.anim.QuickDeselect.afterTap(keySelNow.value, rowId to frameHit)
+                                    if (next != null && (rowId to frameHit) in keySelNow.value) {
+                                        tapUp?.consume()   // строка не получает тап: ключ просто снят с выделения
+                                        vm.selectKeys(next)
+                                    }
+                                    return@awaitEachGesture
+                                }
+                                if (outcome != TAP_LONG) return@awaitEachGesture
                                 val hit = rowId to frameHit
                                 val group = keySelNow.value + hit
-                                vm.selectKeys(group)
+                                vm.selectKeysFocused(group)
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 val low = group.minOf { it.second }
                                 val high = group.maxOf { it.second }
@@ -778,7 +812,8 @@ fun TimelinePanel(
                                         ?.let { rid to it }
                                 }
                                 val moving = hit != null
-                                if (hit != null && hit !in keySelNow.value) vm.selectKeys(setOf(hit))
+                                val wasPicked = hit != null && hit in keySelNow.value
+                                if (hit != null && hit !in keySelNow.value) vm.selectKeysFocused(setOf(hit))
                                 var applied = 0
                                 var dragged = false
                                 while (true) {
@@ -806,9 +841,11 @@ fun TimelinePanel(
                                 }
                                 keyDragDelta = 0
                                 if (moving && dragged && applied != 0) vm.moveSelectedKeys(applied, singleGesture = true)
+                                // пакет 8: повторный тап по выделенному ключу снимает с него выделение
+                                if (moving && !dragged && wasPicked && hit != null) com.vibetoon.domain.anim.QuickDeselect.afterTap(keySelNow.value, hit)?.let { vm.selectKeys(it) }
                                 val m = marquee.value
                                 if (!moving) {
-                                    if (dragged && m != null) vm.selectKeys(keysIn(m)) else vm.clearKeySelection()
+                                    if (dragged && m != null) vm.selectKeysFocused(keysIn(m)) else vm.clearKeySelection()
                                 }
                                 marquee.value = null
                             }
@@ -820,8 +857,8 @@ fun TimelinePanel(
                         // у группы тоже видны её собственные ключи (трансформация и Вращение/Качание/Ось растяжения группы)
                         val keys = animation.tracks[l.id]?.keys.orEmpty()
                         // ключи остальных дорожек слоя (Warp, вершины Mesh, пины, Perspective, Turbulent, эффекты): бледные ромбы
-                        val groupFrames = TrackGroups.frames(l.id, animation.tracks)
-                        val warpFrames = groupFrames - keys.mapTo(HashSet()) { it.frame }
+                        // пакет 8: считается при изменении анимации, а не при каждой перекомпоновке (60+ строк)
+                        val warpFrames = remember(animation, l.id) { TrackGroups.frames(l.id, animation.tracks) - keys.mapTo(HashSet()) { it.frame } }
                         val isSel = l.id in selection
                         val clip = clips[l.id] ?: vm.clipOf(l.id)
                         val clipNow = rememberUpdatedState(clip)
@@ -1055,6 +1092,11 @@ fun TimelinePanel(
  * Автопрокрутка у края: пока позиция пальца [pos] (в координатах содержимого таймлайна) ближе [edgePx] к краю окна,
  * таймлайн прокручивается в эту сторону со скоростью до [maxStepPx] за тик; [onMoved] получает реально пройденный путь.
  */
+// исход ожидания долгого нажатия по дорожкам ключей
+private const val TAP_UP = 0
+private const val TAP_CANCEL = 1
+private const val TAP_LONG = 2
+
 private fun CoroutineScope.edgeScroll(
     hScroll: ScrollState, viewportPx: () -> Int, edgePx: Float, maxStepPx: Float, pos: () -> Float, onMoved: (Float) -> Unit
 ): Job = launch {

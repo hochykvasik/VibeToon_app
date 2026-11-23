@@ -969,4 +969,8 @@ Hold - резкая смена формы. Плавно/Линейно - кад�
 Ключей кости в этом направлении нет|No bone keys in this direction
 Группа: Вращение, Качание и Ось растяжения работают у самой группы; остальные эффекты недоступны - цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка|Group: Spin, Swing and Stretch Axis work on the group itself; other effects are unavailable - the chains differ or there are unsupported layers, keys, clipping or locks
 Группа: Вращение, Качание и Ось растяжения - у самой группы (вокруг её пивота, ключи на строке группы); остальные эффекты - на вложенных слоях|Group: Spin, Swing and Stretch Axis apply to the group itself (around its pivot, keys on the group row); other effects go to the nested layers
+✕ Снять выделение|✕ Deselect
+Имя кости|Bone name
+Например: Предплечье|For example: Forearm
+Переименовать кость|Rename bone
 """

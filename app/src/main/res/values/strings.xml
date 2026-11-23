@@ -1278,4 +1278,8 @@
     <string name="ui_no_bone_keys_in_this_direction">Ключей кости в этом направлении нет</string>
     <string name="ui_group_spin_swing_and_stretch_axis_wo">Группа: Вращение, Качание и Ось растяжения работают у самой группы; остальные эффекты недоступны - цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка</string>
     <string name="ui_group_spin_swing_and_stretch_axis_ap">Группа: Вращение, Качание и Ось растяжения - у самой группы (вокруг её пивота, ключи на строке группы); остальные эффекты - на вложенных слоях</string>
+    <string name="ui_deselect_3">✕ Снять выделение</string>
+    <string name="ui_bone_name">Имя кости</string>
+    <string name="ui_for_example_forearm">Например: Предплечье</string>
+    <string name="ui_rename_bone">Переименовать кость</string>
 </resources>
