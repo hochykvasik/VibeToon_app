@@ -45,6 +45,10 @@ object RenderNative {
     external fun pendingUploadBytes(): Long
     /** Идёт жест камеры: результаты эффектов слоёв переиспользуются с преобразованием вида (после жеста - точный пересчёт). */
     external fun setInteractive(renderer: Long, on: Boolean)
+    /** Формы символов (см. SceneData.aliasIds); вызывается вместе со сценой из GL-потока. */
+    external fun setTextureAliases(renderer: Long, ids: IntArray, primary: IntArray, fallback: IntArray, rects: FloatArray)
+    /** Удалить текстуры форм символов (только GL-поток). */
+    external fun dropTextures(renderer: Long, ids: IntArray)
     /** Флаги [captureFrame]: теневые текстуры символа / не снимать, пока у видимых слоёв нет текстур (пустой результат). */
     const val CAPTURE_SHADOW = 1
     const val CAPTURE_STRICT = 2

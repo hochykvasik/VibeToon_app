@@ -919,4 +919,12 @@ Hold - резкая смена формы. Плавно/Линейно - кад�
 Маркеры не сдвинуты: на целевом кадре слоя «{}» уже есть другой рисунок|Markers not moved: layer “{}” already has another drawing on the target frame
 Маркеры отзеркалены: формы поменялись местами вместе с ними|Markers mirrored: their forms swapped places with them
 Не удалось нарисовать символ «{}»: прежняя картинка сохранена, повтор при следующем кадре|Could not draw symbol “{}”: the previous picture is kept, retrying on the next frame
+В выделении нет ключей: выделите ключи рамкой (кнопка выделения на таймлайне)|No keys in the selection: select keys with a marquee (selection button on the timeline)
+Выделенные формы ещё не выбраны ни одним ключом времени: выберите маркер в панели символа на сцене|No time key picks the selected forms yet: pick a marker in the symbol panel on the stage
+Кривая - для ключей слоёв; переход ключей времени символа задаётся кнопками «Переход»|The curve applies to layer keys; symbol time key transitions are set with the “Transition” buttons
+На том же месте ещё экземпляров этого символа: {}. Каждый показывает свою форму - лишний удалите или скройте, иначе видны две формы сразу.|More instances of this symbol at the same spot: {}. Each shows its own form - delete or hide the extra one, otherwise two forms are visible at once.
+Не хватает памяти GPU для всех форм символа: часть форм показывается с задержкой|Not enough GPU memory for all symbol forms: some forms appear with a delay
+Общая кривая: ключи времени символа|Shared curve: symbol time keys
+Общий переход: {} (ключей: {})|Shared transition: {} (keys: {})
+Переход от каждого выделенного ключа к следующему. Между разными формами символ всегда меняет форму резко (Hold) - промежуточные формы не показываются.|Transition from each selected key to the next. Between different forms the symbol always switches sharply (Hold) - intermediate forms are never shown.
 """

@@ -75,6 +75,70 @@ object SymbolForms {
     fun labelFor(markers: List<FrameMarker>, value: Int): FrameMarker? =
         markers.firstOrNull { !it.isAlias && it.frame == value } ?: markers.firstOrNull { it.target == value }
 
+    /** Начало формы, в которую попадает внутренний кадр [v]: последний реальный маркер с кадром <= v (null - до первого маркера). */
+    fun formStart(markers: List<FrameMarker>, v: Int): Int? = markers.filter { !it.isAlias && it.frame <= v }.maxOfOrNull { it.frame }
+
+    /**
+     * Внутренний кадр экземпляра на кадре сцены [f] для символа с формами (маркерами). Переход Linear/Smooth между ключами,
+     * указывающими на РАЗНЫЕ формы, проигрывал бы промежуточные кадры символа - то есть чужие формы (рот «перескакивал» на
+     * случайные формы). Поэтому такой сегмент ведёт себя как Hold: форма меняется ровно на кадре следующего ключа.
+     * Плавный переход внутри одной формы (анимированная форма) и символы без маркеров работают как раньше.
+     */
+    fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, loop: Boolean, markers: List<FrameMarker>): Int {
+        if (keys.size >= 2 && markers.any { !it.isAlias }) {
+            val ks = keys.sortedBy { it.frame }
+            val i = ks.indexOfLast { it.frame <= f }
+            if (i >= 0 && i + 1 < ks.size) {
+                val a = ks[i]; val b = ks[i + 1]
+                if (a.ease != TimeEase.HOLD && a.value != b.value && formStart(markers, a.value) != formStart(markers, b.value))
+                    return a.value.coerceIn(0, maxOf(0, duration - 1))
+            }
+        }
+        return SymbolMath.instanceFrame(keys, f, duration, animated, loop)
+    }
+
+    /**
+     * Маркер формы, которую символ показывает на внутреннем кадре [shown] (для подсветки в панели «Выбрать маркер»):
+     * обычный маркер, в чей отрезок попадает кадр. Панель и холст считают форму одной функцией - рамка не «убегает».
+     */
+    fun shownMarker(markers: List<FrameMarker>, shown: Int): FrameMarker? {
+        val start = formStart(markers, shown) ?: return null
+        return markers.firstOrNull { !it.isAlias && it.frame == start }
+    }
+
+    /**
+     * Короткие подписи форм для таймлайна и панели: общий для всех имён префикс из целых слов убирается
+     * («Обычный слой 30», «Обычный слой 31» -> «30», «31»). Если после этого имя пустое - остаётся исходное.
+     */
+    fun compactLabels(names: Collection<String>): Map<String, String> {
+        val distinct = names.distinct()
+        if (distinct.size < 2) return distinct.associateWith { it }
+        val split = distinct.map { it.trim().split(Regex("\\s+")) }
+        var common = 0
+        // у каждого имени остаётся хотя бы одно слово
+        while (split.all { it.size > common + 1 } && split.all { it[common] == split[0][common] }) common++
+        return distinct.zip(split).associate { (n, w) -> n to w.drop(common).joinToString(" ").ifBlank { n } }
+    }
+
+    /**
+     * Рамка непрозрачного содержимого (ARGB, строка 0 - верх) с запасом [pad] пикселей: форма символа хранится обрезанной
+     * (рот - это несколько процентов холста, а снимок - весь холст в 2x). null - полностью прозрачно.
+     */
+    fun opaqueBounds(pixels: IntArray, w: Int, h: Int, pad: Int = 2): IntArray? {
+        var l = w; var t = h; var r = -1; var b = -1
+        for (y in 0 until h) {
+            val row = y * w
+            for (x in 0 until w) if ((pixels[row + x] ushr 24) != 0) {
+                if (x < l) l = x
+                if (x > r) r = x
+                if (y < t) t = y
+                if (y > b) b = y
+            }
+        }
+        if (r < 0) return null
+        return intArrayOf(maxOf(0, l - pad), maxOf(0, t - pad), minOf(w, r + 1 + pad), minOf(h, b + 1 + pad))
+    }
+
     /**
      * Уникальное имя для обычного маркера на кадре [frame]: одинаковые имена у разных форм путали выбор («Обычный» x3).
      * Ссылки на ту же форму имя разделяют - это та же форма.

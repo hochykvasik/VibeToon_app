@@ -11,6 +11,7 @@
 #include "render/GlState.h"
 #include "render/CanvasClipPolicy.h"
 #include "render/FxCachePolicy.h"
+#include "render/TexAlias.h"
 #include "render/UploadQueue.h"
 #include <EGL/egl.h>
 #include <chrono>
@@ -796,8 +797,9 @@ const uint8_t* Renderer::layerAlpha(int layerId, int& w, int& h) const {
 }
 
 bool Renderer::layerThumb(int layerId, int size, std::vector<uint8_t>& out) {
-    const auto t = textures_.find(layerId);
-    if (t == textures_.end() || t->second.w <= 0 || t->second.h <= 0 || size < 4 || !progTex_) return false;
+    float rect[4];
+    const Tex* tp = resolveTex(layerId, rect);   // экземпляр символа: миниатюра текущей формы
+    if (!tp || tp->w <= 0 || tp->h <= 0 || size < 4 || !progTex_) return false;
     GLint prevFbo = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     GLint prevVp[4];
@@ -816,14 +818,14 @@ bool Renderer::layerThumb(int layerId, int size, std::vector<uint8_t>& out) {
         glClearColor(0.f, 0.f, 0.f, 0.f);
         glClear(GL_COLOR_BUFFER_BIT);
         // вписываем по длинной стороне: единичный квадрат -> прямоугольник в NDC
-        const float aw = static_cast<float>(t->second.w), ah = static_cast<float>(t->second.h);
+        const float aw = static_cast<float>(tp->w), ah = static_cast<float>(tp->h);
         const float sx = aw >= ah ? 1.f : aw / ah, sy = ah >= aw ? 1.f : ah / aw;
         const GLfloat mvp[9] = {2.f * sx, 0.f, 0.f, 0.f, 2.f * sy, 0.f, -sx, -sy, 1.f};
         glBindVertexArray(vao_);
         const int saveMesh = 0;
         (void)saveMesh;
         curMesh_ = nullptr; curPersp_ = nullptr; curTurb_ = nullptr;
-        drawTexture(t->second.id, mvp, 1.f, kNormal, false);
+        drawTexture(tp->id, mvp, 1.f, kNormal, false);
         out.assign(static_cast<size_t>(size) * size * 4, 0);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, size, size, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
@@ -907,11 +909,14 @@ int Renderer::hitTest(float sx, float sy) const {
         }
         if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) continue;
         if (it.flags & kFlagHitBbox) return it.layerId;   // текст: достаточно попасть в рамку
-        auto t = textures_.find(it.layerId);
-        if (t == textures_.end() || t->second.alpha.empty()) continue;
-        const Tex& tex = t->second;
-        const int tx = std::min(tex.w - 1, static_cast<int>(u * tex.w));
-        const int ty = std::min(tex.h - 1, static_cast<int>(v * tex.h));
+        float rr[4];
+        const Tex* tp = resolveTex(it.layerId, rr);
+        if (!tp || tp->alpha.empty()) continue;
+        const Tex& tex = *tp;
+        float su = 0.f, sv = 0.f;
+        if (!texalias::toForm(u, v, rr, su, sv)) continue;   // форма символа - в своём под-прямоугольнике
+        const int tx = std::min(tex.w - 1, static_cast<int>(su * tex.w));
+        const int ty = std::min(tex.h - 1, static_cast<int>(sv * tex.h));
         if (tex.alpha[static_cast<size_t>(ty) * tex.w + tx] > 20) return it.layerId;
     }
     return -1;
@@ -969,12 +974,67 @@ void Renderer::setInteractive(bool on) {
 }
 
 const Renderer::Tex* Renderer::findTex(int layerId) const {
+    float rect[4];
+    return resolveTex(layerId, rect);
+}
+
+const Renderer::Tex* Renderer::resolveTex(int layerId, float rect[4]) const {
+    rect[0] = 0.f; rect[1] = 0.f; rect[2] = 1.f; rect[3] = 1.f;
     if (useShadows_) {
         const auto s = shadowTex_.find(layerId);
         if (s != shadowTex_.end()) return &s->second;
     }
+    if (!aliases_.empty()) {
+        const auto a = aliases_.find(layerId);
+        if (a != aliases_.end()) {
+            const TexAlias& al = a->second;
+            if (al.primary >= 0) {
+                const auto p = textures_.find(al.primary);
+                if (p != textures_.end()) { for (int i = 0; i < 4; ++i) rect[i] = al.pr[i]; return &p->second; }
+            }
+            if (al.fallback >= 0) {
+                const auto f = textures_.find(al.fallback);
+                if (f != textures_.end()) { for (int i = 0; i < 4; ++i) rect[i] = al.fr[i]; return &f->second; }
+            }
+        }
+    }
     const auto t = textures_.find(layerId);
     return t == textures_.end() ? nullptr : &t->second;
+}
+
+void Renderer::setTextureAliases(const int* ids, const int* prim, const int* fallback, const float* rects, int n) {
+    std::unordered_map<int, TexAlias> next;
+    for (int i = 0; i < n; ++i) {
+        TexAlias a;
+        a.primary = prim[i];
+        a.fallback = fallback[i];
+        for (int k = 0; k < 4; ++k) {
+            a.pr[k] = rects[i * 8 + k];
+            a.fr[k] = rects[i * 8 + 4 + k];
+        }
+        texalias::sanitize(a.pr);   // вырожденный прямоугольник - весь квадрат
+        texalias::sanitize(a.fr);
+        next[ids[i]] = a;
+    }
+    bool same = next.size() == aliases_.size();
+    if (same) for (const auto& kv : next) {
+        const auto o = aliases_.find(kv.first);
+        if (o == aliases_.end() || o->second.primary != kv.second.primary || o->second.fallback != kv.second.fallback) { same = false; break; }
+    }
+    aliases_.swap(next);
+    if (!same) { bumpEpoch(); for (int i = 0; i < n; ++i) dropFxEntry(ids[i]); }
+}
+
+void Renderer::dropTextures(const int* ids, int n) {
+    for (int i = 0; i < n; ++i) {
+        droppedTex_.insert(ids[i]);
+        const auto t = textures_.find(ids[i]);
+        if (t == textures_.end()) continue;
+        glDeleteTextures(1, &t->second.id);
+        textureBytes_ -= std::min(textureBytes_, t->second.bytes);
+        textures_.erase(t);
+    }
+    if (n > 0) bumpEpoch();
 }
 
 // Отдельная проверяемая замена; не изменяет прежнюю текстуру при отказе.
@@ -1065,6 +1125,7 @@ void Renderer::uploadPending() {
     PendingUpload up;
     while (uploaded < kUploadBytesPerFrame && uploadQueue::pop(up)) {
         const size_t bytes = static_cast<size_t>(up.width) * up.height * 4 * 4 / 3;  // с mip
+        if (!droppedTex_.empty() && droppedTex_.count(up.layerId)) continue;   // форма уже удалена - загрузка опоздала
         auto old = textures_.find(up.layerId);
         // Старую текстуру держим до успешного создания новой: бюджет учитывает пик обеих.
         if (up.width <= 0 || up.height <= 0 || bytes > kTextureBudgetBytes ||
@@ -1510,21 +1571,29 @@ void Renderer::restoreCanvasScissor() {
 }
 
 void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool clipMode) {
-    const Tex* t = findTex(it.layerId);
+    float rect[4];
+    const Tex* t = resolveTex(it.layerId, rect);
     if (!t) {   // текстура ещё не загружена
         if (it.opacity > 0.001f) ++stats_.missing;
         return;
+    }
+    // Форма символа, обрезанная по содержимому: рисуется в своём под-прямоугольнике квадрата экземпляра.
+    float sub[6];
+    const float* M = it.m;
+    if (!texalias::isFull(rect)) {
+        texalias::subRect(it.m, rect, sub);
+        M = sub;
     }
     // Отсечение: слой без деформаций целиком вне цели не рисуется (зум/панорама на большом холсте).
     if (!meshes_.count(it.layerId) && !warps_.count(it.layerId) && !persps_.count(it.layerId)) {
         float va[6];
         viewAffine(va);
-        const ScreenRect r = layerScreenRect(va, it.m);
+        const ScreenRect r = layerScreenRect(va, M);
         if (r.empty() || outsideTarget(expand(r, 1.f), static_cast<float>(width_), static_cast<float>(height_))) { ++stats_.culled; return; }
     }
     ++stats_.drawn;
     GLfloat mvp[9];
-    mvpFor(it.m, mvp);
+    mvpFor(M, mvp);
     const auto m = meshes_.find(it.layerId);
     curMesh_ = m == meshes_.end() ? nullptr : &m->second;   // Mesh приоритетнее Warp
     const auto pp = persps_.find(it.layerId);

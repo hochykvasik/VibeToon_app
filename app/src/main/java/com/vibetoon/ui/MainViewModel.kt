@@ -62,6 +62,7 @@ import com.vibetoon.domain.project.FrameCell
 import com.vibetoon.domain.project.FrameMath
 import com.vibetoon.domain.project.FrameMarker
 import com.vibetoon.domain.project.MAX_SYMBOL_DEPTH
+import com.vibetoon.domain.project.SymbolFormCache
 import com.vibetoon.domain.project.SymbolForms
 import com.vibetoon.domain.project.SymbolMath
 import com.vibetoon.domain.project.TimeKey
@@ -79,6 +80,7 @@ import com.vibetoon.domain.render.Camera
 import com.vibetoon.domain.render.LayerTransform
 import com.vibetoon.domain.render.SceneBuilder
 import com.vibetoon.domain.render.SceneData
+import com.vibetoon.domain.render.TextureAliases
 import com.vibetoon.nativebridge.LayerInfo
 import com.vibetoon.nativebridge.LayerKind
 import com.vibetoon.nativebridge.PsdNative
@@ -551,6 +553,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _loop.value = true; _magnet.value = false; vecLayer = -1; vecPts.clear(); vecGen.clear()
         markerThumbJobs.values.toList().forEach { it.cancel() }; markerThumbJobs.clear()
         _markerThumbs.value = emptyMap()
+        resetForms(dropTextures = true)
         thumbGen++; thumbs.clear(); thumbPending.clear()   // миниатюры прошлого проекта не должны всплывать у новых слоёв
         stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null
         paintSizes.clear(); paintDirty.clear(); versionedRasterIds.clear(); mediaIds.reset()
@@ -688,7 +691,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             kotlinx.coroutines.delay(350)
             if (appBackground) return@launch
-            symTries.clear(); symWaits.clear()
+            formWaits.clear(); formFails.clear()
             updateSymbols(_frame.value)
         }
     }
@@ -707,7 +710,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         restoreJob = viewModelScope.launch {
             kotlinx.coroutines.delay(150)   // несколько пересозданий подряд (поворот, возврат) - один restore
             if (projectId != pid) return@launch
-            symShown.clear(); cellShown.clear(); textFxKeys.clear()
+            resetForms(dropTextures = false)   // текстуры форм жили в старом контексте
+            cellShown.clear(); textFxKeys.clear()
             runCatching { restoreMediaTextures(pid) }
             if (projectId != pid) return@launch
             updateCells(_frame.value); updateTextFx(_frame.value); updateSymbols(_frame.value)
@@ -1730,12 +1734,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return out.toList()
     }
 
+    private val _timeEaseDialog = MutableStateFlow(false)
+    /** Диалог «Общая кривая» для ключей времени символов (общий переход для всех выделенных). */
+    val timeEaseDialog: StateFlow<Boolean> = _timeEaseDialog.asStateFlow()
+
+    private fun selectedTimeKeyTargets(): Map<Int, Set<Int>> {
+        val all = media.filter { it.kind == MediaKind.SYMBOL && it.timeKeys.isNotEmpty() }
+        val direct = com.vibetoon.domain.anim.SelectedKeyCurves.timeKeyTargets(_keySel.value, all.associate { it.id to it.timeKeys })
+        if (direct.isNotEmpty()) return direct
+        // выделены маркеры (формы) открытого символа: ключи времени его экземпляров, выбирающие эти формы
+        val def = _editingSymbol.value ?: return emptyMap()
+        val forms = _symMarkers.value.filter { it.frame in _markerSel.value }.mapTo(HashSet()) { it.target }
+        if (forms.isEmpty()) return emptyMap()
+        return com.vibetoon.domain.anim.SelectedKeyCurves.markerTimeKeyTargets(forms, all.filter { it.symRef == def }.associate { it.id to it.timeKeys })
+    }
+
     fun openSelectedCurveEditor() {
         if (_playing.value) return
         val targets = com.vibetoon.domain.anim.SelectedKeyCurves.targets(_animation.value, _keySel.value)
-        if (targets.isEmpty()) { _state.value = UiState.Message("В выделении нет ключей"); return }
+        val timeTargets = selectedTimeKeyTargets()
+        if (targets.isEmpty() && timeTargets.isEmpty()) {
+            _state.value = UiState.Message(
+                if (_editingSymbol.value != null && _markerSel.value.isNotEmpty()) "Выделенные формы ещё не выбраны ни одним ключом времени: выберите маркер в панели символа на сцене"
+                else "В выделении нет ключей: выделите ключи рамкой (кнопка выделения на таймлайне)"); return
+        }
+        if (targets.isEmpty()) { _timeEaseDialog.value = true; return }   // только ключи времени символа: общий переход
         selectedCurveTargets = targets
         _curveEditor.value = true
+        if (timeTargets.isNotEmpty()) _state.value = UiState.Message("Кривая - для ключей слоёв; переход ключей времени символа задаётся кнопками «Переход»")
+    }
+
+    fun closeTimeEaseDialog() { _timeEaseDialog.value = false }
+
+    /** Общий переход [ease] для всех выделенных ключей времени (всех экземпляров), одной записью Undo. */
+    fun applyTimeEaseToSelection(ease: Int) {
+        _timeEaseDialog.value = false
+        if (_playing.value) return
+        val t = selectedTimeKeyTargets()
+        if (t.isEmpty()) { _state.value = UiState.Message("В выделении нет ключей"); return }
+        checkpoint("timeease", force = true)
+        for ((inst, frames) in t) {
+            val i = media.indexOfFirst { it.id == inst }
+            if (i >= 0) media[i] = media[i].copy(timeKeys = TimelineItemOps.withEase(media[i].timeKeys, frames, ease))
+        }
+        refreshSymbolState(); markDirty(); updateSymbols(_frame.value)
+        _state.value = UiState.Message("Общий переход: ${timeEaseName(ease)} (ключей: ${t.values.sumOf { it.size }})")
     }
 
     fun openCurveEditor(on: Boolean) {
@@ -1821,6 +1864,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = UiState.Message("Деформация пропущена: неподдерживаемое содержимое или область")
             buildEditorScene(useGroups = false, dense = emptyMap())
         }
+        // формы символов едут вместе со сценой: на любом кадре экземпляр показывает форму именно этого кадра
+        if (projectId != null && !appBackground) sc.aliases = buildAliases(_frame.value)
         scene = sc
         RenderHost.view?.setScene(sc)
         // Во время Play панели (инспектор, эффекты, турбулентность) не пересчитываются каждый кадр: их перерисовка в Compose
@@ -2270,7 +2315,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun restore(snap: Snapshot) {
         val oldMedia = media.toList()
         lastCheckKey = null
-        symShown.clear()
         base.clear(); base.putAll(snap.base)
         override.clear()
         _animation.value = snap.animation
@@ -2305,6 +2349,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val keep = _selection.value.filter { it in known }.toSet()
         _frame.value = _frame.value.coerceAtMost(snap.animation.settings.durationFrames - 1)
         applySelection(keep, if (_selected.value in keep) _selected.value else keep.lastOrNull())
+        refreshSymbolState()
+        invalidateFormsIfChanged()   // Undo/Redo ключей времени формы не пересъёмка; правка содержимого символа - пересъёмка
         pushScene()
         // текст, у которого изменилось содержимое, перерисовывается заново
         val changedText = media.filter { m ->
@@ -2593,10 +2639,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- символы (вложенные сцены), маркеры кадров и Time Remapping ----
 
-    /** Какой экземпляр символа в какой внутренний кадр уже отрисован в его текстуру. */
-    private val symShown = java.util.concurrent.ConcurrentHashMap<Int, Int>()
-    private val symBusy = HashSet<Int>()
-    private val symTries = HashMap<Int, Int>()
     private val _editingSymbol = MutableStateFlow<Int?>(null)
     /** Id группы-определения символа, открытого на редактирование; null - главная сцена. */
     val editingSymbol: StateFlow<Int?> = _editingSymbol.asStateFlow()
@@ -2713,12 +2755,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * самопроизвольное перелистывание форм).
      */
     private fun symbolKey(inst: MediaItem, def: MediaItem, f: Int): Int =
-        SymbolMath.instanceFrame(inst.timeKeys, f, def.symDur, inst.symLoop && symbolCycles(def.id), inst.symLoop)
+        SymbolForms.frameAt(inst.timeKeys, f, def.symDur, inst.symLoop && symbolCycles(def.id), inst.symLoop, def.markers)
 
     /** Экземпляру нужны все внутренние кадры (цикл или плавный переход между ключами), а не только кадры ключей. */
     private fun needsAllFrames(inst: MediaItem, def: MediaItem): Boolean =
         (inst.timeKeys.isEmpty() && inst.symLoop && symbolCycles(def.id)) ||
-            inst.timeKeys.sortedBy { it.frame }.zipWithNext().any { (a, b) -> a.ease != TimeEase.HOLD && a.value != b.value }
+            inst.timeKeys.sortedBy { it.frame }.zipWithNext().any { (a, b) ->
+                // переход между разными формами - Hold (SymbolForms.frameAt): промежуточные кадры не нужны
+                a.ease != TimeEase.HOLD && a.value != b.value &&
+                    (def.markers.none { !it.isAlias } || SymbolForms.formStart(def.markers, a.value) == SymbolForms.formStart(def.markers, b.value))
+            }
 
     private fun computeSymbolDuration(gid: Int): Int {
         val mem = symbolMembers(gid)
@@ -2741,63 +2787,293 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return maxOf(1, (canvasW * k).toInt()) to maxOf(1, (canvasH * k).toInt())
     }
 
-    /** Подставляет в экземпляры символов картинку вложенной сцены на кадре [f]. */
+    // ---- формы символов: готовая текстура на каждую форму, экземпляр на кадре просто показывает нужную ----
+    //
+    // Раньше каждая смена формы снималась заново и асинхронно заливалась в текстуру экземпляра: при Play и скраббинге
+    // холст отставал от таймлайна (рамка в панели маркеров уже на новой форме, а рот старый или «случайный» - тот, чей
+    // снимок закончился последним). Теперь каждая форма (символ, внутренний кадр) снимается один раз в свою текстуру,
+    // а сцена каждого кадра несёт таблицу «экземпляр -> текстура формы» (SceneData.aliases). Таблица и сцена
+    // применяются в GL одним кадром, поэтому на любом кадре видна ровно одна форма - та, что задана ключом.
+
+    private val FORM_BUDGET_BYTES = 72L * 1024 * 1024   // формы символов на GPU (общий бюджет текстур рендерера - 192 МБ)
+    private val FORM_MAX_BYTES = 12L * 1024 * 1024      // одна форма после обрезки
+    private val FORM_TEX_BASE = 1_500_000_000            // id текстур форм: не пересекаются с id слоёв, не переиспользуются
+    private val formCache = SymbolFormCache(FORM_BUDGET_BYTES)
+    private val formQueue = ArrayDeque<SymbolFormCache.Key>()
+    private var formWorker: kotlinx.coroutines.Job? = null
+    private val formShown = HashMap<Int, SymbolFormCache.Key>()   // экземпляр -> последняя показанная форма (запасная картинка)
+    private val formWaits = HashMap<SymbolFormCache.Key, Int>()
+    private val formFails = HashMap<SymbolFormCache.Key, Int>()
+    private var nextFormTexId = FORM_TEX_BASE
+    private var formSignature = 0
+    private var formBudgetWarned = false
+
+    /** Экземпляры, видимые в текущем контексте: на главной сцене - верхнего уровня, в открытом символе - вложенные в него. */
+    private fun formInstances(): List<Pair<MediaItem, MediaItem>> {
+        val ctx = _editingSymbol.value
+        val pool = if (ctx != null) {
+            val mem = symbolMembers(ctx)
+            media.filter { it.kind == MediaKind.SYMBOL && it.id in mem }
+        } else {
+            val inside = HashSet<Int>()
+            for (d in media) if (d.kind == MediaKind.GROUP && d.symDur > 0) inside += symbolMembers(d.id)
+            media.filter { it.kind == MediaKind.SYMBOL && it.id !in inside }
+        }
+        return pool.mapNotNull { inst -> media.firstOrNull { it.id == inst.symRef && it.symDur > 0 }?.let { inst to it } }
+    }
+
+    /** Форму можно хранить обрезанной, только если экземпляр не деформирован (сетка/варп/перспектива берут весь квадрат). */
+    private fun formCrop(instId: Int): Boolean = instId !in meshLayers && instId !in warpLayers && instId !in perspLayers && instId !in turbLayers
+
+    private fun formKey(inst: MediaItem, def: MediaItem, f: Int) = SymbolFormCache.Key(def.id, symbolKey(inst, def, f), formCrop(inst.id))
+
+    /** Таблица форм для сцены кадра [f]; недостающие формы ставятся в очередь (текущий кадр - первым). */
+    private fun buildAliases(f: Int): TextureAliases {
+        val list = formInstances()
+        if (list.isEmpty()) return TextureAliases.EMPTY
+        val ids = IntArray(list.size); val prim = IntArray(list.size); val fb = IntArray(list.size); val rects = FloatArray(list.size * 8)
+        for ((i, p) in list.withIndex()) {
+            val (inst, def) = p
+            val key = formKey(inst, def, f)
+            ids[i] = inst.id
+            val fresh = formCache.fresh(key)
+            if (fresh == null) requestForm(key, urgent = true)
+            // запасная картинка: прошлая форма этого экземпляра, иначе любая готовая форма символа (не пустота)
+            val back = formShown[inst.id]?.let { k -> formCache.any(k)?.let { k to it } } ?: formCache.any(key)?.let { key to it } ?: formCache.anyOf(def.id, key.crop)
+            val main = fresh ?: back?.second
+            prim[i] = main?.texId ?: -1
+            fb[i] = back?.second?.texId ?: -1
+            main?.rect?.copyInto(rects, i * 8)
+            back?.second?.rect?.copyInto(rects, i * 8 + 4)
+            if (fresh != null) formShown[inst.id] = key
+            if (_playing.value) {   // упреждение: формы ближайших кадров снимаются заранее
+                val step = maxOf(1, _animation.value.settings.fps / 8)
+                for (d in 1..8) requestForm(formKey(inst, def, f + d * step), urgent = false)
+            }
+        }
+        return TextureAliases(ids, prim, fb, rects)
+    }
+
+    /** Формы на экране сейчас (не вытесняются по бюджету). */
+    private fun pinnedForms(): Set<SymbolFormCache.Key> {
+        val out = HashSet<SymbolFormCache.Key>(formShown.values)
+        val f = _frame.value
+        for ((inst, def) in formInstances()) out += formKey(inst, def, f)
+        return out
+    }
+
+    private fun requestForm(key: SymbolFormCache.Key, urgent: Boolean) {
+        if (formCache.fresh(key) != null || (formFails[key] ?: 0) >= 3) return
+        if (urgent) { formQueue.remove(key); formQueue.addFirst(key) } else if (key !in formQueue) formQueue.addLast(key)
+        kickFormWorker()
+    }
+
+    /** Переставить таблицу форм в текущую сцену (форма готова / ключи времени изменились) без пересборки сцены. */
+    private fun refreshFormAliases() {
+        val sc = scene ?: return
+        val a = buildAliases(_frame.value)
+        val o = sc.aliases
+        if (a.ids contentEquals o.ids && a.primary contentEquals o.primary && a.fallback contentEquals o.fallback && a.rects contentEquals o.rects) return
+        sc.aliases = a
+        RenderHost.view?.setScene(sc)
+    }
+
+    /** Заранее снять формы всех ключей и маркеров видимых экземпляров: Play и скраббинг потом не ждут снимков. */
+    private fun prewarmForms() {
+        val f = _frame.value
+        for ((inst, def) in formInstances()) {
+            val crop = formCrop(inst.id)
+            requestForm(formKey(inst, def, f), urgent = true)
+            for (k in inst.timeKeys) requestForm(formKey(inst, def, k.frame), urgent = false)
+            for (m in def.markers) requestForm(SymbolFormCache.Key(def.id, m.target, crop), urgent = false)
+        }
+    }
+
+    /** Подставляет в экземпляры символов нужные формы на кадре [f] (мгновенно, если форма уже снята). */
     private fun updateSymbols(f: Int) {
-        if (projectId == null || _editingSymbol.value != null || appBackground) return
-        val inside = HashSet<Int>()
-        for (d in media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }) inside += symbolMembers(d.id)
-        for (inst in media.filter { it.kind == MediaKind.SYMBOL && it.id !in inside }) {   // вложенные экземпляры рисуются внутри родителя
-            val def = media.firstOrNull { it.id == inst.symRef && it.symDur > 0 } ?: continue
-            val key = symbolKey(inst, def, f)
-            if (symShown[inst.id] == key || inst.id in symBusy) continue
-            symBusy += inst.id
-            val ticket = RenderNative.textureUploadTicket(inst.id)
-            viewModelScope.launch {
-                var ok = false
-                var notReady = false
-                try {
-                    // Снимок символа берёт рисунки участников из теневых текстур: текстуры слоёв на холсте не трогаются,
-                    // поэтому восстанавливать их после снимка больше не нужно (раньше это гонялось с кадрами редактора).
-                    val strict = (symWaits[inst.id] ?: 0) < SYMBOL_WAIT_LIMIT
-                    val bmp = symbolBitmap(def.id, key, 0, strict)
-                    if (bmp != null) {
-                        ok = RenderNative.uploadBitmapIfCurrent(inst.id, bmp, ticket); bmp.recycle()
-                        if (ok) invalidateThumb(inst.id)
-                        RenderHost.view?.requestRender()
-                    }
+        if (projectId == null || appBackground) return
+        refreshFormAliases()
+        if (!_playing.value) prewarmForms()
+    }
+
+    /** Содержимое символов изменилось: формы снимаются заново, старые остаются запасной картинкой до готовности новых. */
+    private fun invalidateForms() {
+        formCache.invalidate()
+        formQueue.clear(); formWaits.clear(); formFails.clear()
+        formSignature = symbolContentSignature()
+        regenFormsSoon()
+    }
+
+    /** То же после Undo/Redo, но только если символы действительно изменились (иначе формы не пересъёмка). */
+    private fun invalidateFormsIfChanged() {
+        if (symbolContentSignature() != formSignature) invalidateForms()
+    }
+
+    /** Текстуры потеряны (новый GL-контекст, другой проект): кэш форм пуст, запасных картинок нет. */
+    private fun resetForms(dropTextures: Boolean) {
+        formWorker?.cancel(); formWorker = null
+        val ids = formCache.clear()
+        if (dropTextures && ids.isNotEmpty()) RenderHost.view?.dropTextures(ids.toIntArray())
+        formQueue.clear(); formShown.clear(); formWaits.clear(); formFails.clear()
+        formSignature = 0; formBudgetWarned = false
+    }
+
+    private fun regenFormsSoon() {
+        if (projectId == null) return
+        refreshFormAliases()
+        if (!_playing.value) prewarmForms()
+    }
+
+    /** Отпечаток содержимого всех символов (участники, клипы, треки, видимость): решает, нужна ли пересъёмка форм. */
+    private fun symbolContentSignature(): Int {
+        val ids = HashSet<Int>()
+        for (d in media) if (d.kind == MediaKind.GROUP && d.symDur > 0) { ids += d.id; ids += symbolMembers(d.id) }
+        if (ids.isEmpty()) return 0
+        var h = canvasW * 31 + canvasH
+        for (m in media) if (m.id in ids) h += m.hashCode() * 7 + m.id
+        for ((id, c) in _clips.value) if (id in ids) h += (id * 131) xor c.hashCode()
+        for ((id, t) in _animation.value.tracks) if (id in ids) h += (id * 137) xor t.hashCode()
+        for ((id, t) in base) if (id in ids) h += (id * 139) xor t.hashCode()
+        for ((id, p) in layerProps) if (id in ids) h += (id * 149) xor p.hashCode()
+        for ((id, l) in fxLayers) if (id in ids) h += (id * 151) xor l.hashCode()
+        return h
+    }
+
+    private fun dropFormTexturesLater(ids: List<Int>) {
+        if (ids.isEmpty()) return
+        // после того как новая таблица форм дошла до GL: иначе один кадр мог бы сослаться на удалённую текстуру
+        viewModelScope.launch { kotlinx.coroutines.delay(300); RenderHost.view?.dropTextures(ids.toIntArray()) }
+    }
+
+    /** Снимает формы из очереди по одной (снимки сериализованы мьютексом символов). */
+    private fun kickFormWorker() {
+        if (formWorker?.isActive == true || appBackground || projectId == null) return
+        formWorker = viewModelScope.launch {
+            while (true) {
+                if (appBackground || projectId == null) break
+                val key = formQueue.removeFirstOrNull() ?: break
+                if (formCache.fresh(key) != null) continue
+                val def = media.firstOrNull { it.id == key.def && it.symDur > 0 } ?: continue
+                val gen = formCache.gen
+                val strict = (formWaits[key] ?: 0) < SYMBOL_WAIT_LIMIT
+                val bmp = try {
+                    symbolBitmap(def.id, key.local, 0, strict)
                 } catch (t: SymbolNotReady) {
-                    notReady = true
+                    // текстуры участников ещё грузятся: прежняя картинка остаётся, снимок чуть позже
+                    formWaits[key] = (formWaits[key] ?: 0) + 1
+                    if (key !in formQueue) formQueue.addLast(key)
+                    kotlinx.coroutines.delay(300)
+                    continue
                 } catch (t: kotlinx.coroutines.CancellationException) {
                     throw t
                 } catch (t: Throwable) {
-                    Log.w("VT/Symbols", "symbol ${def.name} not drawn: ${t.message}")
-                } finally {
-                    symBusy -= inst.id
+                    Log.w("VT/Symbols", "form ${def.name}:${key.local} not drawn: ${t.message}"); null
                 }
-                if (notReady) {
-                    // Текстуры участников ещё грузятся (открытие проекта, возврат из фона): прежняя картинка остаётся,
-                    // снимок повторяется чуть позже. Это не ошибка и не тратит попытки.
-                    symWaits[inst.id] = (symWaits[inst.id] ?: 0) + 1
-                    kotlinx.coroutines.delay(300)
-                    if (_editingSymbol.value == null && !appBackground) updateSymbols(_frame.value)
-                    return@launch
+                if (bmp == null) {
+                    val n = (formFails[key] ?: 0) + 1
+                    formFails[key] = n
+                    if (n >= 3 && !appBackground) _state.value = UiState.Message("Не удалось нарисовать символ «${def.name}»: прежняя картинка сохранена, повтор при следующем кадре")
+                    else if (key !in formQueue) formQueue.addLast(key)
+                    continue
                 }
-                symWaits.remove(inst.id)
-                // Сбой сохраняет прежнюю текстуру: symShown не ставится, повтор будет при следующем updateSymbols.
-                val tries = if (ok) 0 else (symTries[inst.id] ?: 0) + 1
-                if (ok) { symShown[inst.id] = key; symTries.remove(inst.id) } else symTries[inst.id] = tries
-                if (!ok && tries >= 3 && !appBackground) _state.value = UiState.Message("Не удалось нарисовать символ «${def.name}»: прежняя картинка сохранена, повтор при следующем кадре")
-                if (!ok && tries < 3) kotlinx.coroutines.delay(400)
-                if ((ok || tries < 3) && !appBackground) { if (_editingSymbol.value == null) updateSymbols(_frame.value) }
+                if (gen != formCache.gen) {   // символ правили во время снимка - снимок уже устарел
+                    bmp.recycle(); if (key !in formQueue) formQueue.addFirst(key); continue
+                }
+                formWaits.remove(key); formFails.remove(key)
+                val prepared = withContext(Dispatchers.Default) { prepareForm(bmp, key.crop) }
+                val id = nextFormTexId++
+                val uploaded = runCatching { RenderNative.uploadBitmap(id, prepared.first) }.getOrDefault(false)
+                val bytes = prepared.first.width.toLong() * prepared.first.height * 4 * 4 / 3
+                prepared.first.recycle()
+                if (!uploaded) { formFails[key] = 3; continue }
+                val drop = formCache.put(key, SymbolFormCache.Entry(id, prepared.second, bytes, gen), pinnedForms())
+                dropFormTexturesLater(drop)
+                verifyFormTexture(key, id, 0)
+                refreshFormAliases()
+                if (!_playing.value) for ((inst, d) in formInstances()) if (d.id == key.def) invalidateThumb(inst.id)
             }
+        }
+    }
+
+    /** Форма действительно попала в GPU? (бюджет текстур мог её отклонить - тогда не ссылаться на пустоту) */
+    private fun verifyFormTexture(key: SymbolFormCache.Key, id: Int, tries: Int) {
+        val view = RenderHost.view ?: return
+        view.checkTextureAfterFrame(id) { size ->
+            viewModelScope.launch {
+                if (size != null || formCache.any(key)?.texId != id) return@launch
+                if (RenderNative.pendingUploadBytes() > 0 && tries < 40) {   // ещё в очереди загрузки
+                    kotlinx.coroutines.delay(50); verifyFormTexture(key, id, tries + 1); return@launch
+                }
+                formCache.remove(key)
+                formFails[key] = 3
+                if (!formBudgetWarned) {
+                    formBudgetWarned = true
+                    _state.value = UiState.Message("Не хватает памяти GPU для всех форм символа: часть форм показывается с задержкой")
+                }
+                refreshFormAliases()
+            }
+        }
+        view.requestRender()
+    }
+
+    /**
+     * Готовит снимок формы к хранению: обрезка по непрозрачному содержимому (рот - доли процента холста) и уменьшение,
+     * если форма всё равно больше [FORM_MAX_BYTES]. Возвращает картинку и её прямоугольник в долях квадрата экземпляра.
+     */
+    private fun prepareForm(bmp: android.graphics.Bitmap, crop: Boolean): Pair<android.graphics.Bitmap, FloatArray> {
+        val w = bmp.width; val h = bmp.height
+        var out = bmp
+        var rect = floatArrayOf(0f, 0f, 1f, 1f)
+        if (crop) {
+            val px = IntArray(w * h)
+            bmp.getPixels(px, 0, w, 0, 0, w, h)
+            val b = SymbolForms.opaqueBounds(px, w, h)
+            if (b == null) {   // пустая форма (на кадре ничего не видно): прозрачный пиксель
+                out = android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+                bmp.recycle()
+                return out to floatArrayOf(0f, 0f, 1f, 1f)
+            }
+            if (b[0] > 0 || b[1] > 0 || b[2] < w || b[3] < h) {
+                out = android.graphics.Bitmap.createBitmap(bmp, b[0], b[1], b[2] - b[0], b[3] - b[1])
+                rect = floatArrayOf(b[0].toFloat() / w, b[1].toFloat() / h, (b[2] - b[0]).toFloat() / w, (b[3] - b[1]).toFloat() / h)
+                if (out !== bmp) bmp.recycle()
+            }
+        }
+        val bytes = out.width.toLong() * out.height * 4
+        if (bytes > FORM_MAX_BYTES) {
+            val k = kotlin.math.sqrt(FORM_MAX_BYTES.toDouble() / bytes)
+            val scaled = android.graphics.Bitmap.createScaledBitmap(out, maxOf(1, (out.width * k).toInt()), maxOf(1, (out.height * k).toInt()), true)
+            if (scaled !== out) out.recycle()
+            out = scaled
+        }
+        return out to rect
+    }
+
+    /** Какую форму экземпляр показывает на кадре [frame] (для подсветки в панели маркеров - та же функция, что у холста). */
+    fun shownMarkerAt(instId: Int, frame: Int): FrameMarker? {
+        val inst = media.firstOrNull { it.id == instId && it.kind == MediaKind.SYMBOL } ?: return null
+        val def = media.firstOrNull { it.id == inst.symRef && it.symDur > 0 } ?: return null
+        return SymbolForms.shownMarker(def.markers, symbolKey(inst, def, frame))
+    }
+
+    /**
+     * Другие видимые экземпляры того же символа почти в том же месте: частая причина «двух ртов» (второй экземпляр
+     * без ключей держит первую форму). Показывается предупреждением в панели маркеров.
+     */
+    fun overlappingInstances(instId: Int): Int {
+        val inst = media.firstOrNull { it.id == instId && it.kind == MediaKind.SYMBOL } ?: return 0
+        val hidden = hiddenIds()
+        return formInstances().count { (o, _) ->
+            o.id != inst.id && o.symRef == inst.symRef && o.id !in hidden &&
+                kotlin.math.abs(o.x - inst.x) < 4f && kotlin.math.abs(o.y - inst.y) < 4f &&
+                kotlin.math.abs(o.w - inst.w) < 4f && kotlin.math.abs(o.h - inst.h) < 4f
         }
     }
 
     /** Снимок символа ещё рано делать: у видимых участников нет текстур (идёт загрузка). */
     private class SymbolNotReady : Exception("symbol textures are still loading")
 
-    /** Сколько раз подряд снимок экземпляра ждал загрузки текстур; после [SYMBOL_WAIT_LIMIT] снимаем как есть. */
-    private val symWaits = HashMap<Int, Int>()
+    /** Сколько раз подряд снимок формы ждёт загрузки текстур; после [SYMBOL_WAIT_LIMIT] снимаем как есть. */
     private val SYMBOL_WAIT_LIMIT = 20
 
     private val symbolMutex = kotlinx.coroutines.sync.Mutex()
@@ -2952,7 +3228,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (i >= 0) media[i] = media[i].copy(symDur = computeSymbolDuration(gid))
         _editingSymbol.value = null
         selectLayer(null)
-        symShown.clear()
+        invalidateForms()   // содержимое могли поменять: формы пересъёмка (старые - запасная картинка до готовности)
         refreshSymbolState(); rebuildRows(); pushScene(); updateSymbols(_frame.value); markDirty()
         regenMarkerThumbs(gid, force = true)
     }
@@ -2984,7 +3260,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (i < 0) return
         checkpoint("timekey", force = true)
         media[i] = change(media[i])
-        symShown.remove(id)
         refreshSymbolState(); markDirty()
         updateSymbols(_frame.value)
         if (message != null) _state.value = UiState.Message(message)
@@ -3057,7 +3332,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val it = media[k]
                 if (it.kind == MediaKind.SYMBOL && it.symRef == gid && it.timeKeys.isNotEmpty()) media[k] = it.copy(timeKeys = SymbolForms.remapKeys(it.timeKeys, mv))
             }
-            symShown.clear()
+            invalidateForms()
             pushScene(); updateCells(_frame.value)
         }
         if (nextSel != null) _markerSel.value = nextSel
@@ -3337,7 +3612,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun restoreAfterExport() {
-        textFxKeys.clear(); cellShown.clear(); symShown.clear()
+        textFxKeys.clear(); cellShown.clear()
         updateTextFx(_frame.value)
         updateCells(_frame.value)
     }
@@ -3898,7 +4173,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         meta = meta?.copy(width = newW, height = newH)
         if (psdRef != null) fit = ProjectMath.fit(psdW, psdH, canvasW, canvasH)
         resetCamera()
-        symShown.clear()
+        invalidateForms()
         rebuildLayers(); pushScene(); updateSymbols(_frame.value)
         val items = media.filter { it.id in texts }
         if (items.isNotEmpty()) rerenderTexts(items)
@@ -8330,7 +8605,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (plan.isEmpty()) return
         for ((inst, keys) in plan) {
             val i = media.indexOfFirst { it.id == inst }
-            if (i >= 0) { media[i] = media[i].copy(timeKeys = keys); symShown.remove(inst) }
+            if (i >= 0) media[i] = media[i].copy(timeKeys = keys)
         }
         refreshSymbolState()
         updateSymbols(_frame.value)
@@ -8754,6 +9029,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun play() {
         if (_playing.value) return
         cancelPendingLasso()
+        prewarmForms()   // формы всех ключей снимаются до/в начале проигрывания
         _playing.value = true
         followSelectionDuringPlayback()
         val settings = _animation.value.settings
@@ -8835,6 +9111,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val symInside = HashSet<Int>().also { st0 -> media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.forEach { st0 += symbolMembers(it.id) } }
         val symInst = if (symbol == null) media.filter { it.kind == MediaKind.SYMBOL && it.id !in symInside } else emptyList()
         val symDefs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to (it.symDur to symbolCycles(it.id)) }
+        val symMarks = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to it.markers }
         val symLoops = symInst.associate { it.id to it.symLoop }
         val symExp = HashMap<Int, Int>()
         val cellExp = HashMap<Int, String>()
@@ -8866,7 +9143,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val frames = symCache[si.symRef] ?: continue
                 val def = symDefs[si.symRef] ?: continue
                 val loop = symLoops[si.id] == true
-                val key = SymbolMath.instanceFrame(si.timeKeys, pf, def.first, def.second && loop, loop)
+                val key = SymbolForms.frameAt(si.timeKeys, pf, def.first, def.second && loop, loop, symMarks[si.symRef].orEmpty())   // то же правило, что в редакторе
                 if (symExp[si.id] == key) continue
                 val png = frames.getOrNull(key) ?: continue
                 runCatching {

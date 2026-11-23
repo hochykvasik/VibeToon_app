@@ -204,6 +204,33 @@ Java_com_vibetoon_nativebridge_RenderNative_setInteractive(JNIEnv*, jobject, jlo
     R(h)->setInteractive(on == JNI_TRUE);
 }
 
+// Формы символов для экземпляров: применяется вместе со сценой (тот же кадр GL).
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setTextureAliases(JNIEnv* env, jobject, jlong h, jintArray ids, jintArray prim, jintArray fb, jfloatArray rects) {
+    if (!ids || !prim || !fb || !rects) { R(h)->setTextureAliases(nullptr, nullptr, nullptr, nullptr, 0); return; }
+    const jsize n = env->GetArrayLength(ids);
+    if (env->GetArrayLength(prim) < n || env->GetArrayLength(fb) < n || env->GetArrayLength(rects) < n * 8) return;
+    std::vector<jint> a(n), b(n), c(n);
+    std::vector<jfloat> r(static_cast<size_t>(n) * 8);
+    if (n > 0) {
+        env->GetIntArrayRegion(ids, 0, n, a.data());
+        env->GetIntArrayRegion(prim, 0, n, b.data());
+        env->GetIntArrayRegion(fb, 0, n, c.data());
+        env->GetFloatArrayRegion(rects, 0, n * 8, r.data());
+    }
+    R(h)->setTextureAliases(reinterpret_cast<const int*>(a.data()), reinterpret_cast<const int*>(b.data()),
+                            reinterpret_cast<const int*>(c.data()), r.data(), static_cast<int>(n));
+}
+
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_dropTextures(JNIEnv* env, jobject, jlong h, jintArray ids) {
+    if (!ids) return;
+    const jsize n = env->GetArrayLength(ids);
+    std::vector<jint> a(n);
+    if (n > 0) env->GetIntArrayRegion(ids, 0, n, a.data());
+    R(h)->dropTextures(reinterpret_cast<const int*>(a.data()), static_cast<int>(n));
+}
+
 // Отбрасывает ещё не загруженные в GPU текстуры предыдущего проекта
 JNIEXPORT void JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_clearPendingUploads(JNIEnv*, jobject) {

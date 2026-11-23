@@ -30,6 +30,8 @@ jobs:
           /tmp/vibetoon-layer-bounds-test
           g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/FxCachePolicyTest.cpp -o /tmp/vibetoon-fx-cache-test
           /tmp/vibetoon-fx-cache-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/TexAliasTest.cpp -o /tmp/vibetoon-tex-alias-test
+          /tmp/vibetoon-tex-alias-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
       - name: Run unit tests

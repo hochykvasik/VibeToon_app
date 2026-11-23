@@ -131,7 +131,12 @@ class VtRenderer(
         RenderNative.setPerspectives(handle, s.perspIds, s.perspData)
         RenderNative.setTurbulence(handle, s.turbIds, s.turbData)
         RenderNative.setEffects(handle, s.fxIds, s.fxCounts, s.fxData)
+        val a = s.aliases   // неизменяемый набор: формы и сцена применяются одним кадром
+        RenderNative.setTextureAliases(handle, a.ids, a.primary, a.fallback, a.rects)
     }
+
+    /** Только из GL-потока. */
+    fun dropTextures(ids: IntArray) { if (handle != 0L && ids.isNotEmpty()) RenderNative.dropTextures(handle, ids) }
 
     /** Экспорт в MP4. Только из GL-потока. [sceneAt] строит сцену кадра готового видео. */
     fun exportVideo(
@@ -403,6 +408,12 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
             onDone(r)
             requestRender()
         }
+    }
+
+    /** Удаляет текстуры форм символов в GL-потоке. */
+    fun dropTextures(ids: IntArray) {
+        if (ids.isEmpty()) return
+        queueEvent { vtRenderer.dropTextures(ids) }
     }
 
     /** Освобождает нативные GL-объекты в GL-потоке. */

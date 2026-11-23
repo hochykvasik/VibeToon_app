@@ -97,7 +97,11 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
     val frame by vm.frame.collectAsStateWithLifecycle()
     val markers = vm.markersOfInstance(instId)
     val defId = vm.symbolRefOf(instId)
-    val active = if (keys.containsKey(instId)) vm.timeValueAt(instId, frame) else null
+    // Подсветка - форма, которую экземпляр РЕАЛЬНО показывает на этом кадре (та же функция, что у холста),
+    // а не сырое значение ключа: при Play/скраббинге рамка и картинка больше не расходятся.
+    val active = remember(keys, frame, markers) { vm.shownMarkerAt(instId, frame)?.frame }
+    val short = remember(markers) { com.vibetoon.domain.project.SymbolForms.compactLabels(markers.map { it.name }) }
+    val twins = remember(keys, instId) { vm.overlappingInstances(instId) }
     LaunchedEffect(instId) { vm.loadMarkerThumbs(instId) }
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -133,6 +137,8 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
                 }
                 Column(Modifier.heightIn(max = 250.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (markers.isEmpty()) Text("У символа нет маркеров", fontSize = 12.sp)
+                    if (twins > 0) Text("На том же месте ещё экземпляров этого символа: $twins. Каждый показывает свою форму - лишний удалите или скройте, иначе видны две формы сразу.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
                     for (rowItems in markers.chunked(3)) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (m in rowItems) {
                             val isActive = active == m.target
@@ -146,7 +152,7 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
                                 Box(Modifier.size(72.dp).background(Color(0xFFEFEFEF)).thumbnailChecker(com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true), contentAlignment = Alignment.Center) {
                                     if (img != null) Image(img, m.name, Modifier.size(72.dp)) else Text("…", fontSize = 12.sp)
                                 }
-                                Text(m.name, fontSize = 12.sp, maxLines = 1)
+                                Text(short[m.name] ?: m.name, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                             }
                         }
                     }

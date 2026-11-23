@@ -148,6 +148,20 @@ fun TimelinePanel(
     val timeKeyMap by vm.timeKeys.collectAsStateWithLifecycle()
     val multi by vm.multiSelect.collectAsStateWithLifecycle()
     val keySel by vm.keySelection.collectAsStateWithLifecycle()
+    val timeEaseDialog by vm.timeEaseDialog.collectAsStateWithLifecycle()
+    if (timeEaseDialog) AlertDialog(
+        onDismissRequest = vm::closeTimeEaseDialog,
+        title = { Text("Общая кривая: ключи времени символа") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Переход от каждого выделенного ключа к следующему. Между разными формами символ всегда меняет форму резко (Hold) - промежуточные формы не показываются.", fontSize = 12.sp)
+                for (e in listOf(com.vibetoon.domain.project.TimeEase.HOLD, com.vibetoon.domain.project.TimeEase.LINEAR, com.vibetoon.domain.project.TimeEase.SMOOTH,
+                        com.vibetoon.domain.project.TimeEase.EASE_IN, com.vibetoon.domain.project.TimeEase.EASE_OUT))
+                    TextButton(onClick = { vm.applyTimeEaseToSelection(e) }) { Text(vm.timeEaseName(e)) }
+            }
+        },
+        confirmButton = { TextButton(vm::closeTimeEaseDialog) { Text("Отмена") } }
+    )
     val markerSel by vm.markerSelection.collectAsStateWithLifecycle()
     val hasMarkerClip by vm.hasMarkerClip.collectAsStateWithLifecycle()
     val editingSym by vm.editingSymbol.collectAsStateWithLifecycle()
@@ -315,6 +329,7 @@ fun TimelinePanel(
             OutlinedButton(onClick = vm::pasteMarkers, enabled = hasMarkerClip && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::duplicateSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Дублировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::mirrorSelectedMarkers, enabled = markerSel.size >= 2 && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Зеркало", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::deleteSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             TextButton(onClick = vm::clearMarkerSelection, enabled = markerSel.isNotEmpty()) { Text("Снять", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
@@ -534,13 +549,21 @@ fun TimelinePanel(
                         drawRect(purple.copy(alpha = if (i % 2 == 0) 0.16f else 0.08f), Offset(x0, size.height * 0.55f), androidx.compose.ui.geometry.Size((x1 - x0).coerceAtLeast(1f), size.height * 0.4f))
                     }
                     drawPlayhead(frame * frameWPx, playheadColor)
-                    for (mk in sorted) {
+                    val shortM = com.vibetoon.domain.project.SymbolForms.compactLabels(sorted.map { it.name })
+                    for ((mi, mk) in sorted.withIndex()) {
                         val picked = mk.frame in markerSel
                         val x = (mk.frame + if (picked) mDrag else 0) * frameWPx
                         val c = if (picked) Color(0xFFFB8C00) else if (mk.isAlias) purple.copy(alpha = 0.55f) else purple
                         if (picked) drawCircle(c.copy(alpha = 0.35f), size.height * 0.45f, Offset(x, size.height / 2f))
                         drawMarkerTag(x, c, 5.dp.toPx(), 9.dp.toPx())
-                        drawText(measurer, if (mk.isAlias) "↪" + mk.name else mk.name, topLeft = Offset(x + 4.dp.toPx(), size.height * 0.45f), style = TextStyle(fontSize = 9.sp, color = textColor), maxLines = 1)
+                        val nm = shortM[mk.name] ?: mk.name
+                        // подпись не длиннее расстояния до следующего маркера (с многоточием), иначе текст наезжал на соседей
+                        val nextX = sorted.getOrNull(mi + 1)?.let { it.frame * frameWPx } ?: size.width
+                        val room = nextX - x - 6.dp.toPx()
+                        if (room > 10.dp.toPx()) drawText(measurer, if (mk.isAlias) "↪$nm" else nm, topLeft = Offset(x + 4.dp.toPx(), size.height * 0.45f),
+                            style = TextStyle(fontSize = 9.sp, color = textColor), maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            size = androidx.compose.ui.geometry.Size(room, size.height * 0.55f))
                     }
                 }
             }
@@ -837,6 +860,7 @@ fun TimelinePanel(
                                 val purple = Color(0xFFAB47BC)
                                 // отрезки одинаковой формы: сплошная полупрозрачная полоса + подпись; переход - клин к следующей форме
                                 val names = instMarkers[l.id].orEmpty()
+                                val short = com.vibetoon.domain.project.SymbolForms.compactLabels(names.map { it.name })
                                 for (run in com.vibetoon.domain.project.SymbolMath.formRuns(tks, duration)) {
                                     val x0 = run.start * frameWPx
                                     val x1 = run.end * frameWPx
@@ -849,9 +873,15 @@ fun TimelinePanel(
                                         val wedge = Path().apply { moveTo(x0, top + h); lineTo(x1, top); lineTo(x1, top + h); close() }
                                         drawPath(wedge, purple.copy(alpha = 0.3f))
                                     }
-                                    val label = com.vibetoon.domain.project.SymbolForms.labelFor(names, run.value)?.name ?: "${run.value + 1}"
-                                    if (x1 - x0 > 28.dp.toPx()) drawText(measurer, label, topLeft = Offset(x0 + 6.dp.toPx(), top - 1.dp.toPx()),
-                                        style = TextStyle(fontSize = 8.sp, color = textColor.copy(alpha = 0.8f)), maxLines = 1)
+                                    // подпись: короткое имя формы («30» вместо «Обычный слой 30»), не шире своего отрезка -
+                                    // соседние подписи больше не наезжают друг на друга
+                                    val full = com.vibetoon.domain.project.SymbolForms.labelFor(names, run.value)?.name
+                                    val label = full?.let { short[it] ?: it } ?: "${run.value + 1}"
+                                    val room = (x1 - x0) - 8.dp.toPx()
+                                    if (room > 12.dp.toPx()) drawText(measurer, label, topLeft = Offset(x0 + 5.dp.toPx(), top - 1.dp.toPx()),
+                                        style = TextStyle(fontSize = 8.sp, color = textColor.copy(alpha = 0.85f)), maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        size = androidx.compose.ui.geometry.Size(room, size.height * 0.4f))
                                 }
                                 for (tk in tks) {
                                     val picked = (l.id to tk.frame) in keySel

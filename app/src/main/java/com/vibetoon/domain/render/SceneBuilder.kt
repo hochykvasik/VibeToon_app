@@ -55,9 +55,22 @@ class SceneData(
     /** Group local space -> canvas, for fixed-frame interaction. */
     val groupWorlds: Map<Int, Affine2D> = emptyMap()
 ) {
+    /**
+     * Формы символов: экземпляр рисуется текстурой своей формы (пока она не загружена - запасной формой),
+     * по 8 чисел на экземпляр: под-прямоугольник квадрата (x, y, w, h) основной и запасной формы.
+     * Ставится вместе со сценой, поэтому форма всегда соответствует кадру этой сцены (без рассинхрона при Play/скраббинге).
+     */
+    @Volatile var aliases: TextureAliases = TextureAliases.EMPTY
+
     companion object {
         const val PARAM_STRIDE = 8
     }
+}
+
+/** Неизменяемый набор форм символов для сцены (см. [SceneData.aliases]). */
+class TextureAliases(val ids: IntArray, val primary: IntArray, val fallback: IntArray, val rects: FloatArray) {
+    init { require(primary.size == ids.size && fallback.size == ids.size && rects.size == ids.size * 8) }
+    companion object { val EMPTY = TextureAliases(IntArray(0), IntArray(0), IntArray(0), FloatArray(0)) }
 }
 
 /**

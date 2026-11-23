@@ -1228,4 +1228,12 @@
     <string name="ui_markers_not_moved_layer_already_has_">Markers not moved: layer “{}” already has another drawing on the target frame</string>
     <string name="ui_markers_mirrored_their_forms_swapped">Markers mirrored: their forms swapped places with them</string>
     <string name="ui_could_not_draw_symbol_the_previous_p">Could not draw symbol “{}”: the previous picture is kept, retrying on the next frame</string>
+    <string name="ui_no_keys_in_the_selection_select_keys">No keys in the selection: select keys with a marquee (selection button on the timeline)</string>
+    <string name="ui_no_time_key_picks_the_selected_forms">No time key picks the selected forms yet: pick a marker in the symbol panel on the stage</string>
+    <string name="ui_the_curve_applies_to_layer_keys_symb">The curve applies to layer keys; symbol time key transitions are set with the “Transition” buttons</string>
+    <string name="ui_more_instances_of_this_symbol_at_the">More instances of this symbol at the same spot: {}. Each shows its own form - delete or hide the extra one, otherwise two forms are visible at once.</string>
+    <string name="ui_not_enough_gpu_memory_for_all_symbol">Not enough GPU memory for all symbol forms: some forms appear with a delay</string>
+    <string name="ui_shared_curve_symbol_time_keys">Shared curve: symbol time keys</string>
+    <string name="ui_shared_transition_keys">Shared transition: {} (keys: {})</string>
+    <string name="ui_transition_from_each_selected_key_to">Transition from each selected key to the next. Between different forms the symbol always switches sharply (Hold) - intermediate forms are never shown.</string>
 </resources>

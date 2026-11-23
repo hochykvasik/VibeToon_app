@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "render/LayerBounds.h"
@@ -130,6 +131,12 @@ public:
     void clearShadows();
     // Идёт жест камеры: результаты эффектов можно переиспользовать с преобразованием вида.
     void setInteractive(bool on);
+    // Формы символов: слой-экземпляр [ids[i]] рисуется текстурой формы prim[i] (или fallback[i], пока основная не загружена)
+    // в под-прямоугольнике своего квадрата rects[8*i..] (x, y, w, h для основной и для запасной; доли квадрата).
+    // Список задаётся вместе со сценой, поэтому картинка формы и кадр сцены меняются в одном кадре GL.
+    void setTextureAliases(const int* ids, const int* prim, const int* fallback, const float* rects, int n);
+    // Удаляет текстуры форм (id не переиспользуются: поздние загрузки этих id отбрасываются).
+    void dropTextures(const int* ids, int n);
     // Цвет пикселя экрана (ARGB) после drawFrame: для пипетки. Координаты вида, ось y вниз.
     int readPixel(int x, int y) const;
     // Освобождает GL-объекты (контекст должен быть текущим).
@@ -170,7 +177,11 @@ private:
     void uploadPending();                        // не более kUploadBytesPerFrame за кадр
     void uploadShadows();                        // все теневые загрузки (снимок символа)
     bool makeTexture(const PendingUpload& up, size_t bytes, Tex& t);
+    const Tex* resolveTex(int layerId, float rect[4]) const;   // + под-прямоугольник квадрата слоя (форма символа)
     const Tex* findTex(int layerId) const;       // теневая текстура (в снимке символа) или текстура слоя
+    struct TexAlias { int primary = -1, fallback = -1; float pr[4] = {0.f, 0.f, 1.f, 1.f}; float fr[4] = {0.f, 0.f, 1.f, 1.f}; };
+    std::unordered_map<int, TexAlias> aliases_;
+    std::unordered_set<int> droppedTex_;
     // --- кэш результата эффектов (см. FxCachePolicy.h) ---
     struct FxEntry {
         GLuint tex = 0, fbo = 0;
