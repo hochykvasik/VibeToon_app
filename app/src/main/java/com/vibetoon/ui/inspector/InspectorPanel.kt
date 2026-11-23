@@ -283,7 +283,7 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
                 TAB_COLOR -> ColorTab(vm, selectedId, colors)
                 TAB_EFFECTS -> EffectsTab(vm)
                 else -> Text(
-                    "«${tabs[selectedIndex]}» появится на одном из следующих этапов",
+                    "«${com.vibetoon.ui.i18n.L(tabs[selectedIndex])}» появится на одном из следующих этапов",   // имя вкладки тоже переводится (раньше в EN оставалось «Рисование»)
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     modifier = Modifier.padding(8.dp)

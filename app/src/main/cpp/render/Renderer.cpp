@@ -11,6 +11,7 @@
 #include "render/GlState.h"
 #include "render/CanvasClipPolicy.h"
 #include "render/FxCachePolicy.h"
+#include "render/FrameTargetPolicy.h"
 #include "render/TexAlias.h"
 #include "render/UploadQueue.h"
 #include <EGL/egl.h>
@@ -475,7 +476,10 @@ int Renderer::initGL() {
 void Renderer::setViewport(int width, int height) {
     const int w = width > 0 ? width : 1;
     const int h = height > 0 ? height : 1;
-    if (w != width_ || h != height_) { releaseTargets(); dropFxCache(); }  // FBO привязаны к размеру экрана
+    // FBO привязаны к размеру экрана. Кэш эффектов сбрасываем при ЛЮБОМ вызове (и том же размере):
+    // поверхность пересоздана, старые экранные рамки кэша могут не соответствовать новому кадру.
+    if (w != width_ || h != height_) { releaseTargets(); releaseEditorTarget(); }
+    dropFxCache();
     bumpEpoch();
     width_ = w;
     height_ = h;
@@ -1197,6 +1201,7 @@ void Renderer::bindTarget(GLuint fbo) {
 // Берёт FBO из пула (или создаёт), делает текущей целью и очищает в прозрачный.
 Renderer::Fbo Renderer::acquireFbo() {
     Fbo f;
+    bool created = false;
     if (!fboPool_.empty()) {
         f = fboPool_.back();
         fboPool_.pop_back();
@@ -1214,11 +1219,19 @@ Renderer::Fbo Renderer::acquireFbo() {
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             LOGE("FBO incomplete");
         ++fboCreated_;
+        created = true;
         LOGI("FBO #%d created %dx%d (%.1f MB)", fboCreated_, width_, height_,
              width_ * height_ * 4 / 1048576.0);
     }
     bindTarget(f.fbo);
     glClearColor(0.f, 0.f, 0.f, 0.f);
+    if (frametarget::fullClearOnCreate(created)) {
+        // Новая текстура содержит мусор драйвера: первая очистка - целиком, затем scissor вызывающего.
+        GLboolean sc = glIsEnabled(GL_SCISSOR_TEST);
+        glDisable(GL_SCISSOR_TEST);
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (sc) glEnable(GL_SCISSOR_TEST);
+    }
     glClear(GL_COLOR_BUFFER_BIT);
     return f;
 }
@@ -1248,8 +1261,42 @@ void Renderer::ensureBackdrop() {
     glBindFramebuffer(GL_FRAMEBUFFER, backdropFbo_);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, backdropTex_, 0);
     glClearColor(0.f, 0.f, 0.f, 0.f);
+    const GLboolean sc = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);   // новая текстура - мусор драйвера: очищаем целиком
     glClear(GL_COLOR_BUFFER_BIT);
+    if (sc) glEnable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_FRAMEBUFFER, curFbo_);
+}
+
+bool Renderer::ensureEditorTarget() {
+    if (!frametarget::needsRealloc(editorTex_, editorW_, editorH_, width_, height_)) return true;
+    releaseEditorTarget();
+    glGenTextures(1, &editorTex_);
+    glBindTexture(GL_TEXTURE_2D, editorTex_);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width_, height_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenFramebuffers(1, &editorFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, editorFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, editorTex_, 0);
+    const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!ok) {   // запасной путь: рисуем прямо в окно, как раньше
+        LOGW("editor target incomplete %dx%d", width_, height_);
+        releaseEditorTarget();
+        return false;
+    }
+    editorW_ = width_; editorH_ = height_;
+    return true;
+}
+
+void Renderer::releaseEditorTarget() {
+    if (editorFbo_) glDeleteFramebuffers(1, &editorFbo_);
+    if (editorTex_) glDeleteTextures(1, &editorTex_);
+    editorFbo_ = editorTex_ = 0;
+    editorW_ = editorH_ = 0;
 }
 
 // Копирует текущую цель в текстуру подложки (blit, а не glCopyTexSubImage2D:
@@ -1445,7 +1492,8 @@ bool Renderer::fxCacheEnabled() const {
 
 bool Renderer::drawFxFromCache(const Item& it, const float va[6], float reach, float opacity, int blend) {
     auto e = fxCache_.find(it.layerId);
-    if (e == fxCache_.end() || e->second.epoch != epoch_ || !e->second.tex) return false;
+    if (e == fxCache_.end() || !e->second.tex) return false;
+    if (!frametarget::cacheEntryValid(e->second.epoch, epoch_, e->second.vw, e->second.vh, width_, height_)) return false;
     FxEntry& c = e->second;
     float d[6];
     if (!fxcache::screenDelta(va, c.va, d)) return false;
@@ -1520,6 +1568,7 @@ void Renderer::storeFxCache(const Item& it, GLuint srcFbo, const int box[4], con
     c.bx = box[0]; c.by = box[1];
     for (int i = 0; i < 6; ++i) c.va[i] = va[i];
     c.epoch = epoch_;
+    c.vw = width_; c.vh = height_;
     c.used = true;
 }
 
@@ -1615,7 +1664,12 @@ void Renderer::compositeFbo(const Fbo& f, float opacity, int blend) {
 bool Renderer::drawFrame() {
     uploadPending();
 
-    bindTarget(screenFbo_);
+    // Кадр редактора - во внутренний FBO: наложения читают подложку из него, а не из окна.
+    GLuint root = screenFbo_;
+    if (frametarget::renderViaOffscreen(screenFbo_, exportMode_) && ensureEditorTarget()) root = editorFbo_;
+    const bool viaEditor = root != 0 && root == editorFbo_;
+    glDisable(GL_SCISSOR_TEST);   // очистка цели - целиком, вне зависимости от прошлого кадра
+    bindTarget(root);
     if (transparentCapture_) glClearColor(0.f, 0.f, 0.f, 0.f);
     else if (exportMode_) glClearColor(bg_[0], bg_[1], bg_[2], 1.f);
     else glClearColor(0.2f, 0.2f, 0.22f, 1.f);
@@ -1716,15 +1770,20 @@ bool Renderer::drawFrame() {
         }
     }
 
+    glDisable(GL_SCISSOR_TEST);   // blit учитывает scissor: копия на окно/поверхность - целиком
     if (exportToSurface_) {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, exportFbo_);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
         glBlitFramebuffer(0, 0, width_, height_, 0, 0, width_, height_, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
+    if (viaEditor) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, editorFbo_);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, width_, height_, 0, 0, width_, height_, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
     bindTarget(0);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    glDisable(GL_SCISSOR_TEST);   // рамка выделения может выходить за холст
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // рамка выделения может выходить за холст
     if (!exportMode_) gcFxCache();
     if (!exportMode_) drawSelection();
     glBindVertexArray(0);
@@ -1735,7 +1794,8 @@ bool Renderer::drawFrame() {
 int Renderer::readPixel(int x, int y) const {
     if (x < 0 || y < 0 || x >= width_ || y >= height_) return 0;
     unsigned char px[4] = {0, 0, 0, 0};
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Пипетка читает внутренний кадр редактора (без рамки выделения), окно - только запасной путь.
+    glBindFramebuffer(GL_FRAMEBUFFER, editorFbo_ && editorW_ == width_ && editorH_ == height_ ? editorFbo_ : 0);
     glReadPixels(x, height_ - 1 - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
     return (0xFF << 24) | (px[0] << 16) | (px[1] << 8) | px[2];
 }
@@ -1747,6 +1807,7 @@ void Renderer::release() {
     dropFxCache();
     textureBytes_ = 0;
     releaseTargets();
+    releaseEditorTarget();
     paintFreeTargets();
     for (GLuint& gt : grainTex_) { if (gt) glDeleteTextures(1, &gt); gt = 0; }
     if (layerFbo_) glDeleteFramebuffers(1, &layerFbo_);

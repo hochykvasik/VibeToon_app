@@ -7265,9 +7265,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openFxLibrary(on: Boolean) {
         if (on && warpTarget() == null && selectedEffectGroup() == null) { _state.value = UiState.Message("Выберите один слой, чтобы добавить эффект"); return }
-        if (on && selectedEffectGroup() != null && groupEffectPlan(selectedEffectGroup()!!).rejection != null) {
-            _state.value = UiState.Message("Групповые эффекты недоступны: проверьте одинаковость цепочек, ключи, обтравку и блокировки"); return
-        }
         _fxLibrary.value = on
     }
 
@@ -7277,11 +7274,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _groupFxBlocked.value = group != null && plan?.rejection != null
         _groupFxInfo.value = when {
             group == null -> ""
-            plan?.rejection != null -> "Группа: цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка"
-            else -> "Группа: ключи эффектов создаются на вложенных слоях; ромба группы пока нет"
+            plan?.rejection != null -> "Группа: Вращение, Качание и Ось растяжения работают у самой группы; остальные эффекты недоступны - цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка"
+            else -> "Группа: Вращение, Качание и Ось растяжения - у самой группы (вокруг её пивота, ключи на строке группы); остальные эффекты - на вложенных слоях"
         }
         val id = warpTarget()
-        _layerFx.value = if (group != null && plan?.rejection == null && plan?.ids?.isNotEmpty() == true) com.vibetoon.domain.anim.EffectTracks.at(plan.ids.first(), plan.effects, _animation.value, _frame.value.toFloat()) else if (id == null) emptyList() else com.vibetoon.domain.anim.EffectTracks.at(id, fxLayers[id].orEmpty(), _animation.value, _frame.value.toFloat())
+        _layerFx.value = if (group != null) {
+            // свои трансформации группы (сверху) + общая цепочка вложенных слоёв
+            val own = com.vibetoon.domain.anim.EffectTracks.at(group, com.vibetoon.domain.anim.GroupEffects.own(fxLayers, group), _animation.value, _frame.value.toFloat())
+            val nested = if (plan?.rejection == null && plan?.ids?.isNotEmpty() == true) com.vibetoon.domain.anim.EffectTracks.at(plan.ids.first(), plan.effects, _animation.value, _frame.value.toFloat()) else emptyList()
+            own + nested
+        } else if (id == null) emptyList() else com.vibetoon.domain.anim.EffectTracks.at(id, fxLayers[id].orEmpty(), _animation.value, _frame.value.toFloat())
     }
 
     private fun fxNow(): Map<Int, List<FloatArray>> {
@@ -7306,8 +7308,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return out
     }
 
-    private fun editFx(key: String, force: Boolean = false, change: (List<Effect>) -> List<Effect>) {
-        val t = warpTarget() ?: return
+    private fun editFx(key: String, force: Boolean = false, target: Int? = null, change: (List<Effect>) -> List<Effect>) {
+        val t = target ?: warpTarget() ?: return
         val cur = fxLayers[t].orEmpty()
         val next = change(cur)
         if (next == cur) return
@@ -7321,9 +7323,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Добавляет эффект выбранного типа в конец цепочки выделенного слоя. */
     fun addEffect(type: Int) {
         val e = EffectMath.create(type) ?: return
-        if (EffectMath.isTransform(type) && selectedEffectGroup() != null) {
-            // пакетные эффекты группы ставятся на каждый вложенный слой - качание/растяжение разорвали бы рисунок на куски
-            _state.value = UiState.Message("Вращение, Качание и Ось растяжения для группы - В разработке: сделайте из группы символ, его экземпляр качается и растягивается целиком")
+        val group = selectedEffectGroup()
+        if (group != null && com.vibetoon.domain.anim.GroupEffects.addsToGroupItself(type)) {
+            // Вращение/Качание/Ось растяжения - на саму группу: её матрица вокруг пивота группы, дети наследуют целиком
+            if (_playing.value) { _state.value = UiState.Message("Остановите воспроизведение перед редактированием эффектов группы"); return }
+            if (isLockedId(group)) { lockedNotice(); return }
+            if (fxLayers[group].orEmpty().size >= EffectMath.MAX_PER_LAYER) { _state.value = UiState.Message("На слое не больше ${EffectMath.MAX_PER_LAYER} эффектов"); return }
+            editFx("group-own-fx-add", force = true, target = group) { com.vibetoon.domain.anim.EffectTracks.assignSlots(it + e) }
             _fxLibrary.value = false
             return
         }
@@ -7338,17 +7344,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _fxLibrary.value = false
     }
 
+    /** Строка инспектора выделенной группы -> (свой эффект группы?, индекс в части); null - выделена не группа. */
+    private fun groupRoute(index: Int): Pair<Boolean, Int>? = selectedEffectGroup()?.let {
+        com.vibetoon.domain.anim.GroupEffects.route(index, com.vibetoon.domain.anim.GroupEffects.own(fxLayers, it).size)
+    }
+
     fun removeEffect(index: Int) {
-        if (editGroupFx("group-fx-del", force = true) { list -> list.filterIndexed { i, _ -> i != index } }) return
-        val layer = warpTarget() ?: return
+        val route = groupRoute(index)
+        if (route != null && !route.first) { editGroupFx("group-fx-del", force = true) { list -> list.filterIndexed { i, _ -> i != route.second } }; return }
+        val layer = (if (route != null) selectedEffectGroup() else warpTarget()) ?: return
+        val idx = route?.second ?: index
         val list = fxLayers[layer].orEmpty()
-        val e = list.getOrNull(index) ?: return
+        val e = list.getOrNull(idx) ?: return
         checkpoint("fx-del", force = true)
         if (layer in 0..com.vibetoon.domain.anim.EffectTracks.MAX_LAYER && e.slot in 0 until com.vibetoon.domain.anim.EffectTracks.SLOTS) {
             val ids = com.vibetoon.domain.anim.EffectTracks.ids(layer, e.slot).toSet()
             _animation.value = _animation.value.copy(tracks = _animation.value.tracks.filterKeys { it !in ids })
         }
-        fxLayers = fxLayers + (layer to list.filterIndexed { i, _ -> i != index })
+        val rest = list.filterIndexed { i, _ -> i != idx }
+        fxLayers = if (rest.isEmpty()) fxLayers - layer else fxLayers + (layer to rest)
+        refreshFxState()
         pushScene(); markDirty()
     }
 
@@ -7357,28 +7372,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val j = index + dir
             if (index !in l.indices || j !in l.indices) l else l.toMutableList().also { val x = it[index]; it[index] = it[j]; it[j] = x }
         }
-        if (editGroupFx("group-fx-move", force = true, change = reorder)) return
+        val group = selectedEffectGroup()
+        if (group != null) {
+            val own = com.vibetoon.domain.anim.GroupEffects.own(fxLayers, group).size
+            if (!com.vibetoon.domain.anim.GroupEffects.canMove(index, dir, own, _layerFx.value.size)) return
+            val (isOwn, i) = com.vibetoon.domain.anim.GroupEffects.route(index, own)
+            val local: (List<Effect>) -> List<Effect> = { l ->
+                val j = i + dir
+                if (i !in l.indices || j !in l.indices) l else l.toMutableList().also { val x = it[i]; it[i] = it[j]; it[j] = x }
+            }
+            if (isOwn) editFx("group-own-fx-move", force = true, target = group, change = local)
+            else editGroupFx("group-fx-move", force = true, change = local)
+            return
+        }
         editFx("fx-move", force = true, change = reorder)
     }
 
     private fun editEffectValues(index: Int, changes: Map<Int, Float>, tag: String, force: Boolean = false) {
         if (_playing.value) return
-        if (editGroupEffectValues(index, changes, tag, force)) return
-        if (editGroupFx("group-$tag", force) { list ->
-            val effect = list.getOrNull(index)
-            if (effect == null || changes.keys.any { it !in effect.p.indices }) list else {
-                val updated = effect.copy(p = effect.p.toMutableList().also { p ->
-                    for ((param, value) in changes) p[param] = EffectMath.clamp(effect.type, param, value)
-                })
-                list.toMutableList().also { it[index] = updated }
-            }
-        }) return
-        val layer = warpTarget() ?: return
+        val route = groupRoute(index)
+        if (route == null || !route.first) {
+            val gi = route?.second ?: index   // общая цепочка вложенных слоёв группы
+            if (editGroupEffectValues(gi, changes, tag, force)) return
+            if (editGroupFx("group-$tag", force) { list ->
+                val effect = list.getOrNull(gi)
+                if (effect == null || changes.keys.any { it !in effect.p.indices }) list else {
+                    val updated = effect.copy(p = effect.p.toMutableList().also { p ->
+                        for ((param, value) in changes) p[param] = EffectMath.clamp(effect.type, param, value)
+                    })
+                    list.toMutableList().also { it[gi] = updated }
+                }
+            }) return
+        }
+        // свой эффект слоя или собственная трансформация группы (ключи - на дорожках самой группы)
+        val layer = (if (route != null) selectedEffectGroup() else warpTarget()) ?: return
+        val idx = route?.second ?: index
         val list = fxLayers[layer].orEmpty()
-        val effect = list.getOrNull(index) ?: return
+        val effect = list.getOrNull(idx) ?: return
         if (changes.keys.any { it !in effect.p.indices }) return
         val tracks = com.vibetoon.domain.anim.EffectTracks
-        val currentEffect = tracks.at(layer, list, _animation.value, _frame.value.toFloat()).getOrNull(index) ?: return
+        val currentEffect = tracks.at(layer, list, _animation.value, _frame.value.toFloat()).getOrNull(idx) ?: return
         if (changes.all { (param, value) -> EffectMath.clamp(effect.type, param, value) == currentEffect.p[param] }) return
         checkpoint("$tag:${_frame.value}", force)
         val auto = autoKeyEnabled()
@@ -7402,7 +7435,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val updated = effect.copy(p = effect.p.toMutableList().also { p ->
                 for ((param, value) in changes) p[param] = EffectMath.clamp(effect.type, param, value)
             })
-            fxLayers = fxLayers + (layer to list.toMutableList().also { it[index] = updated })
+            fxLayers = fxLayers + (layer to list.toMutableList().also { it[idx] = updated })
         }
         pushScene(); markDirty()
     }
@@ -8256,6 +8289,95 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _bones.value = _bones.value.map { if (it.id == id) it.copy(independentRot = on) else it }
         pushScene()
         markDirty()
+    }
+
+    // ---- ключи костей (пакет 7): ромбы ◆ на таймлайне и кнопки в свойствах кости
+
+    /** Кадры ключей кости по возрастанию. */
+    fun boneKeyFrames(boneId: Int): List<Int> = com.vibetoon.domain.anim.BoneKeys.frames(boneId, _animation.value.tracks)
+
+    /** Тап по строке кости на таймлайне: режим «Кости» (Animation) и выбор кости. */
+    fun selectBoneRow(boneId: Int) {
+        if (_bones.value.none { it.id == boneId }) return
+        pause()
+        if (!_boneMode.value) setBoneMode(true)
+        if (_bindPose.value) setBindPose(false)   // ключи позы живут в режиме Animation
+        applySelection(setOf(boneId), boneId)
+        refreshBoneOverlay()
+    }
+
+    /** Тап по ромбу ◆ кости: кость выбрана, ключ выделен, плейхед на кадре ключа. */
+    fun selectBoneKey(boneId: Int, frame: Int) {
+        if (_bones.value.none { it.id == boneId }) return
+        selectBoneRow(boneId)
+        scrubTo(frame)
+        _keySel.value = setOf(boneId to frame)
+        refreshInspector()
+    }
+
+    private fun activeBoneKeyFrame(b: Bone): Int? =
+        com.vibetoon.domain.anim.BoneKeys.activeFrame(b.id, boneKeyFrames(b.id), _keySel.value, _frame.value)
+
+    /** «Добавить ключ»: ключ позы выбранной кости на текущем кадре (из текущей позы - кость не прыгает). */
+    fun addBoneKey() {
+        val b = selectedBone() ?: run { _state.value = UiState.Message("Сначала выберите кость (инструмент «Выбрать»)"); return }
+        if (_playing.value) return
+        val f = _frame.value
+        if (_animation.value.hasKey(b.id, f)) { _keySel.value = setOf(b.id to f); _state.value = UiState.Message("На этом кадре ключ кости уже есть"); return }
+        checkpoint("bonekey", force = true)
+        val t = effective(b.id)
+        override.remove(b.id)
+        _animation.value = _animation.value.withKey(b.id, f, t)
+        _keySel.value = setOf(b.id to f)
+        pushScene()
+        refreshInspector()
+        markDirty()
+    }
+
+    /** «Удалить ключ»: выделенный ключ кости (или ключ на текущем кадре); поза остаётся на месте. */
+    fun deleteBoneKey() {
+        val b = selectedBone() ?: return
+        if (_playing.value) return
+        val f = activeBoneKeyFrame(b) ?: run { _state.value = UiState.Message("Выберите ключ кости на таймлайне"); return }
+        checkpoint("bonekeydel", force = true)
+        removeKeys(setOf(b.id to f))
+        _keySel.value = _keySel.value - (b.id to f)
+        override.remove(b.id)
+        pushScene()
+        refreshInspector()
+        markDirty()
+    }
+
+    /** «Предыдущий/Следующий ключ» кости: плейхед прыгает на ключ, ключ выделяется. */
+    fun stepBoneKey(direction: Int) {
+        val b = selectedBone() ?: return
+        val frames = boneKeyFrames(b.id)
+        val target = if (direction < 0) com.vibetoon.domain.anim.BoneKeys.prev(frames, _frame.value)
+            else com.vibetoon.domain.anim.BoneKeys.next(frames, _frame.value)
+        if (target == null) { _state.value = UiState.Message("Ключей кости в этом направлении нет"); return }
+        scrubTo(target)
+        _keySel.value = setOf(b.id to target)
+        refreshInspector()
+    }
+
+    /** Плавность перехода от выделенного ключа кости к следующему. */
+    fun setBoneKeyEasing(type: EasingType) {
+        val b = selectedBone() ?: return
+        if (_playing.value) return
+        val f = activeBoneKeyFrame(b) ?: run { _state.value = UiState.Message("Выберите ключ кости на таймлайне"); return }
+        checkpoint("bonekeyease", force = true)
+        _animation.value = _animation.value.withEasing(b.id, f, type)
+        pushScene()
+        refreshInspector()
+        markDirty()
+    }
+
+    /** Свой график (кривая Безье) для выделенного ключа кости: плейхед на ключ и общий редактор кривой. */
+    fun openBoneKeyCurve() {
+        val b = selectedBone() ?: return
+        val f = activeBoneKeyFrame(b) ?: run { _state.value = UiState.Message("Выберите ключ кости на таймлайне"); return }
+        if (_frame.value != f) scrubTo(f)
+        openCurveEditor(true)
     }
 
     private fun nextBoneId(): Int = maxOf(BONE_ID_BASE, (_bones.value.maxOfOrNull { it.id } ?: 0) + 1)

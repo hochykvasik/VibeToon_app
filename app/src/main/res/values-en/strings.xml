@@ -1264,4 +1264,18 @@
     <string name="ui_the_pivot_applies_only_while_draggin">The pivot applies only while dragging and is not saved</string>
     <string name="ui_two_finger_rotation_after_8_snaps_to">Two-finger rotation after 8°, snaps to 0/90/180/270°; view only, export is unchanged</string>
     <string name="ui_drag_the_layer_pivot_on_the_canvas_p">Drag the layer pivot on the canvas; “Pivot to center” is in the inspector</string>
+    <string name="ui_bone_keys">Bone keys: {}</string>
+    <string name="ui_selected_key">Selected key: {}</string>
+    <string name="ui_no_key_selected_tap_a_on_the_timelin">No key selected: tap a ◆ on the timeline</string>
+    <string name="ui_previous_key">◀ Previous key</string>
+    <string name="ui_add_key">◆ Add key</string>
+    <string name="ui_next_key">Next key ▶</string>
+    <string name="ui_delete_key">◇ Delete key</string>
+    <string name="ui_transition_to_the_next_key_2">Transition to the next key</string>
+    <string name="ui_graph">Graph…</string>
+    <string name="ui_this_frame_already_has_a_bone_key">This frame already has a bone key</string>
+    <string name="ui_select_a_bone_key_on_the_timeline">Select a bone key on the timeline</string>
+    <string name="ui_no_bone_keys_in_this_direction">No bone keys in this direction</string>
+    <string name="ui_group_spin_swing_and_stretch_axis_wo">Group: Spin, Swing and Stretch Axis work on the group itself; other effects are unavailable - the chains differ or there are unsupported layers, keys, clipping or locks</string>
+    <string name="ui_group_spin_swing_and_stretch_axis_ap">Group: Spin, Swing and Stretch Axis apply to the group itself (around its pivot, keys on the group row); other effects go to the nested layers</string>
 </resources>

@@ -1124,6 +1124,18 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Пивот действует только на время перетаскивания и не сохраняется" to R.string.ui_the_pivot_applies_only_while_draggin,
     "Поворот после 8° двумя пальцами, снап к 0/90/180/270°; только вид, экспорт не меняется" to R.string.ui_two_finger_rotation_after_8_snaps_to,
     "Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе" to R.string.ui_drag_the_layer_pivot_on_the_canvas_p,
+    "Ключ не выбран: тапните ◆ на таймлайне" to R.string.ui_no_key_selected_tap_a_on_the_timelin,
+    "◀ Предыдущий ключ" to R.string.ui_previous_key,
+    "◆ Добавить ключ" to R.string.ui_add_key,
+    "Следующий ключ ▶" to R.string.ui_next_key,
+    "◇ Удалить ключ" to R.string.ui_delete_key,
+    "Переход к следующему ключу" to R.string.ui_transition_to_the_next_key_2,
+    "График…" to R.string.ui_graph,
+    "На этом кадре ключ кости уже есть" to R.string.ui_this_frame_already_has_a_bone_key,
+    "Выберите ключ кости на таймлайне" to R.string.ui_select_a_bone_key_on_the_timeline,
+    "Ключей кости в этом направлении нет" to R.string.ui_no_bone_keys_in_this_direction,
+    "Группа: Вращение, Качание и Ось растяжения работают у самой группы; остальные эффекты недоступны - цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка" to R.string.ui_group_spin_swing_and_stretch_axis_wo,
+    "Группа: Вращение, Качание и Ось растяжения - у самой группы (вокруг её пивота, ключи на строке группы); остальные эффекты - на вложенных слоях" to R.string.ui_group_spin_swing_and_stretch_axis_ap,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -1237,6 +1249,8 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Привязано\\ к:\\ (.+?)\$" to R.string.ui_bound_to,
     "^Новый\\ проект\\ (.+?)\$" to R.string.ui_new_project_2,
     "^Инструмент\\ «(.+?)»\$" to R.string.ui_tool,
+    "^Ключи\\ кости:\\ (.+?)\$" to R.string.ui_bone_keys,
+    "^Выбран\\ ключ:\\ (.+?)\$" to R.string.ui_selected_key,
     "^Привязать\\ \\((.+?)\\)\$" to R.string.ui_bind,
     "^(.+?)\\ \\(позиция\\ (.+?)\\)\$" to R.string.ui_position,
     "^Добавлено:\\ (.+?)\$" to R.string.ui_added,

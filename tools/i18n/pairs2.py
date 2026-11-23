@@ -955,4 +955,18 @@ Hold - резкая смена формы. Плавно/Линейно - кад�
 Пивот действует только на время перетаскивания и не сохраняется|The pivot applies only while dragging and is not saved
 Поворот после 8° двумя пальцами, снап к 0/90/180/270°; только вид, экспорт не меняется|Two-finger rotation after 8°, snaps to 0/90/180/270°; view only, export is unchanged
 Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе|Drag the layer pivot on the canvas; “Pivot to center” is in the inspector
+Ключи кости: {}|Bone keys: {}
+Выбран ключ: {}|Selected key: {}
+Ключ не выбран: тапните ◆ на таймлайне|No key selected: tap a ◆ on the timeline
+◀ Предыдущий ключ|◀ Previous key
+◆ Добавить ключ|◆ Add key
+Следующий ключ ▶|Next key ▶
+◇ Удалить ключ|◇ Delete key
+Переход к следующему ключу|Transition to the next key
+График…|Graph…
+На этом кадре ключ кости уже есть|This frame already has a bone key
+Выберите ключ кости на таймлайне|Select a bone key on the timeline
+Ключей кости в этом направлении нет|No bone keys in this direction
+Группа: Вращение, Качание и Ось растяжения работают у самой группы; остальные эффекты недоступны - цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка|Group: Spin, Swing and Stretch Axis work on the group itself; other effects are unavailable - the chains differ or there are unsupported layers, keys, clipping or locks
+Группа: Вращение, Качание и Ось растяжения - у самой группы (вокруг её пивота, ключи на строке группы); остальные эффекты - на вложенных слоях|Group: Spin, Swing and Stretch Axis apply to the group itself (around its pivot, keys on the group row); other effects go to the nested layers
 """

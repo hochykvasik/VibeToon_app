@@ -148,6 +148,13 @@ fun TimelinePanel(
     val timeKeyMap by vm.timeKeys.collectAsStateWithLifecycle()
     val multi by vm.multiSelect.collectAsStateWithLifecycle()
     val keySel by vm.keySelection.collectAsStateWithLifecycle()
+    val bones by vm.bones.collectAsStateWithLifecycle()
+    val boneMode by vm.boneMode.collectAsStateWithLifecycle()
+    // строки костей (пакет 7): в режиме «Кости» - все кости, иначе только кости с ключами; ключи - ромбы ◆
+    val boneRows = remember(bones, animation, boneMode) {
+        val byId = bones.associateBy { it.id }
+        com.vibetoon.domain.anim.BoneKeys.rows(bones.map { it.id }, animation.tracks, boneMode).mapNotNull { byId[it] }
+    }
     val timeEaseDialog by vm.timeEaseDialog.collectAsStateWithLifecycle()
     if (timeEaseDialog) AlertDialog(
         onDismissRequest = vm::closeTimeEaseDialog,
@@ -643,6 +650,21 @@ fun TimelinePanel(
                         ) { Text("≡", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)) }
                     }
                 }
+                // Кости с ключами (в режиме «Кости» - все): имя кости и значок ◆
+                for (b in boneRows) {
+                    Row(
+                        Modifier
+                            .width(NAME_W).height(ROW_H)
+                            .background(if (b.id in selection) BONE_KEY_COLOR.copy(alpha = 0.25f) else Color.Transparent)
+                            .combinedClickable(onClick = { vm.selectBoneRow(b.id) })
+                            .padding(start = 4.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text("◆", fontSize = 12.sp, color = BONE_KEY_COLOR)
+                        Text(com.vibetoon.ui.i18n.boneDisplayName(b.name), fontSize = 12.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    }
+                }
                 // Аудио: невизуальные дорожки с именем файла (звук играет при Play)
                 for (a in audio) {
                     Row(
@@ -660,12 +682,19 @@ fun TimelinePanel(
             }
             // Полосы слоёв с ромбами ключей; жест по ним листает таймлайн по горизонтали
             val marquee = remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
-            val rowsNow = rememberUpdatedState(shownRows)
             val animNow = rememberUpdatedState(animation)
             val keySelNow = rememberUpdatedState(keySel)
             val timeKeysNow = rememberUpdatedState(timeKeyMap)
+            val layerRowIds = remember(shownRows) { shownRows.map { it.layer.id } }
+            val layerRowIdsNow = rememberUpdatedState(layerRowIds)
+            val boneRowIdsNow = rememberUpdatedState(boneRows.map { it.id })
+            // строка ключей по индексу: сначала слои и группы, затем кости
+            fun keyRowId(index: Int): Int? = com.vibetoon.domain.anim.BoneKeys.rowIdAt(index, layerRowIdsNow.value, boneRowIdsNow.value)
+            fun keyRowCount() = layerRowIdsNow.value.size + boneRowIdsNow.value.size
             // ключи слоя + ключи времени экземпляра символа: оба вида выделяются, тянутся и копируются одинаково
             fun rowKeyFrames(id: Int): Collection<Int> {
+                if (id >= com.vibetoon.domain.project.BONE_ID_BASE && id in boneRowIdsNow.value)
+                    return com.vibetoon.domain.anim.BoneKeys.frames(id, animNow.value.tracks)
                 val tk = timeKeysNow.value[id] ?: return TrackGroups.frames(id, animNow.value.tracks)
                 return TrackGroups.frames(id, animNow.value.tracks).toHashSet().apply { tk.forEach { add(it.frame) } }
             }
@@ -679,11 +708,11 @@ fun TimelinePanel(
                             val maxStep = 22.dp.toPx()
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                val row = rowsNow.value.getOrNull((down.position.y / rowH).toInt())?.takeIf { !it.isGroup }
-                                val frameHit = row?.let { rowKeyFrames(it.layer.id)
+                                val rowId = keyRowId((down.position.y / rowH).toInt())
+                                val frameHit = rowId?.let { rowKeyFrames(it)
                                     .minByOrNull { f -> abs(f * frameWPx - down.position.x) }
                                     ?.takeIf { f -> abs(f * frameWPx - down.position.x) <= grab } }
-                                if (row == null || frameHit == null) return@awaitEachGesture
+                                if (rowId == null || frameHit == null) return@awaitEachGesture
                                 val cancelled = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
                                     while (true) {
                                         val ev = awaitPointerEvent(PointerEventPass.Initial)
@@ -694,7 +723,7 @@ fun TimelinePanel(
                                     @Suppress("UNREACHABLE_CODE") false
                                 } ?: false
                                 if (cancelled) return@awaitEachGesture
-                                val hit = row.layer.id to frameHit
+                                val hit = rowId to frameHit
                                 val group = keySelNow.value + hit
                                 vm.selectKeys(group)
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -728,12 +757,13 @@ fun TimelinePanel(
                             val grab = 14.dp.toPx()
                             fun keysIn(r: androidx.compose.ui.geometry.Rect): Set<Pair<Int, Int>> {
                                 val out = HashSet<Pair<Int, Int>>()
-                                rowsNow.value.forEachIndexed { i, row ->
+                                for (i in 0 until keyRowCount()) {
                                     val cy = (i + 0.5f) * rowH
-                                    if (row.isGroup || cy < r.top || cy > r.bottom) return@forEachIndexed
-                                    rowKeyFrames(row.layer.id).forEach { f ->
+                                    val id = keyRowId(i)
+                                    if (id == null || cy < r.top || cy > r.bottom) continue
+                                    rowKeyFrames(id).forEach { f ->
                                         val kx = f * frameWPx
-                                        if (kx >= r.left && kx <= r.right) out += row.layer.id to f
+                                        if (kx >= r.left && kx <= r.right) out += id to f
                                     }
                                 }
                                 return out
@@ -741,11 +771,11 @@ fun TimelinePanel(
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                 val rowIdx = (down.position.y / rowH).toInt()
-                                val hit = rowsNow.value.getOrNull(rowIdx)?.takeIf { !it.isGroup }?.let { row ->
-                                    rowKeyFrames(row.layer.id)
+                                val hit = keyRowId(rowIdx)?.let { rid ->
+                                    rowKeyFrames(rid)
                                         .minByOrNull { abs(it * frameWPx - down.position.x) }
                                         ?.takeIf { abs(it * frameWPx - down.position.x) <= grab }
-                                        ?.let { row.layer.id to it }
+                                        ?.let { rid to it }
                                 }
                                 val moving = hit != null
                                 if (hit != null && hit !in keySelNow.value) vm.selectKeys(setOf(hit))
@@ -787,9 +817,10 @@ fun TimelinePanel(
                 ) {
                     for (r in shownRows) {
                         val l = r.layer
-                        val keys = if (r.isGroup) emptyList() else animation.tracks[l.id]?.keys.orEmpty()
-                        // ключи остальных дорожек слоя (Warp, вершины Mesh, пины, Perspective, Turbulent): бледные ромбы
-                        val groupFrames = if (r.isGroup) emptySet() else TrackGroups.frames(l.id, animation.tracks)
+                        // у группы тоже видны её собственные ключи (трансформация и Вращение/Качание/Ось растяжения группы)
+                        val keys = animation.tracks[l.id]?.keys.orEmpty()
+                        // ключи остальных дорожек слоя (Warp, вершины Mesh, пины, Perspective, Turbulent, эффекты): бледные ромбы
+                        val groupFrames = TrackGroups.frames(l.id, animation.tracks)
                         val warpFrames = groupFrames - keys.mapTo(HashSet()) { it.frame }
                         val isSel = l.id in selection
                         val clip = clips[l.id] ?: vm.clipOf(l.id)
@@ -899,6 +930,35 @@ fun TimelinePanel(
                                     if (tk.ease == com.vibetoon.domain.project.TimeEase.HOLD) drawPath(glass, c)
                                     else drawPath(glass, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
                                 }
+                            }
+                            drawPlayhead(frame * frameWPx, playheadColor)
+                        }
+                    }
+                    // Строки костей: ключи позы - ромбы ◆ с белой обводкой (отличаются от ключей слоёв); тап по ромбу
+                    // выбирает кость и ключ и переносит плейхед на кадр ключа, тап мимо - выбирает кость.
+                    for (b in boneRows) {
+                        val bFrames = remember(animation, b.id) { com.vibetoon.domain.anim.BoneKeys.frames(b.id, animation.tracks) }
+                        val bFramesNow = rememberUpdatedState(bFrames)
+                        val bSel = b.id in selection
+                        Canvas(
+                            Modifier
+                                .width(contentW).height(ROW_H)
+                                .background(if (bSel) BONE_KEY_COLOR.copy(alpha = 0.12f) else BONE_KEY_COLOR.copy(alpha = 0.04f))
+                                .pointerInput(b.id, frameWPx) {
+                                    detectTapGestures { pos ->
+                                        val hitF = com.vibetoon.domain.anim.BoneKeys.hit(bFramesNow.value, pos.x, frameWPx, 14.dp.toPx())
+                                        if (hitF != null) vm.selectBoneKey(b.id, hitF) else vm.selectBoneRow(b.id)
+                                    }
+                                }
+                        ) {
+                            drawLine(lineColor, Offset(0f, size.height), Offset(size.width, size.height))
+                            drawLine(BONE_KEY_COLOR.copy(alpha = 0.35f), Offset(0f, size.height / 2f), Offset(size.width, size.height / 2f), strokeWidth = 1f)
+                            for (m in markers) drawLine(markerColor.copy(alpha = 0.5f), Offset(m * frameWPx, 0f), Offset(m * frameWPx, size.height), strokeWidth = 1.5f)
+                            for (f in bFrames) {
+                                val picked = (b.id to f) in keySel
+                                val x = (f + if (picked) keyDragDelta else 0) * frameWPx
+                                if (picked) drawCircle(Color(0xFFFB8C00).copy(alpha = 0.45f), size.height * 0.42f, Offset(x, size.height / 2f))
+                                drawBoneKey(x, size.height / 2f, size.height * 0.3f, if (picked) Color(0xFFFB8C00) else BONE_KEY_COLOR)
                             }
                             drawPlayhead(frame * frameWPx, playheadColor)
                         }
@@ -1092,6 +1152,16 @@ private fun DrawScope.drawMarkerTag(x: Float, color: Color, halfW: Float, h: Flo
 
 private fun DrawScope.drawPlayhead(x: Float, color: Color) {
     drawLine(color, Offset(x, 0f), Offset(x, size.height), strokeWidth = 3f)
+}
+
+/** Цвет ключей костей на таймлайне (голубой, как суставы костей на холсте). */
+private val BONE_KEY_COLOR = Color(0xFF26C6DA)
+
+/** Ключ кости: ромб ◆ с белой обводкой и тёмной сердцевиной - не путается с ромбами/кружками ключей слоёв. */
+private fun DrawScope.drawBoneKey(cx: Float, cy: Float, r: Float, color: Color) {
+    drawDiamond(cx, cy, r + 2.5f, Color.White)
+    drawDiamond(cx, cy, r, color)
+    drawDiamond(cx, cy, r * 0.38f, Color(0xFF102027))
 }
 
 private fun DrawScope.drawDiamond(cx: Float, cy: Float, r: Float, color: Color) {

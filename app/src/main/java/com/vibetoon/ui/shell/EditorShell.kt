@@ -1372,6 +1372,58 @@ private fun LayerPropsPanel(vm: MainViewModel, id: Int, isGroup: Boolean, all: M
     }
 }
 
+/** Ключи позы кости (пакет 7): добавить/удалить, переход между ключами, плавность и график выделенного ключа. */
+@Composable
+private fun BoneKeyControls(vm: MainViewModel, bone: com.vibetoon.domain.project.Bone) {
+    val animation by vm.animation.collectAsStateWithLifecycle()
+    val keySel by vm.keySelection.collectAsStateWithLifecycle()
+    val frame by vm.frame.collectAsStateWithLifecycle()
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val frames = remember(animation, bone.id) { com.vibetoon.domain.anim.BoneKeys.frames(bone.id, animation.tracks) }
+    val active = com.vibetoon.domain.anim.BoneKeys.activeFrame(bone.id, frames, keySel, frame)
+    val easing = active?.let { animation.easingAt(bone.id, it) }
+    val hasCurve = active?.let { animation.curveAt(bone.id, it) } != null
+    val pad = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Ключи кости: ${frames.size}", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+        Text(if (active != null) "Выбран ключ: ${com.vibetoon.domain.anim.TimeFormat.format(active, animation.settings.fps)}" else "Ключ не выбран: тапните ◆ на таймлайне", fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { vm.stepBoneKey(-1) }, enabled = !playing && frames.any { it < frame }, contentPadding = pad, modifier = Modifier.height(32.dp)) {
+                Text("◀ Предыдущий ключ", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = vm::addBoneKey, enabled = !playing && frame !in frames, contentPadding = pad, modifier = Modifier.height(32.dp)) {
+                Text("◆ Добавить ключ", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = { vm.stepBoneKey(1) }, enabled = !playing && frames.any { it > frame }, contentPadding = pad, modifier = Modifier.height(32.dp)) {
+                Text("Следующий ключ ▶", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = vm::deleteBoneKey, enabled = !playing && active != null, contentPadding = pad, modifier = Modifier.height(32.dp)) {
+                Text("◇ Удалить ключ", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
+        }
+        if (active != null) {
+            Text("Переход к следующему ключу", fontSize = 12.sp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                for ((type, title) in listOf(
+                    com.vibetoon.domain.anim.EasingType.LINEAR to "Линейно",
+                    com.vibetoon.domain.anim.EasingType.EASE_IN to "Плавное начало",
+                    com.vibetoon.domain.anim.EasingType.EASE_OUT to "Плавный конец",
+                    com.vibetoon.domain.anim.EasingType.EASE_IN_OUT to "Плавно и там и там",
+                    com.vibetoon.domain.anim.EasingType.STEP to "Ступенька (Hold)"
+                )) androidx.compose.material3.FilterChip(
+                    selected = !hasCurve && easing == type, enabled = !playing, onClick = { vm.setBoneKeyEasing(type) },
+                    label = { Text(title, fontSize = 11.sp, maxLines = 1, softWrap = false) }, modifier = Modifier.height(30.dp)
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = hasCurve, enabled = !playing, onClick = vm::openBoneKeyCurve,
+                    label = { Text("График…", fontSize = 11.sp, maxLines = 1, softWrap = false) }, modifier = Modifier.height(30.dp)
+                )
+            }
+        }
+    }
+}
+
 /** Инспектор кости; общий скролл Properties ограничивает высоту всего содержимого. */
 @Composable
 private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.Bone) {
@@ -1392,6 +1444,7 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
         Text("Длина: ${bone.length.toInt()} px", fontSize = 12.sp)
         Text("Родитель: $parentName", fontSize = 12.sp)
         Text("Привязано слоёв: ${bound.size}", fontSize = 12.sp)
+        BoneKeyControls(vm, bone)
         if (bound.isNotEmpty()) androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxWidth().heightIn(max = 150.dp)
         ) {

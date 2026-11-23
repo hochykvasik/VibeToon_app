@@ -188,6 +188,7 @@ private:
         int bx = 0, by = 0, bw = 0, bh = 0;      // рамка на экране (GL, начало снизу)
         float va[6] = {1.f, 0.f, 0.f, 1.f, 0.f, 0.f};
         uint64_t epoch = 0;
+        int vw = 0, vh = 0;                      // размер экрана, для которого посчитана запись
         bool used = false;
     };
     void bumpEpoch() { ++epoch_; }
@@ -294,6 +295,11 @@ private:
     std::vector<Fbo> fboPool_;                   // свободные FBO
     int fboCreated_ = 0;
     GLuint backdropTex_ = 0, backdropFbo_ = 0;
+    // Кадр редактора рисуется сюда и в конце копируется на окно (из оконной поверхности ничего не читаем).
+    GLuint editorTex_ = 0, editorFbo_ = 0;
+    int editorW_ = 0, editorH_ = 0;
+    bool ensureEditorTarget();
+    void releaseEditorTarget();
 
     std::unordered_map<int, Tex> textures_;
     std::unordered_map<int, Tex> shadowTex_;

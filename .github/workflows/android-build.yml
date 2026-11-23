@@ -32,6 +32,8 @@ jobs:
           /tmp/vibetoon-fx-cache-test
           g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/TexAliasTest.cpp -o /tmp/vibetoon-tex-alias-test
           /tmp/vibetoon-tex-alias-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/FrameTargetPolicyTest.cpp -o /tmp/vibetoon-frame-target-test
+          /tmp/vibetoon-frame-target-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
       - name: Run unit tests
