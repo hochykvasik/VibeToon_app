@@ -1372,4 +1372,16 @@
     <string name="ui_a_key_s_interpolation_lasts_until_th">Интерполяция ключа действует до следующего ключа; ключ слоя задаёт её всем его дорожкам на этом кадре (трансформация и деформации). Тап по строке - перейти к ключу.</string>
     <string name="ui_flips_the_canvas_view_only_export_is">Отражение только вида холста; экспорт не меняется</string>
     <string name="ui_keys_2">Ключей: {}</string>
+    <string name="ui_video_frames_with_sound_aac_stereo_4">Видео {}×{}, {} кадров, со звуком (AAC, стерео 44,1 кГц)</string>
+    <string name="ui_all_project_tracks_and_the_sound_of_">Все дорожки проекта (и звук видео-слоёв) сводятся в один WAV (стерео 44,1 кГц) на всю длительность проекта или сцены. Дорожки «Без звука» пропускаются.</string>
+    <string name="ui_sound">Звук</string>
+    <string name="ui_sound_in_video">Звук в видео</string>
+    <string name="ui_sound_2">Звук…</string>
+    <string name="ui_could_not_add_sound_the_video_was_sa">Звук добавить не удалось - видео сохранено без звука</string>
+    <string name="ui_with_sound_aac_stereo_44_1_khz">Со звуком: AAC, стерео 44,1 кГц</string>
+    <string name="ui_mixing_and_encoding_sound">Кодирование и сведение звука: {}%</string>
+    <string name="ui_imported_images_are_downscaled_to_th">Картинки при импорте уменьшаются до длинной стороны холста (512-2048 px): меньше памяти и файлов проекта; видео не меняется</string>
+    <string name="ui_tool_panel_shown">Панель инструмента показана</string>
+    <string name="ui_tool_panel_hidden_tap_the_tool_again">Панель инструмента скрыта: тап по нему ещё раз вернёт её</string>
+    <string name="ui_keys_volume_changes_linearly_between_3">Ключей: {}. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки, в WAV и в звуке MP4 (у видео - его звуковая дорожка).</string>
 </resources>

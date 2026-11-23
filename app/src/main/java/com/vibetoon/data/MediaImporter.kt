@@ -63,6 +63,37 @@ class MediaImporter(private val context: Context) {
         return DecodedMedia(bmp, bmp.width, bmp.height)
     }
 
+    /**
+     * Пакет 12 (Resolution Limit): перезаписывает файл картинки уменьшенной копией, если длинная сторона больше [limit].
+     * JPEG остаётся JPEG (качество 92), остальное - PNG с прозрачностью. false - уменьшать не нужно или не удалось.
+     */
+    fun downscaleFile(file: File, limit: Int): Boolean {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (!com.vibetoon.domain.project.ImportLimit.needsDownscale(bounds.outWidth, bounds.outHeight, limit)) return false
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= limit) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        var bmp = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return false
+        val jpeg = bounds.outMimeType == "image/jpeg"
+        bmp = applyExifRotation(file, bmp)   // поворот запекается: у новой копии EXIF нет
+        val (w, h) = com.vibetoon.domain.project.ImportLimit.scaled(bmp.width, bmp.height, limit)
+        val out = if (w != bmp.width || h != bmp.height) Bitmap.createScaledBitmap(bmp, w, h, true).also { if (it !== bmp) bmp.recycle() } else bmp
+        val tmp = File(file.path + ".tmp")
+        return try {
+            tmp.outputStream().buffered().use { os -> out.compress(if (jpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG, 92, os) }
+            if (!file.delete() || !tmp.renameTo(file)) { tmp.copyTo(file, overwrite = true); tmp.delete() }
+            Log.i(TAG, "resolution limit ${file.name}: ${bounds.outWidth}x${bounds.outHeight} -> ${w}x$h")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "downscale failed: ${e.message}")
+            tmp.delete()
+            false
+        } finally {
+            out.recycle()
+        }
+    }
+
     /** MP4: первый кадр как статичная текстура; сам проигрыватель появится позже. */
     fun decodeVideoFrame(file: File): DecodedMedia {
         val r = MediaMetadataRetriever()

@@ -487,7 +487,7 @@ private fun VolumeTab(vm: MainViewModel, id: Int, frame: Int) {
             OutlinedButton(onClick = { vm.setVolumeKey(id, cur) }) { Text(if (vm.hasVolumeKeyHere(id)) "Ключ стоит" else "Поставить ключ", fontSize = 13.sp, maxLines = 1) }
             OutlinedButton(onClick = { vm.removeVolumeKey(id) }, enabled = vm.hasVolumeKeyHere(id)) { Text("Убрать ключ", fontSize = 13.sp, maxLines = 1) }
         }
-        Text("Ключей: $keys. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки и в WAV (у видео - его звуковая дорожка). В MP4 звука пока нет.", fontSize = 11.sp,
+        Text("Ключей: $keys. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки, в WAV и в звуке MP4 (у видео - его звуковая дорожка).", fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
     }
 }

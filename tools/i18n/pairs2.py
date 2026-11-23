@@ -1063,4 +1063,16 @@ PSD проекта уже разложен на слои; вставка дру�
 Интерполяция ключа действует до следующего ключа; ключ слоя задаёт её всем его дорожкам на этом кадре (трансформация и деформации). Тап по строке - перейти к ключу.|A key's interpolation lasts until the next key; a layer key sets it for all of the layer's tracks on that frame (transform and deformers). Tap a row to go to the key.
 Отражение только вида холста; экспорт не меняется|Flips the canvas view only; export is unchanged
 Ключей: {}|Keys: {}
+Видео {}×{}, {} кадров, со звуком (AAC, стерео 44,1 кГц)|Video {}×{}, {} frames, with sound (AAC, stereo 44.1 kHz)
+Все дорожки проекта (и звук видео-слоёв) сводятся в один WAV (стерео 44,1 кГц) на всю длительность проекта или сцены. Дорожки «Без звука» пропускаются.|All project tracks (and the sound of video layers) are mixed into one WAV (stereo 44.1 kHz) for the whole project or scene. Muted tracks are skipped.
+Звук|Sound
+Звук в видео|Sound in video
+Звук…|Sound…
+Звук добавить не удалось - видео сохранено без звука|Could not add sound - the video was saved without sound
+Со звуком: AAC, стерео 44,1 кГц|With sound: AAC, stereo 44.1 kHz
+Кодирование и сведение звука: {}%|Mixing and encoding sound: {}%
+Картинки при импорте уменьшаются до длинной стороны холста (512-2048 px): меньше памяти и файлов проекта; видео не меняется|Imported images are downscaled to the canvas's long side (512-2048 px): less memory and smaller project files; videos are unchanged
+Панель инструмента показана|Tool panel shown
+Панель инструмента скрыта: тап по нему ещё раз вернёт её|Tool panel hidden: tap the tool again to bring it back
+Ключей: {}. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки, в WAV и в звуке MP4 (у видео - его звуковая дорожка).|Keys: {}. Volume changes linearly between keys; it holds before the first and after the last. Works in playback, ruler scrubbing, WAV and MP4 sound (for video - its own audio track).
 """

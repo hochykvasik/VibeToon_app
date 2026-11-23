@@ -187,38 +187,29 @@ class AudioEngine {
         }
     }
 
-    /** Стерео 44.1 кГц: сумма дорожек, ресемплинг по клипу (скорость, реверс, смещение), fade-in/out по [FADE_MS]. */
     /**
-     * Сведение всех дорожек проекта в стерео 44.1 кГц на всю длительность ([frames] кадров при [fps]): клипы, скорость, реверс и смещения как при воспроизведении.
-     * null - дорожек нет или они ещё декодируются.
+     * Пакет 12: источники сведения для экспорта (MP4 и WAV) - снимок PCM, клипов и ключей громкости;
+     * дорожки «Без звука» и файлы без звуковой дорожки не входят. Пусто - звука нет или он не декодирован.
      */
-    fun mixdown(frames: Int, fps: Int, clipOf: (Int) -> Clip): ShortArray? {
-        val src = files.mapNotNull { (id, f) -> if (id in muted) null else pcm[f]?.let { ScrubSrc(it, clipOf(id), volumes[id].orEmpty()) } }
-        if (src.isEmpty()) return null
-        val n = (frames.toLong() * OUT_SR / fps).toInt()
-        val out = ShortArray(n * 2)
-        for (k in 0 until n) {
-            var l = 0; var rr = 0
-            val t = k.toDouble() * fps / OUT_SR
-            for (s in src) {
-                val p = s.p; val clip = s.clip; val ch = p.channels
-                if (t < clip.start || t >= clip.end) continue
-                val rel = t - clip.start
-                val srcFrame = if (!clip.reverse) clip.offset + rel * clip.speed else clip.offset + clip.length * clip.speed - rel * clip.speed
-                val pos = srcFrame / fps * p.sampleRate
-                val i0 = Math.floor(pos).toInt()
-                if (pos < 0 || i0 + 1 >= p.frames) continue
-                val frac = (pos - i0).toFloat()
-                fun at(c: Int): Int { val a = p.data[i0 * ch + c].toInt(); val b = p.data[(i0 + 1) * ch + c].toInt(); return (a + (b - a) * frac).toInt() }
-                val gv = if (s.vol.isEmpty()) 1f else com.vibetoon.domain.project.VolumeMath.at(s.vol, t)
-                val left = (at(0) * gv).toInt()
-                l += left
-                rr += if (ch > 1) (at(1) * gv).toInt() else left
-            }
-            out[k * 2] = l.coerceIn(-32768, 32767).toShort()
-            out[k * 2 + 1] = rr.coerceIn(-32768, 32767).toShort()
+    fun exportSources(clipOf: (Int) -> Clip): List<com.vibetoon.domain.project.ScrubAudio.Source> =
+        files.mapNotNull { (id, f) ->
+            if (id in muted || f in noAudio) null
+            else pcm[f]?.let { p -> com.vibetoon.domain.project.ScrubAudio.Source(p.data, p.sampleRate, p.channels, clipOf(id), volumes[id].orEmpty()) }
         }
-        return out
+
+    /** Ждёт декодирования всех звучащих дорожек (не дольше [timeoutMs]); ошибки отдельных файлов не прерывают экспорт. */
+    suspend fun awaitAllDecoded(timeoutMs: Long = 60_000) {
+        val list = files.filter { (id, f) -> id !in muted && f !in noAudio && !pcm.containsKey(f) }.values.toList()
+        if (list.isEmpty()) return
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { for (f in list) runCatching { awaitScrubReady(f) } }
+    }
+
+    /** Сведение отрезка проекта для WAV: [frames] кадров проекта при [fps] с кадра [startFrame]. null - звука нет. */
+    fun mixdown(frames: Int, fps: Int, clipOf: (Int) -> Clip, startFrame: Int = 0): ShortArray? {
+        val src = exportSources(clipOf)
+        if (src.isEmpty()) return null
+        val n = com.vibetoon.domain.export.AudioMix.sampleCount(frames, fps, OUT_SR)
+        return com.vibetoon.domain.export.AudioMix.renderAll(src, startFrame, fps, OUT_SR, n)
     }
 
     fun mixSampleRate() = OUT_SR

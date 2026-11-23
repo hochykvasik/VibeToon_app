@@ -170,6 +170,8 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
     androidx.compose.runtime.LaunchedEffect(tool, boneMode, mesh) { vm.setLiquifyTool(tool == ToolId.LIQUIFY.name && !boneMode && !mesh) }
     androidx.compose.runtime.LaunchedEffect(tool, boneMode, mesh) { vm.setPerspTool(tool == ToolId.PERSPECTIVE.name && !boneMode && !mesh) }
     val paintOn by vm.paintTool.collectAsStateWithLifecycle()
+    // Пакет 12: повторный тап по активному инструменту прячет/показывает его панель настроек (у кисти и ластика - открывает набор кистей)
+    var toolRowHidden by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(tool, boneMode, mesh) {
         vm.setPaintTool(
             if (boneMode || mesh) null else when (tool) {
@@ -248,13 +250,22 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                     Row(Modifier.weight(1f).fillMaxWidth()) {
                         if (!full) CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) { Box(Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start))) { LeftToolbar(
                             tool, wide, boneMode, mesh, boneToolNow, meshToolNow, vm,
-                            onPick = { t ->
+                            onPick = pick@{ t ->
+                                val again = tool == t.name && !boneMode && !mesh
+                                if (again && t != ToolId.TEXT) {
+                                    if (t == ToolId.BRUSH || t == ToolId.ERASER) { toolRowHidden = false; vm.toggleBrushMenu() }
+                                    else if (t in TOOLS_WITH_ROW) {
+                                        toolRowHidden = !toolRowHidden
+                                        vm.showMessage(if (toolRowHidden) "Панель инструмента скрыта: тап по нему ещё раз вернёт её" else "Панель инструмента показана")
+                                    }
+                                    return@pick
+                                }
+                                toolRowHidden = false
                                 when (t) {
                                     ToolId.TEXT -> add.text()
                                     ToolId.TRANSFORM, ToolId.WARP, ToolId.PERSPECTIVE, ToolId.LIQUIFY, ToolId.BRUSH, ToolId.ERASER,
                                     ToolId.FILL, ToolId.PIPETTE, ToolId.SELECTION, ToolId.SMUDGE, ToolId.PATH -> tool = t.name
                                     else -> {
-                                        val again = tool == t.name
                                         tool = t.name
                                         if (again && t in BRUSH_LIKE) stub("Настройки инструмента «${t.title}»") else stub("Инструмент «${t.title}»")
                                     }
@@ -282,14 +293,14 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                         .clip(CircleShape).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
                                 ) { Icon(Icons.Default.FullscreenExit, "Выйти из полного экрана") }
                                 androidx.compose.animation.AnimatedVisibility(
-                                    visible = warpOn && !full, modifier = Modifier.align(Alignment.TopStart),
+                                    visible = warpOn && !full && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
                                     enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
                                     exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
                                 ) {
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { WarpToolRow(vm) }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
-                                    visible = liqOn && !full, modifier = Modifier.align(Alignment.TopStart),
+                                    visible = liqOn && !full && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
                                     enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
                                     exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
                                 ) {
@@ -312,14 +323,14 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                     }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
-                                    visible = paintOn != null && !full && !boneMode && !mesh, modifier = Modifier.align(Alignment.TopStart),
+                                    visible = paintOn != null && !full && !boneMode && !mesh && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
                                     enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
                                     exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
                                 ) {
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { PaintToolRow(vm) { showColor = true } }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
-                                    visible = perspOn && !full, modifier = Modifier.align(Alignment.TopStart),
+                                    visible = perspOn && !full && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
                                     enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
                                     exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
                                 ) {
@@ -340,7 +351,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { BoneToolRow(vm) }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
-                                    visible = rasterOn != null && !full && !boneMode && !mesh, modifier = Modifier.align(Alignment.TopStart),
+                                    visible = rasterOn != null && !full && !boneMode && !mesh && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
                                     enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
                                     exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
                                 ) {
@@ -988,6 +999,9 @@ enum class ToolId(val title: String, val icon: ImageVector) {
 
 /** Повторное нажатие этих инструментов открывает настройки кисти. */
 private val BRUSH_LIKE = setOf(ToolId.BRUSH, ToolId.ERASER, ToolId.SMUDGE)
+
+/** Пакет 12: инструменты с панелью настроек над холстом - повторный тап прячет/показывает её. */
+private val TOOLS_WITH_ROW = setOf(ToolId.SELECTION, ToolId.SMUDGE, ToolId.FILL, ToolId.PIPETTE, ToolId.PATH, ToolId.WARP, ToolId.PERSPECTIVE, ToolId.LIQUIFY)
 
 /** Один значок на левой панели; обычные инструменты и контекстные (кости, сетка) рисуются одинаково. */
 @Composable

@@ -96,7 +96,9 @@ class AppSettings(context: Context) {
     /** Касание двумя пальцами - Undo, тремя - Redo (по умолчанию выключено, чтобы не мешать жестам камеры). */
     /** Пакет 10: «Import Images as Symbols» - «+ Изображение» сразу создаёт символ с экземпляром. */
     var importImagesAsSymbols by mutableStateOf(p.getBoolean("import_images_as_symbols", false))
-    fun saveImport() { p.edit().putBoolean("import_images_as_symbols", importImagesAsSymbols).apply() }
+    /** Пакет 12: Resolution Limit - картинки при импорте уменьшаются до длинной стороны холста. */
+    var resolutionLimit by mutableStateOf(p.getBoolean("import_resolution_limit", false))
+    fun saveImport() { p.edit().putBoolean("import_images_as_symbols", importImagesAsSymbols).putBoolean("import_resolution_limit", resolutionLimit).apply() }
     var tap2Undo by mutableStateOf(p.getBoolean("tap2", false))
     var tap3Redo by mutableStateOf(p.getBoolean("tap3", false))
     fun saveGestures() { p.edit().putBoolean("tap2", tap2Undo).putBoolean("tap3", tap3Redo).apply() }
@@ -187,6 +189,7 @@ class AppSettings(context: Context) {
         selectionMaskVisible = p.getBoolean("selection_mask_visible", true)
         boneColors = p.getBoolean("bone_colors", false)
         importImagesAsSymbols = p.getBoolean("import_images_as_symbols", false)
+        resolutionLimit = p.getBoolean("import_resolution_limit", false)
         tap2Undo = p.getBoolean("tap2", false)
         tap3Redo = p.getBoolean("tap3", false)
         hotkeys.clear()

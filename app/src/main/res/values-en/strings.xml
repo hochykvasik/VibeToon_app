@@ -1372,4 +1372,16 @@
     <string name="ui_a_key_s_interpolation_lasts_until_th">A key\'s interpolation lasts until the next key; a layer key sets it for all of the layer\'s tracks on that frame (transform and deformers). Tap a row to go to the key.</string>
     <string name="ui_flips_the_canvas_view_only_export_is">Flips the canvas view only; export is unchanged</string>
     <string name="ui_keys_2">Keys: {}</string>
+    <string name="ui_video_frames_with_sound_aac_stereo_4">Video {}×{}, {} frames, with sound (AAC, stereo 44.1 kHz)</string>
+    <string name="ui_all_project_tracks_and_the_sound_of_">All project tracks (and the sound of video layers) are mixed into one WAV (stereo 44.1 kHz) for the whole project or scene. Muted tracks are skipped.</string>
+    <string name="ui_sound">Sound</string>
+    <string name="ui_sound_in_video">Sound in video</string>
+    <string name="ui_sound_2">Sound…</string>
+    <string name="ui_could_not_add_sound_the_video_was_sa">Could not add sound - the video was saved without sound</string>
+    <string name="ui_with_sound_aac_stereo_44_1_khz">With sound: AAC, stereo 44.1 kHz</string>
+    <string name="ui_mixing_and_encoding_sound">Mixing and encoding sound: {}%</string>
+    <string name="ui_imported_images_are_downscaled_to_th">Imported images are downscaled to the canvas\'s long side (512-2048 px): less memory and smaller project files; videos are unchanged</string>
+    <string name="ui_tool_panel_shown">Tool panel shown</string>
+    <string name="ui_tool_panel_hidden_tap_the_tool_again">Tool panel hidden: tap the tool again to bring it back</string>
+    <string name="ui_keys_volume_changes_linearly_between_3">Keys: {}. Volume changes linearly between keys; it holds before the first and after the last. Works in playback, ruler scrubbing, WAV and MP4 sound (for video - its own audio track).</string>
 </resources>

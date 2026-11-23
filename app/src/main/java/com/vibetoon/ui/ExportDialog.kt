@@ -71,6 +71,9 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
             var gifAlpha by remember { mutableStateOf(false) }
             var sequenceAlpha by remember { mutableStateOf(false) }
             var jpeg by remember { mutableStateOf(false) }
+            // пакет 12: звук прямо в MP4 (по умолчанию включён, если в проекте есть звук)
+            val hasSound = remember { vm.projectHasSound() }
+            var withAudio by remember { mutableStateOf(true) }
             // пакет 9: экспорт только сцены под плейхедом
             val scene = remember { vm.activeRange() ?: vm.currentScene() }
             // открыта сцена - по умолчанию экспортируется она (пакет 10)
@@ -102,7 +105,7 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                                 androidx.compose.material3.FilterChip(selected = mode == m, onClick = { mode = m }, label = { Text(m.title) })
                             }
                         }
-                        if (scene != null && (mode == ExportMode.VIDEO || mode == ExportMode.GIF || mode == ExportMode.SEQUENCE))
+                        if (scene != null && (mode == ExportMode.VIDEO || mode == ExportMode.GIF || mode == ExportMode.SEQUENCE || mode == ExportMode.AUDIO))
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
                                 androidx.compose.material3.Switch(checked = sceneOnly, onCheckedChange = { sceneOnly = it })
                                 Text(com.vibetoon.ui.i18n.L("Только сцена") + " «" + com.vibetoon.ui.timeline.sceneDisplayName(scene.name) + "»", fontSize = 13.sp)
@@ -127,7 +130,7 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                         } else if (mode == ExportMode.PSD) {
                             Text("Многослойный PSD текущего кадра: слои и группы сохраняются, режимы наложения тоже. Текст, видео, символы и вектор идут как растр; прозрачность слоя запекается в пиксели.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(top = 8.dp))
                         } else if (mode == ExportMode.AUDIO) {
-                            Text("Все дорожки проекта сводятся в один WAV (стерео 44,1 кГц) на всю длительность проекта.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(top = 8.dp))
+                            Text("Все дорожки проекта (и звук видео-слоёв) сводятся в один WAV (стерео 44,1 кГц) на всю длительность проекта или сцены. Дорожки «Без звука» пропускаются.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(top = 8.dp))
                         } else if (mode == ExportMode.PROJECT) {
                             Text("Резервная копия проекта со всеми файлами. Её можно импортировать на экране проектов.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.padding(top = 8.dp))
                         } else if (mode == ExportMode.GIF) {
@@ -157,7 +160,11 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                                 }
                             }
                         }
-                        if (mode == ExportMode.VIDEO) Text("Видео ${w}×$h, $frames кадров, без звука", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                        if (mode == ExportMode.VIDEO && hasSound) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                            androidx.compose.material3.Switch(checked = withAudio, onCheckedChange = { withAudio = it })
+                            Text("Звук в видео", fontSize = 13.sp)
+                        }
+                        if (mode == ExportMode.VIDEO) Text(if (hasSound && withAudio) "Видео ${w}×$h, $frames кадров, со звуком (AAC, стерео 44,1 кГц)" else "Видео ${w}×$h, $frames кадров, без звука", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                     }
                 },
                 confirmButton = {
@@ -169,7 +176,7 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                             ExportMode.PSD -> vm.exportPsd()
                             ExportMode.PROJECT -> backupLauncher.launch("${vm.projectName.value}.tsproj")
                             ExportMode.IMAGE -> vm.exportStill(jpeg)
-                            else -> vm.startExport(quality, fps)
+                            else -> vm.startExport(quality, fps, hasSound && withAudio)
                         }
                     }, enabled = mode.ready) { Text("Экспорт") }
                 },
@@ -179,11 +186,11 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
 
         is ExportUi.Running -> AlertDialog(
             onDismissRequest = {},
-            title = { Text("Рендер…") },
+            title = { Text(if (s.phase != null) "Звук…" else "Рендер…") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     LinearProgressIndicator(progress = { s.done / s.total.coerceAtLeast(1).toFloat() }, modifier = Modifier.fillMaxWidth())
-                    Text("Кадр ${s.done} из ${s.total}")
+                    if (s.phase != null) Text("Кодирование и сведение звука: ${s.done}%") else Text("Кадр ${s.done} из ${s.total}")
                 }
             },
             confirmButton = { TextButton(vm::cancelExport) { Text("Отмена") } }
@@ -196,7 +203,7 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                 val message = if (s.gallerySaved) "${s.file.length() / 1024} КБ. Сохранено в папку проекта и в галерею."
                     else if (s.file.extension.lowercase() in setOf("png", "jpg", "gif", "mp4")) "${s.file.length() / 1024} КБ. Сохранено в папку проекта; копию в галерею создать не удалось."
                     else "${s.file.length() / 1024} КБ. Сохранено в папку проекта."
-                Text(s.file.name + "\n" + com.vibetoon.ui.i18n.L(message))
+                Text(s.file.name + "\n" + com.vibetoon.ui.i18n.L(message) + (s.note?.let { "\n" + com.vibetoon.ui.i18n.L(it) } ?: ""))
             },
             confirmButton = { TextButton({ share(ctx, s.file, shareTitle) }) { Text("Поделиться") } },
             dismissButton = { TextButton({ vm.dismissExport(); onHide() }) { Text("Закрыть") } }
