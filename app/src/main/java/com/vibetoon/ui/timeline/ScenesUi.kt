@@ -160,7 +160,7 @@ fun ScenesDialog(vm: MainViewModel, scenes: List<SceneRange>, current: SceneRang
                     OutlinedButton(onClick = vm::addScene) { Text("+ Новая сцена", maxLines = 1, softWrap = false) }
                     OutlinedButton(onClick = vm::splitSceneAtPlayhead) { Text("Разрезать на плейхеде", maxLines = 1, softWrap = false) }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     OutlinedButton(onClick = { vm.stepScene(-1) }, enabled = scenes.isNotEmpty()) { Text("◀ Предыдущая", maxLines = 1, softWrap = false) }
                     OutlinedButton(onClick = { vm.stepScene(1) }, enabled = scenes.isNotEmpty()) { Text("Следующая ▶", maxLines = 1, softWrap = false) }
                 }
