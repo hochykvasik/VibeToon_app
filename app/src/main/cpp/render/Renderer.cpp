@@ -874,7 +874,7 @@ int Renderer::hitTest(float sx, float sy) const {
     const float py = (-a[1] * dx + a[0] * dy) / det;
     for (size_t i = scene_.size(); i-- > 0;) {
         const Item& it = scene_[i];
-        if (it.op != kLayer || it.opacity < 0.01f) continue;
+        if (it.op != kLayer || it.opacity < 0.01f || !maskpolicy::hittable(it.flags)) continue;   // слой-маска касанием не ловится
         const float a = it.m[0], b = it.m[1], c = it.m[2], d = it.m[3];
         const float det = a * d - b * c;
         if (std::fabs(det) < 1e-9f) continue;   // вырожденная матрица
@@ -1656,6 +1656,33 @@ void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool cli
     curTurb_ = nullptr;
 }
 
+// Слой внутри маски «Маски по слою» рисуется без шейдерных эффектов: кэш эффектов хранится по id слоя, а тот же слой
+// в этом кадре рисуется ещё раз с растяжением. Маска - форма слоя (с его деформерами) без растяжения.
+void Renderer::drawItem(const Item& it, float opacity, int blend, bool clipMode) {
+    if (maskpolicy::plainDraw(it.flags)) drawLayerPlain(it, opacity, blend, clipMode);
+    else drawLayer(it, opacity, blend, clipMode);
+}
+
+// Текущая цель умножается на альфу маски: цвет и альфа (premultiplied) * maskAlpha.
+void Renderer::multiplyByMask(const Fbo& mask) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, mask.tex);
+    glUseProgram(progTex_);
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_ZERO, GL_SRC_ALPHA, GL_ZERO, GL_SRC_ALPHA);
+    glUniform1i(uTexSampler_, 0);
+    glUniformMatrix3fv(uTexMvp_, 1, GL_FALSE, kFullscreen);
+    glUniform1f(uTexOpacity_, 1.f);
+    glUniform1f(uTexLod_, 0.f);
+    glUniform1i(uTexMesh_, 0);
+    glUniform1i(uTexPersp_, 0);
+    glUniform4f(uTexTurb_, 0.f, 0.f, 0.f, 0.f);
+    glUniform1i(uTexWarp_, 0);
+    curMesh_ = nullptr;
+    drawQuadOrGrid(nullptr);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+}
+
 // Накладывает готовый FBO (группу или clipping-цепочку) на текущую цель.
 void Renderer::compositeFbo(const Fbo& f, float opacity, int blend) {
     drawTexture(f.tex, kFullscreen, opacity, blend, false);
@@ -1716,14 +1743,16 @@ bool Renderer::drawFrame() {
 
     // Обход потока операций снизу вверх.
     std::vector<Frame> stack;
+    std::vector<Fbo> masks;   // готовые маски «Маски по слою» (пакет 26)
     const size_t n = scene_.size();
     for (size_t i = 0; i < n; ++i) {
         const Item& it = scene_[i];
 
         if (it.op == kBeginGroup) {
-            // FBO нужен, только если у группы прозрачность < 1 или режим не Normal/Pass-through.
-            const bool isolated = (it.blend != kNormal && it.blend != kPass) || it.opacity < 0.999f;
-            Frame f{isolated, it.opacity, it.blend, curFbo_, {}};
+            // FBO нужен, только если у группы прозрачность < 1 или режим не Normal/Pass-through; маске и группе под маской - всегда.
+            const int mflags = it.flags & (kFlagMaskSrc | kFlagMasked);
+            const bool isolated = maskpolicy::isolated(mflags, it.blend == kNormal || it.blend == kPass, it.opacity);
+            Frame f{isolated, it.opacity, it.blend, curFbo_, {}, mflags};
             if (isolated) f.fbo = acquireFbo();  // делает FBO текущей целью
             stack.push_back(f);
 
@@ -1731,7 +1760,17 @@ bool Renderer::drawFrame() {
             if (stack.empty()) continue;
             const Frame f = stack.back();
             stack.pop_back();
-            if (f.isolated) {
+            if (!maskpolicy::composites(f.flags)) {
+                // маска не накладывается: ждёт следующую группу kFlagMasked
+                bindTarget(f.parentFbo);
+                masks.push_back(f.fbo);
+            } else if (f.isolated) {
+                if ((f.flags & kFlagMasked) && !masks.empty()) {
+                    const Fbo m = masks.back();
+                    masks.pop_back();
+                    multiplyByMask(m);   // цель сейчас - FBO этой группы
+                    releaseFbo(m);
+                }
                 bindTarget(f.parentFbo);
                 compositeFbo(f.fbo, f.opacity, f.blend);
                 releaseFbo(f.fbo);
@@ -1744,14 +1783,14 @@ bool Renderer::drawFrame() {
                 while (j < n && scene_[j].op == kLayer && (scene_[j].flags & kFlagClipped)) ++j;
 
             if (j == i + 1) {
-                drawLayer(it, it.opacity, it.blend, false);  // обычный слой, без буферов
+                drawItem(it, it.opacity, it.blend, false);  // обычный слой, без буферов
             } else {
                 // База + clipped-слои рисуются в отдельный FBO: база с opacity 1, clipped по её альфе.
                 // Затем результат кладётся на родителя с opacity и режимом БАЗЫ.
                 const GLuint parent = curFbo_;
                 const Fbo f = acquireFbo();
-                drawLayer(it, 1.f, kNormal, false);
-                for (size_t k = i + 1; k < j; ++k) drawLayer(scene_[k], scene_[k].opacity, scene_[k].blend, true);
+                drawItem(it, 1.f, kNormal, false);
+                for (size_t k = i + 1; k < j; ++k) drawItem(scene_[k], scene_[k].opacity, scene_[k].blend, true);
                 bindTarget(parent);
                 compositeFbo(f, it.opacity, it.blend);
                 releaseFbo(f);
@@ -1765,10 +1804,12 @@ bool Renderer::drawFrame() {
         stack.pop_back();
         if (f.isolated) {
             bindTarget(f.parentFbo);
-            compositeFbo(f.fbo, f.opacity, f.blend);
+            if (maskpolicy::composites(f.flags)) compositeFbo(f.fbo, f.opacity, f.blend);
             releaseFbo(f.fbo);
         }
     }
+    for (const Fbo& m : masks) releaseFbo(m);   // маска без группы под ней (не должно быть) - просто освобождается
+    masks.clear();
 
     glDisable(GL_SCISSOR_TEST);   // blit учитывает scissor: копия на окно/поверхность - целиком
     if (exportToSurface_) {

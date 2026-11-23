@@ -1530,4 +1530,7 @@
     <string name="ui_layer_moved_to_the_top_of_the_group">Слой перенесён наверх группы</string>
     <string name="ui_layer_moved_to_the_bottom_of_the_gro">Слой перенесён вниз группы</string>
     <string name="ui_group_created_layers_psd_and_images_">Группа создана: слоёв {} (PSD и картинки вперемешку)</string>
+    <string name="ui_mask_to_layer">Маска по слою</string>
+    <string name="ui_off">Выкл</string>
+    <string name="ui_on">Вкл</string>
 </resources>

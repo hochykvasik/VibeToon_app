@@ -33,6 +33,8 @@ object EffectMath {
     /** Волны Swing (значение параметра «Волна»). */
     const val WAVE_SINE = 0; const val WAVE_TRIANGLE = 1; const val WAVE_SQUARE = 2; const val WAVE_SAW = 3
     val WAVE_NAMES = listOf("Синусоида", "Треугольник", "Меандр", "Пила")
+    /** Переключатель-параметр: 0 - выкл, 1 - вкл (в ключах - порог 0.5). */
+    val ON_OFF = listOf("Выкл", "Вкл")
     const val MAX_PER_LAYER = 8
     const val RECORD = 10
 
@@ -70,7 +72,9 @@ object EffectMath {
             FxParam("Сила, px", 0f, 120f, 20f), FxParam("Масштаб карты, px", 4f, 400f, 80f), FxParam("Скорость", 0f, 5f, 0.5f))),
         FxDef(SPIN, "Вращение", "Spin", EffectCategory.NOISE_MOTION, listOf(FxParam("Скорость, °/с", -720f, 720f, 90f))),
         FxDef(STRETCH_AXIS, "Ось растяжения", "Stretch Axis", EffectCategory.DISTORT, listOf(
-            FxParam("Масштаб", 0.05f, 5f, 1.25f), FxParam("Угол, °", -180f, 180f, 0f))),
+            FxParam("Масштаб", 0.05f, 5f, 1.25f), FxParam("Угол, °", -180f, 180f, 0f),
+            // Пакет 26: «Маска по слою» - растянутый слой виден только в пределах своей формы без растяжения
+            FxParam("Маска по слою", 0f, 1f, 0f, ON_OFF))),
         FxDef(SWING, "Качание", "Swing", EffectCategory.NOISE_MOTION, listOf(
             FxParam("Частота, Гц", 0f, 10f, 1f), FxParam("Угол 1, °", -360f, 360f, -15f), FxParam("Угол 2, °", -360f, 360f, 15f),
             FxParam("Начальная фаза", 0f, 1f, 0f), FxParam("Волна", 0f, 3f, 0f, WAVE_NAMES)))
@@ -106,6 +110,9 @@ object EffectMath {
         val kk = if (k.isFinite()) k.coerceIn(0.05f, 5f) else 1f
         return com.vibetoon.domain.model.Affine2D.rotate(a) * com.vibetoon.domain.model.Affine2D.scale(kk, 1f) * com.vibetoon.domain.model.Affine2D.rotate(-a)
     }
+
+    /** «Маска по слою» включена у «Оси растяжения» с параметрами [p] (третий параметр, порог 0.5; старые эффекты - выкл). */
+    fun stretchMasked(p: List<Float>): Boolean = p.getOrElse(2) { 0f }.let { it.isFinite() && it >= 0.5f }
 
     fun def(type: Int): FxDef? = DEFS.firstOrNull { it.type == type }
 

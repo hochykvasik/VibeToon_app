@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "render/LayerBounds.h"
+#include "render/MaskPolicy.h"
 
 namespace vt {
 
@@ -147,6 +148,11 @@ private:
     enum Blend { kNormal = 0, kMultiply = 1, kScreen = 2, kOverlay = 3, kPass = 4, kSoftLight = 5, kAdd = 6, kDarken = 7, kLighten = 8, kColorDodge = 9, kColorBurn = 10 };
     static constexpr int kFlagClipped = 1;
     static constexpr int kFlagHitBbox = 2;   // hit-test по всей рамке (текст)
+    // Пакет 26, «Маска по слою» у «Оси растяжения»: группа kFlagMaskSrc рисует маску (слой без растяжения) в свой FBO
+    // и не накладывается; следующая группа kFlagMasked умножается на альфу этой маски. Слои внутри маски несут
+    // kFlagMaskSrc: рисуются без шейдерных эффектов (кэш эффектов - по id слоя) и не ловятся касанием.
+    static constexpr int kFlagMaskSrc = maskpolicy::kMaskSrc;
+    static constexpr int kFlagMasked = maskpolicy::kMasked;
 
     struct Tex {
         GLuint id = 0;
@@ -171,6 +177,7 @@ private:
         int blend;
         GLuint parentFbo;
         Fbo fbo;
+        int flags = 0;
     };
 
     void restoreCanvasScissor();
@@ -222,6 +229,8 @@ private:
     void drawLayerPlain(const Item& it, float opacity, int blend, bool clipMode);
     void runEffect(GLuint srcTex, const float* e);   // e[10]: тип, p0..p7, время
     void compositeFbo(const Fbo& f, float opacity, int blend);
+    void multiplyByMask(const Fbo& mask);        // текущая цель *= альфа маски (Маска по слою)
+    void drawItem(const Item& it, float opacity, int blend, bool clipMode);   // слой маски - без эффектов
 
     int width_ = 1, height_ = 1;
     int canvasW_ = 1, canvasH_ = 1;

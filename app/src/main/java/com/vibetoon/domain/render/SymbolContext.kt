@@ -33,6 +33,7 @@ object SymbolContext {
         val n = sc.ops.size / 4
         for (i in 0 until n) {
             if (sc.ops[i * 4] != SceneBuilder.OP_LAYER || sc.ops[i * 4 + 1] != id) continue
+            if (sc.ops[i * 4 + 3] and SceneBuilder.FLAG_MASK_SRC != 0) continue   // маска «Оси растяжения» - не сам слой
             val p = i * SceneData.PARAM_STRIDE
             return Affine2D(sc.params[p], sc.params[p + 1], sc.params[p + 2], sc.params[p + 3], sc.params[p + 4], sc.params[p + 5])
         }

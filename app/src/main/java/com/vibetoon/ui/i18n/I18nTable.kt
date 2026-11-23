@@ -1353,6 +1353,9 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Слой уже внизу группы" to R.string.ui_the_layer_is_already_at_the_bottom_o,
     "Слой перенесён наверх группы" to R.string.ui_layer_moved_to_the_top_of_the_group,
     "Слой перенесён вниз группы" to R.string.ui_layer_moved_to_the_bottom_of_the_gro,
+    "Маска по слою" to R.string.ui_mask_to_layer,
+    "Выкл" to R.string.ui_off,
+    "Вкл" to R.string.ui_on,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */

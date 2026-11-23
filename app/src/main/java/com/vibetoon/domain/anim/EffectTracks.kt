@@ -92,6 +92,20 @@ object EffectTracks {
         return out
     }
 
+    /**
+     * Пакет 26: слои и группы, у которых на кадре [frame] хотя бы одна «Ось растяжения» с включённой «Маской по слою»
+     * (растянутое видно только в пределах формы слоя без растяжения). Параметр можно анимировать ключами.
+     */
+    fun stretchMasks(fx: Map<Int, List<Effect>>, anim: Animation, frame: Int): Set<Int> {
+        if (fx.isEmpty()) return emptySet()
+        val out = HashSet<Int>()
+        for ((id, l) in fx) {
+            if (l.none { it.type == EffectMath.STRETCH_AXIS }) continue
+            if (at(id, l, anim, frame.toFloat()).any { it.type == EffectMath.STRETCH_AXIS && EffectMath.stretchMasked(it.p) }) out += id
+        }
+        return out
+    }
+
     fun snapshot(layer: Int, effects: List<Effect>, anim: Animation, frame: Int): Animation {
         if (layer !in 0..MAX_LAYER) return anim
         val current = at(layer, effects, anim, frame.toFloat())

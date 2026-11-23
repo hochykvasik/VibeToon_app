@@ -2623,7 +2623,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return SceneBuilder.buildTree(sceneRoots(), canvasW, canvasH, transformsNow(), fit, textIds, _links.value, boneHeads(), inputs.warps,
             independentBones(), meshesNow(), inputs.perspectives, boneTails(), effectiveSkins(), turbNow(), fxNow(), cameraIdNow(),
             options.nullIds, options.depths, groupDeformations = if (useGroups) inputs.groups else emptyMap(), denseWarps = dense, leafPivots = pivotOverrides,
-            stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxLayers, _animation.value, _frame.value))
+            stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxLayers, _animation.value, _frame.value),
+            stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxLayers, _animation.value, _frame.value))
     }
 
     private fun pushScene() {
@@ -10879,7 +10880,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 groupInputs.perspectives, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
                 sceneLookFx(fxRecords(fxl, adjCopy, anim, pf, st.fps), lookExp, leafExp), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides,
-                stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxl, anim, pf)).also { it.backgroundOverride = lookExp.background }
+                stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxl, anim, pf),
+                stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxl, anim, pf)).also { it.backgroundOverride = lookExp.background }
             } catch (e: IllegalArgumentException) {
                 if (groupInputs.groups.isEmpty() && denseExp.isEmpty()) throw e
                 throw IllegalStateException("Экспорт остановлен: неподдерживаемая деформация или область", e)

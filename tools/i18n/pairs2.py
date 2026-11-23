@@ -1223,4 +1223,7 @@ PSD в текущий проект|PSD into current project
 Слой перенесён наверх группы|Layer moved to the top of the group
 Слой перенесён вниз группы|Layer moved to the bottom of the group
 Группа создана: слоёв {} (PSD и картинки вперемешку)|Group created: {} layers (PSD and images mixed)
+Маска по слою|Mask to Layer
+Выкл|Off
+Вкл|On
 """

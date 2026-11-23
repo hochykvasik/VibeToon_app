@@ -1530,4 +1530,7 @@
     <string name="ui_layer_moved_to_the_top_of_the_group">Layer moved to the top of the group</string>
     <string name="ui_layer_moved_to_the_bottom_of_the_gro">Layer moved to the bottom of the group</string>
     <string name="ui_group_created_layers_psd_and_images_">Group created: {} layers (PSD and images mixed)</string>
+    <string name="ui_mask_to_layer">Mask to Layer</string>
+    <string name="ui_off">Off</string>
+    <string name="ui_on">On</string>
 </resources>

@@ -125,6 +125,14 @@ object SceneBuilder {
     const val FLAG_CLIPPED = 1
     /** Слой выделяется тапом по всей рамке, а не только по непрозрачным пикселям (тонкий текст). */
     const val FLAG_HIT_BBOX = 2
+    /**
+     * Пакет 26, «Маска по слою» у «Оси растяжения». Группа (OP_BEGIN/END_GROUP) с [FLAG_MASK_SRC] - маска: слой или
+     * группа без своего растяжения рисуется в отдельный буфер и не накладывается; следующая группа с [FLAG_MASKED] -
+     * растянутый слой (группа), который умножается на альфу маски. Слои внутри маски несут [FLAG_MASK_SRC]: рисуются
+     * без шейдерных эффектов и не ловятся касанием.
+     */
+    const val FLAG_MASK_SRC = 4
+    const val FLAG_MASKED = 8
 
     /** Вид камеры (без параллакса): тот же, что у корней сцены; null - камеры нет. */
     fun cameraView(cam: LayerTransform?, canvasWidth: Int, canvasHeight: Int): Affine2D {
@@ -207,7 +215,9 @@ object SceneBuilder {
         /** Переопределения опорных точек листьев: id -> (x, y) в координатах холста. */
         leafPivots: Map<Int, Pair<Float, Float>> = emptyMap(),
         /** «Ось растяжения»: id -> линейная матрица в осях слоя вокруг опорной точки (дети группы растягиваются вместе с ней). */
-        stretches: Map<Int, Affine2D> = emptyMap()
+        stretches: Map<Int, Affine2D> = emptyMap(),
+        /** Пакет 26: слои и группы с включённой «Маской по слою» у «Оси растяжения» (растянутое видно только в своей форме). */
+        stretchMasks: Set<Int> = emptySet()
     ): SceneData {
         require(preparedGroupMeshes.keys.none { it in meshes || it in warps || it in persp || it in skins }) {
             "Group mesh conflicts with a leaf deformer"
@@ -238,9 +248,10 @@ object SceneBuilder {
         data class ActiveGroup(val deformation: GroupDeformation, val inverseWorld: Affine2D)
         var activeGroup: ActiveGroup? = null
         var safeGroupPath = true
+        var maskPass = 0   // > 0 - идёт проход маски группы: слои помечаются FLAG_MASK_SRC
 
         fun add(op: Int, id: Int, blend: Int, flags: Int, m: Affine2D, opacity: Float) {
-            ops += listOf(op, id, blend, flags)
+            ops += listOf(op, id, blend, if (op == OP_LAYER && maskPass > 0) flags or FLAG_MASK_SRC else flags)
             params += listOf(m.a, m.b, m.c, m.d, m.tx, m.ty, opacity, 0f)
         }
 
@@ -344,7 +355,14 @@ object SceneBuilder {
             // между ними группа). Clipping к группе-базе пока не поддерживается: такой слой
             // рисуется как обычный, а не пропадает. [clipInit] - состояние цепочки предыдущего отрезка корней (пакет 25).
             var clipBaseVisible: Boolean? = clipInit
+            // Пакет 26: открытая группа под маской растянутого слоя; слои с обтравкой по нему остаются внутри неё
+            var openMasked = false
+            fun closeMasked() {
+                if (openMasked) add(OP_END_GROUP, -1, BLEND_NORMAL, FLAG_MASKED, Affine2D.IDENTITY, 1f)
+                openMasked = false
+            }
             for (n in nodes) {
+                if (openMasked && !(n is LeafNode && n.clipped)) closeMasked()
                 val t = transforms[n.id] ?: LayerTransform()
                 val parentWorld = crossed(parentWorld0, parentMedia, n.id)
                 when (n) {
@@ -368,12 +386,22 @@ object SceneBuilder {
                             activeGroup = ActiveGroup(deformation, requireNotNull(world.inverse()) { "Singular group transform" })
                             visitedGroups += n.id
                         }
-                        add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
+                        // Пакет 26: «Маска по слою» - сначала маска: та же группа без своего растяжения (в отдельный буфер)
+                        val gMasked = n.id in stretchMasks && stretches[n.id] != null && previous == null && n.id !in groupDeformations
+                        if (gMasked) {
+                            maskPass++
+                            add(OP_BEGIN_GROUP, n.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
+                            walk(n.children, pw * local(t, n.pivotX, n.pivotY), ArrayList(), SceneDomain.isMedia(n.id))
+                            add(OP_END_GROUP, n.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
+                            maskPass--
+                        }
+                        val gFlag = if (gMasked) FLAG_MASKED else 0
+                        add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), gFlag, Affine2D.IDENTITY, n.opacity * t.opacity)
                         val childQuads = ArrayList<FloatArray>()
                         walk(n.children, world, childQuads, SceneDomain.isMedia(n.id))
                         activeGroup = previous
                         safeGroupPath = previousPath
-                        add(OP_END_GROUP, n.id, blendCode(n.blend), 0, Affine2D.IDENTITY, n.opacity * t.opacity)
+                        add(OP_END_GROUP, n.id, blendCode(n.blend), gFlag, Affine2D.IDENTITY, n.opacity * t.opacity)
                         if (childQuads.isNotEmpty()) {
                             quads[n.id] = bounds(childQuads)
                             val inverse = world.inverse()
@@ -418,7 +446,9 @@ object SceneBuilder {
                         if (!n.visible || (clipped && clipBaseVisible == false)) continue
                         val skinned = n.id in skins && n.id in meshes
                         val pw = (if (skinned) Affine2D.IDENTITY else linkDelta(n.id)) * parentWorld
-                        val world = pw * local(t, leafPivots[n.id]?.first ?: (n.x + n.w / 2f), leafPivots[n.id]?.second ?: (n.y + n.h / 2f), n.id)
+                        val lpx = leafPivots[n.id]?.first ?: (n.x + n.w / 2f)
+                        val lpy = leafPivots[n.id]?.second ?: (n.y + n.h / 2f)
+                        val world = pw * local(t, lpx, lpy, n.id)
                         parentWorlds[n.id] = pw
                         // единичный квадрат -> прямоугольник слоя -> мир
                         val m = world * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) *
@@ -441,9 +471,20 @@ object SceneBuilder {
                             val cubic = requireNotNull(warps[n.id]) { "Dense warp requires base warp" }
                             generatedDenseMeshes[n.id] = requireNotNull(DenseWarpMesh.build(grid, cubic)) { "Invalid dense warp" }
                         }
-                        add(
+                        val hitFlag = if (n.id in bboxHitIds) FLAG_HIT_BBOX else 0
+                        if (n.id in stretchMasks && stretches[n.id] != null && !clipped && activeGroup == null) {
+                            // Пакет 26: «Маска по слою» - маска (слой без растяжения), затем растянутый слой под ней; прозрачность
+                            // и режим наложения слоя - у группы под маской (как у основы обтравки)
+                            val m0 = pw * local(t, lpx, lpy) * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
+                            add(OP_BEGIN_GROUP, n.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
+                            add(OP_LAYER, n.id, BLEND_NORMAL, FLAG_MASK_SRC, m0, 1f)
+                            add(OP_END_GROUP, n.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
+                            add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), FLAG_MASKED, Affine2D.IDENTITY, n.opacity * t.opacity)
+                            add(OP_LAYER, n.id, BLEND_NORMAL, hitFlag, m, 1f)
+                            openMasked = true
+                        } else add(
                             OP_LAYER, n.id, blendCode(n.blend),
-                            (if (clipped) FLAG_CLIPPED else 0) or (if (n.id in bboxHitIds) FLAG_HIT_BBOX else 0),
+                            (if (clipped) FLAG_CLIPPED else 0) or hitFlag,
                             m, n.opacity * t.opacity
                         )
                         textureIds += n.id
@@ -453,6 +494,7 @@ object SceneBuilder {
                     }
                 }
             }
+            closeMasked()
             return clipBaseVisible
         }
 
@@ -526,7 +568,7 @@ object SceneBuilder {
             for (t in rm.tris) mTris.add(t)
         }
         return SceneData(
-            canvasWidth, canvasHeight, ops.toIntArray(), params.toFloatArray(), textureIds.toIntArray(),
+            canvasWidth, canvasHeight, ops.toIntArray(), params.toFloatArray(), textureIds.distinct().toIntArray(),
             quads, parentWorlds, bones.keys.associateWith { delta(it) },
             nativeWarps.keys.toIntArray(), nativeWarps.values.flatMap { it.asList() }.toFloatArray(),
             mIds, mCounts, mVerts.toFloatArray(), mTris.toIntArray(),
