@@ -75,7 +75,7 @@ fun MarkerEditDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                 OutlinedButton(onClick = { vm.addFrameMarker(name); name = "" }, enabled = name.isNotBlank()) { Text("Поставить на текущий кадр") }
                 if (markers.isEmpty()) Text("Маркеров пока нет. Перейдите на нужный кадр символа и выберите имя.", fontSize = 11.sp)
                 for (m in markers) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${m.frame + 1}: ${m.name}", Modifier.width(140.dp), fontSize = 13.sp)
+                    Text(if (m.isAlias) "${m.frame + 1}: ${m.name} → ${m.form + 1}" else "${m.frame + 1}: ${m.name}", Modifier.width(140.dp), fontSize = 13.sp)
                     TextButton(onClick = { vm.setFrame(m.frame) }) { Text("Перейти") }
                     TextButton(onClick = { vm.removeFrameMarker(m.frame) }) { Text("Удалить") }
                 }
@@ -135,7 +135,7 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
                     if (markers.isEmpty()) Text("У символа нет маркеров", fontSize = 12.sp)
                     for (rowItems in markers.chunked(3)) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (m in rowItems) {
-                            val isActive = active == m.frame
+                            val isActive = active == m.target
                             Column(
                                 Modifier.width(84.dp).clip(RoundedCornerShape(8.dp))
                                     .border(if (isActive) 3.dp else 1.dp, if (isActive) Color(0xFF7E57C2) else MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))

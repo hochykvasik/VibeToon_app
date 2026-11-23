@@ -16,7 +16,9 @@ private const val TAG_GL = "VT/GL"
 data class FrameParams(
     val camera: Camera = Camera(),
     val selectionQuad: FloatArray? = null,
-    val background: Int = 0
+    val background: Int = 0,
+    /** Идёт жест камеры (пан/зум/поворот): нативный кэш эффектов можно рисовать с преобразованием вида. */
+    val interactive: Boolean = false
 )
 
 /** Адаптер колбэков GLSurfaceView -> C++. Работает на GL-потоке. */
@@ -61,6 +63,7 @@ class VtRenderer(
         takeScene()?.let { lastScene = it; applyScene(it) }
         val p = frameParams()
         RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY, p.camera.rotDeg, p.camera.flipX, p.camera.flipY)
+        RenderNative.setInteractive(handle, p.interactive)
         RenderNative.setSelection(handle, p.selectionQuad)
         RenderNative.setBackground(handle, p.background)
         val t0 = if (RenderMetrics.enabled) System.nanoTime() else 0L
@@ -69,6 +72,7 @@ class VtRenderer(
             RenderMetrics.drawMs = (System.nanoTime() - t0) / 1e6f
             RenderNative.frameStats(handle)?.let { st ->
                 if (st.size >= 4) { RenderMetrics.drawn = st[0]; RenderMetrics.culled = st[1]; RenderMetrics.scissoredFx = st[2]; RenderMetrics.fxPasses = st[3] }
+                if (st.size >= 5) RenderMetrics.fxCached = st[4]
             }
         }
         sampleReq?.let { (x, y, cb) -> sampleReq = null; cb(RenderNative.readPixel(handle, x, y)) }
@@ -78,11 +82,11 @@ class VtRenderer(
     }
 
     /** Снимок кадра: при [scene] != null временно подставляет её, потом возвращает прежнюю. Только из GL-потока. */
-    fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int): ByteArray? {
+    fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int = 0): ByteArray? {
         if (handle == 0L) return null
         if (scene != null) applyScene(scene)
         RenderNative.setBackground(handle, background)
-        val r = RenderNative.captureFrame(handle, width, height, transparent)
+        val r = RenderNative.captureFrame(handle, width, height, transparent, flags)
         if (scene != null) lastScene?.let { applyScene(it) }
         return r
     }
@@ -146,14 +150,14 @@ class VtRenderer(
                 applyScene(sceneAt(index))
                 RenderNative.setBackground(handle, background)
                 RenderNative.setSelection(handle, null)
-                return RenderNative.captureFrame(handle, width, height, false)
+                return RenderNative.captureFrame(handle, width, height, false, 0)
             }
 
             override fun drawFrame(index: Int) {
                 applyScene(sceneAt(index))
                 // пока в очереди есть загрузки текстур, кадр рисуется повторно (лимит от зависания)
                 var guard = 0
-                while (RenderNative.drawFrame(handle) && guard++ < 500) { /* ждём все текстуры */ }
+                while (RenderNative.drawFrame(handle) && guard++ < 500 && !cancel.get()) { /* ждём все текстуры */ }
             }
 
             override fun end() {
@@ -177,6 +181,24 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     private val rendererReady = kotlinx.coroutines.CompletableDeferred<Unit>()
     var onContextRecreated: (() -> Unit)? = null
     private val vtRenderer = VtRenderer({ pendingScene.getAndSet(null) }, { params.get() }, { requestRender() }, { rendererReady.complete(Unit) }, { onContextRecreated?.invoke() })
+
+    /**
+     * Поверхность уходит на паузу. GLSurfaceView.onPause ждёт GL-поток, а тот сначала выполняет ВСЕ события очереди
+     * (queueEvent) и только потом замечает паузу: накопленные снимки символов держали главный поток секундами - ANR при
+     * сворачивании/возврате. Пока флаг стоит, тяжёлые события из очереди сразу отдают null (вызывающий повторит позже).
+     */
+    @Volatile var surfacePaused = false
+        private set
+
+    override fun onPause() {
+        surfacePaused = true
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        surfacePaused = false
+    }
 
     /** View инициализирована не сразу: загрузка проекта ждёт реального создания GL-контекста. */
     suspend fun awaitRendererReady() = rendererReady.await()
@@ -208,6 +230,12 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     fun setCamera(camera: Camera) {
         params.updateAndGet { it.copy(camera = camera) }
         requestRender()
+    }
+
+    /** Начало/конец жеста камеры. После жеста кадр перерисовывается точно (без растянутого кэша эффектов). */
+    fun setInteractive(on: Boolean) {
+        val prev = params.getAndUpdate { it.copy(interactive = on) }
+        if (prev.interactive != on) requestRender()
     }
 
     /** Цвет фона холста проекта (ARGB). */
@@ -351,8 +379,12 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     }
 
     /** Снимок кадра холста w x h (RGBA premultiplied, строка 0 - низ); [callback] из GL-потока. */
-    fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int, callback: (ByteArray?) -> Unit) {
-        queueEvent { callback(vtRenderer.capture(scene, width, height, transparent, background)); requestRender() }
+    fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int = 0, callback: (ByteArray?) -> Unit) {
+        if (surfacePaused) { callback(null); return }
+        queueEvent {
+            if (surfacePaused) { callback(null); return@queueEvent }
+            callback(vtRenderer.capture(scene, width, height, transparent, background, flags)); requestRender()
+        }
     }
 
     /** Hit-test выполняется в GL-потоке; результат придёт в callback ИЗ GL-потока. */
@@ -366,6 +398,7 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
         onProgress: (Int) -> Unit, cancel: java.util.concurrent.atomic.AtomicBoolean, onDone: (Result<Unit>) -> Unit
     ) {
         queueEvent {
+            if (surfacePaused) cancel.set(true)   // экспорт стартовал уже после сворачивания - не держим поток
             val r = vtRenderer.exportVideo(spec, background, sceneAt, onProgress, cancel)
             onDone(r)
             requestRender()

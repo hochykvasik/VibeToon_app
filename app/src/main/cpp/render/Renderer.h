@@ -14,13 +14,21 @@
 
 namespace vt {
 
+struct PendingUpload;
+
 // Счётчики последнего кадра (метрики производительности, читаются через JNI).
 struct FrameStats {
     int drawn = 0;        // нарисовано слоёв
     int culled = 0;       // отсечено (вне экрана)
     int scissoredFx = 0;  // слоёв с эффектами, посчитанных только в своей рамке
     int fxPasses = 0;     // проходов эффектов
+    int fxCached = 0;     // слоёв с эффектами, взятых из кэша (движение камеры)
+    int missing = 0;      // видимых слоёв без загруженной текстуры (снимок символа ещё рано делать)
 };
+
+// Флаги снимка captureFrame.
+constexpr int kCaptureShadow = 1;   // текстуры участников символа берутся из теневых (кадр символа), не из редактора
+constexpr int kCaptureStrict = 2;   // если у видимого слоя ещё нет текстуры - снимок не делается (пустой результат)
 
 class Renderer {
 public:
@@ -117,7 +125,11 @@ public:
     void endExport();
     // Снимок кадра в память: холст w x h (без камеры и рамки) через внутренний FBO; RGBA premultiplied, строка 0 - низ.
     // transparent: без фона холста (PNG/GIF с прозрачностью). Вызывать с текущим GL-контекстом.
-    bool captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out);
+    // Возвращает false при ошибке. При kCaptureStrict и недогруженных текстурах - true и пустой out.
+    bool captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out, int flags = 0);
+    void clearShadows();
+    // Идёт жест камеры: результаты эффектов можно переиспользовать с преобразованием вида.
+    void setInteractive(bool on);
     // Цвет пикселя экрана (ARGB) после drawFrame: для пипетки. Координаты вида, ось y вниз.
     int readPixel(int x, int y) const;
     // Освобождает GL-объекты (контекст должен быть текущим).
@@ -156,6 +168,24 @@ private:
 
     void restoreCanvasScissor();
     void uploadPending();                        // не более kUploadBytesPerFrame за кадр
+    void uploadShadows();                        // все теневые загрузки (снимок символа)
+    bool makeTexture(const PendingUpload& up, size_t bytes, Tex& t);
+    const Tex* findTex(int layerId) const;       // теневая текстура (в снимке символа) или текстура слоя
+    // --- кэш результата эффектов (см. FxCachePolicy.h) ---
+    struct FxEntry {
+        GLuint tex = 0, fbo = 0;
+        int bx = 0, by = 0, bw = 0, bh = 0;      // рамка на экране (GL, начало снизу)
+        float va[6] = {1.f, 0.f, 0.f, 1.f, 0.f, 0.f};
+        uint64_t epoch = 0;
+        bool used = false;
+    };
+    void bumpEpoch() { ++epoch_; }
+    bool fxCacheEnabled() const;
+    bool drawFxFromCache(const Item& it, const float va[6], float reach, float opacity, int blend);
+    void storeFxCache(const Item& it, GLuint srcFbo, const int box[4], const float va[6]);
+    void dropFxEntry(int layerId);
+    void dropFxCache();
+    void gcFxCache();                            // после кадра: удалить записи слоёв, не нарисованных в этом кадре
     void viewTransform(float& scale, float& ox, float& oy) const;  // холст -> экран с камерой
     void viewAffine(float a[6]) const;  // холст -> экран: аффинная матрица (поворот/отражение вида)
     void drawSelection();
@@ -255,7 +285,13 @@ private:
     GLuint backdropTex_ = 0, backdropFbo_ = 0;
 
     std::unordered_map<int, Tex> textures_;
+    std::unordered_map<int, Tex> shadowTex_;
+    bool useShadows_ = false;
     size_t textureBytes_ = 0;
+    std::unordered_map<int, FxEntry> fxCache_;
+    size_t fxCacheBytes_ = 0;
+    uint64_t epoch_ = 1;                         // любая смена сцены/текстур/размера делает кэш эффектов устаревшим
+    bool interactive_ = false;
     std::vector<Item> scene_;
 };
 

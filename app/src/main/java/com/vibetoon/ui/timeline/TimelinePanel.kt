@@ -525,20 +525,22 @@ fun TimelinePanel(
                 ) {
                     val purple = Color(0xFFAB47BC)
                     val sorted = symMarkers.sortedBy { it.frame }
-                    // диапазон формы: от маркера до следующего (последний - до конца); чередование оттенков разделяет соседние формы
-                    sorted.forEachIndexed { i, mk ->
+                    val real = sorted.filter { !it.isAlias }
+                    // диапазон формы: от маркера до следующего (последний - до конца); чередование оттенков разделяет соседние формы.
+                    // Маркеры-ссылки (копии) своей формы не имеют - диапазон рисуется только у настоящих маркеров.
+                    real.forEachIndexed { i, mk ->
                         val x0 = mk.frame * frameWPx
-                        val x1 = (sorted.getOrNull(i + 1)?.frame ?: duration) * frameWPx
+                        val x1 = (real.getOrNull(i + 1)?.frame ?: duration) * frameWPx
                         drawRect(purple.copy(alpha = if (i % 2 == 0) 0.16f else 0.08f), Offset(x0, size.height * 0.55f), androidx.compose.ui.geometry.Size((x1 - x0).coerceAtLeast(1f), size.height * 0.4f))
                     }
                     drawPlayhead(frame * frameWPx, playheadColor)
                     for (mk in sorted) {
                         val picked = mk.frame in markerSel
                         val x = (mk.frame + if (picked) mDrag else 0) * frameWPx
-                        val c = if (picked) Color(0xFFFB8C00) else purple
+                        val c = if (picked) Color(0xFFFB8C00) else if (mk.isAlias) purple.copy(alpha = 0.55f) else purple
                         if (picked) drawCircle(c.copy(alpha = 0.35f), size.height * 0.45f, Offset(x, size.height / 2f))
                         drawMarkerTag(x, c, 5.dp.toPx(), 9.dp.toPx())
-                        drawText(measurer, mk.name, topLeft = Offset(x + 4.dp.toPx(), size.height * 0.45f), style = TextStyle(fontSize = 9.sp, color = textColor), maxLines = 1)
+                        drawText(measurer, if (mk.isAlias) "↪" + mk.name else mk.name, topLeft = Offset(x + 4.dp.toPx(), size.height * 0.45f), style = TextStyle(fontSize = 9.sp, color = textColor), maxLines = 1)
                     }
                 }
             }
@@ -847,7 +849,7 @@ fun TimelinePanel(
                                         val wedge = Path().apply { moveTo(x0, top + h); lineTo(x1, top); lineTo(x1, top + h); close() }
                                         drawPath(wedge, purple.copy(alpha = 0.3f))
                                     }
-                                    val label = names.firstOrNull { it.frame == run.value }?.name ?: "${run.value + 1}"
+                                    val label = com.vibetoon.domain.project.SymbolForms.labelFor(names, run.value)?.name ?: "${run.value + 1}"
                                     if (x1 - x0 > 28.dp.toPx()) drawText(measurer, label, topLeft = Offset(x0 + 6.dp.toPx(), top - 1.dp.toPx()),
                                         style = TextStyle(fontSize = 8.sp, color = textColor.copy(alpha = 0.8f)), maxLines = 1)
                                 }

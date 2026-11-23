@@ -330,7 +330,7 @@ object ProjectJson {
     ).also {
         if (m.symDur > 0) it["sdur"] = m.symDur
         if (m.symRef != 0) it["sref"] = m.symRef
-        if (m.markers.isNotEmpty()) it["mk"] = m.markers.map { k -> linkedMapOf<String, Any?>("f" to k.frame, "n" to k.name).also { mm -> if (k.thumb.isNotEmpty()) mm["t"] = k.thumb } }
+        if (m.markers.isNotEmpty()) it["mk"] = m.markers.map { k -> linkedMapOf<String, Any?>("f" to k.frame, "n" to k.name).also { mm -> if (k.thumb.isNotEmpty()) mm["t"] = k.thumb; if (k.isAlias) mm["fm"] = k.form } }
         if (m.timeKeys.isNotEmpty()) it["tk"] = m.timeKeys.map { k -> linkedMapOf<String, Any?>("f" to k.frame, "v" to k.value).also { mm -> if (k.ease != TimeEase.HOLD) mm["e"] = k.ease } }
         if (m.symLoop) it["sl"] = true
         if (m.vector) it["vector"] = true
@@ -397,7 +397,7 @@ object ProjectJson {
                 }
             },
             symDur = o.int("sdur", 0), symRef = o.int("sref", 0),
-            markers = (o["mk"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { m -> FrameMarker((m["f"] as? Number)?.toInt() ?: 0, m["n"] as? String ?: return@let null, m["t"] as? String ?: "") } },
+            markers = (o["mk"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { m -> FrameMarker((m["f"] as? Number)?.toInt() ?: 0, m["n"] as? String ?: return@let null, m["t"] as? String ?: "", (m["fm"] as? Number)?.toInt()?.takeIf { it >= 0 } ?: -1).normalized() } },
             timeKeys = (o["tk"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { m -> TimeKey((m["f"] as? Number)?.toInt() ?: 0, (m["v"] as? Number)?.toInt() ?: 0, ((m["e"] as? Number)?.toInt() ?: TimeEase.HOLD).takeIf { e -> TimeEase.valid(e) } ?: TimeEase.HOLD) } },
             symLoop = o["sl"] == true
         )

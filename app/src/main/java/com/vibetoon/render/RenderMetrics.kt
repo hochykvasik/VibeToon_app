@@ -11,4 +11,5 @@ object RenderMetrics {
     @Volatile var culled = 0
     @Volatile var scissoredFx = 0
     @Volatile var fxPasses = 0
+    @Volatile var fxCached = 0
 }

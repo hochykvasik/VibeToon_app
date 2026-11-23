@@ -10,6 +10,7 @@ namespace uploadQueue {
 namespace {
 std::mutex g_mu;
 std::deque<PendingUpload> g_queue;
+std::deque<PendingUpload> g_shadow;
 size_t g_bytes = 0;
 uint32_t g_epoch = 1;
 std::unordered_map<int, uint32_t> g_generation;
@@ -63,6 +64,21 @@ bool pop(PendingUpload& out) {
     return true;
 }
 
+void pushShadow(PendingUpload&& item) {
+    std::lock_guard<std::mutex> l(g_mu);
+    g_bytes += item.rgba.size();
+    g_shadow.push_back(std::move(item));
+}
+
+bool popShadow(PendingUpload& out) {
+    std::lock_guard<std::mutex> l(g_mu);
+    if (g_shadow.empty()) return false;
+    out = std::move(g_shadow.front());
+    g_shadow.pop_front();
+    g_bytes -= out.rgba.size();
+    return true;
+}
+
 bool empty() {
     std::lock_guard<std::mutex> l(g_mu);
     return g_queue.empty();
@@ -71,6 +87,7 @@ bool empty() {
 void clear() {
     std::lock_guard<std::mutex> l(g_mu);
     g_queue.clear();
+    g_shadow.clear();
     g_bytes = 0;
     ++g_epoch;
     g_generation.clear();

@@ -1,7 +1,17 @@
 package com.vibetoon.domain.project
 
-/** Маркер кадра внутри символа: текстовая метка на внутреннем кадре (Rest, AI, E, O, U, MBF, L, W, Smile...). */
-data class FrameMarker(val frame: Int, val name: String, val thumb: String = "")
+/**
+ * Маркер кадра внутри символа: именованная ссылка на форму (Rest, AI, E, O, U, MBF, L, W, Smile...).
+ * Обычный маркер стоит на кадре своей формы. Копия/дубликат маркера - ссылка [form] на форму исходного маркера:
+ * «Выбрать маркер» по копии показывает ту же форму, а не пустой кадр, куда копию вставили.
+ */
+data class FrameMarker(val frame: Int, val name: String, val thumb: String = "", val form: Int = -1) {
+    /** Маркер-ссылка на форму другого кадра. */
+    val isAlias: Boolean get() = form >= 0 && form != frame
+    /** Внутренний кадр, который показывает символ при выборе этого маркера. */
+    val target: Int get() = if (isAlias) form else frame
+    fun normalized(): FrameMarker = if (form >= 0 && !isAlias) copy(form = -1) else this
+}
 
 /** План режима «Слои как кадры»: каждому слою свой кадр (клип слоя = один кадр) и маркер с именем слоя. */
 class FramesPlan(val clips: List<Triple<Int, Int, Int>>, val markers: List<FrameMarker>, val duration: Int)

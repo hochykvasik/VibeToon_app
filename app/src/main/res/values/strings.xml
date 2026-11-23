@@ -1223,5 +1223,9 @@
     <string name="ui_loop_without_keys_inner_animation_re">Цикл без ключей (внутренняя анимация по кругу)</string>
     <string name="ui_frame_1_hold">кадр 1 (Hold)</string>
     <string name="ui_looping">по кругу (цикл)</string>
-    <string name="ui_frame_ui_avg_p95_ms_gl_ms_slow_layer">Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}</string>
+    <string name="ui_frame_ui_avg_p95_ms_gl_ms_slow_layer">Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {}</string>
+    <string name="ui_from_frame_hold">«{}» с кадра {} (Hold)</string>
+    <string name="ui_markers_not_moved_layer_already_has_">Маркеры не сдвинуты: на целевом кадре слоя «{}» уже есть другой рисунок</string>
+    <string name="ui_markers_mirrored_their_forms_swapped">Маркеры отзеркалены: формы поменялись местами вместе с ними</string>
+    <string name="ui_could_not_draw_symbol_the_previous_p">Не удалось нарисовать символ «{}»: прежняя картинка сохранена, повтор при следующем кадре</string>
 </resources>

@@ -1223,5 +1223,9 @@
     <string name="ui_loop_without_keys_inner_animation_re">Loop without keys (inner animation repeats)</string>
     <string name="ui_frame_1_hold">frame 1 (Hold)</string>
     <string name="ui_looping">looping</string>
-    <string name="ui_frame_ui_avg_p95_ms_gl_ms_slow_layer">Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}</string>
+    <string name="ui_frame_ui_avg_p95_ms_gl_ms_slow_layer">Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}, cached {}</string>
+    <string name="ui_from_frame_hold">“{}” from frame {} (Hold)</string>
+    <string name="ui_markers_not_moved_layer_already_has_">Markers not moved: layer “{}” already has another drawing on the target frame</string>
+    <string name="ui_markers_mirrored_their_forms_swapped">Markers mirrored: their forms swapped places with them</string>
+    <string name="ui_could_not_draw_symbol_the_previous_p">Could not draw symbol “{}”: the previous picture is kept, retrying on the next frame</string>
 </resources>

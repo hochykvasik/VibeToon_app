@@ -28,6 +28,8 @@ jobs:
           /tmp/vibetoon-upload-queue-test
           g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/LayerBoundsTest.cpp -o /tmp/vibetoon-layer-bounds-test
           /tmp/vibetoon-layer-bounds-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/FxCachePolicyTest.cpp -o /tmp/vibetoon-fx-cache-test
+          /tmp/vibetoon-fx-cache-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
       - name: Run unit tests

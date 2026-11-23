@@ -60,6 +60,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        // Сначала отменить длинную работу GL-потока (экспорт), затем пауза поверхности: иначе onPause ждёт её до ANR.
+        editor.cancelExport()
         com.vibetoon.render.RenderHost.view?.onPause()
     }
 

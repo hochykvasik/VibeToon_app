@@ -34,6 +34,10 @@ bool pushIfCurrent(PendingUpload&& item, uint64_t ticket);
 void push(PendingUpload&& item);
 bool pop(PendingUpload& out);   // false, если очередь пуста
 bool empty();
+// Отдельная очередь «теневых» текстур снимка символа: они не заменяют текстуры слоёв редактора,
+// а живут только на время одного снимка (см. Renderer::captureFrame с kCaptureShadow).
+void pushShadow(PendingUpload&& item);
+bool popShadow(PendingUpload& out);
 size_t bytes();
 void clear();     // выбросить все ожидающие загрузки (при смене проекта id слоёв пересекаются)   // суммарный размер буферов в очереди (для backpressure)
 }  // namespace uploadQueue

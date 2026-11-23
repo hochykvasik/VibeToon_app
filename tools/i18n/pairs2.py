@@ -914,5 +914,9 @@ Hold - резкая смена формы. Плавно/Линейно - кад�
 Цикл без ключей (внутренняя анимация по кругу)|Loop without keys (inner animation repeats)
 кадр 1 (Hold)|frame 1 (Hold)
 по кругу (цикл)|looping
-Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}|Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}
+Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {}|Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}, cached {}
+«{}» с кадра {} (Hold)|“{}” from frame {} (Hold)
+Маркеры не сдвинуты: на целевом кадре слоя «{}» уже есть другой рисунок|Markers not moved: layer “{}” already has another drawing on the target frame
+Маркеры отзеркалены: формы поменялись местами вместе с ними|Markers mirrored: their forms swapped places with them
+Не удалось нарисовать символ «{}»: прежняя картинка сохранена, повтор при следующем кадре|Could not draw symbol “{}”: the previous picture is kept, retrying on the next frame
 """

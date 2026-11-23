@@ -39,6 +39,15 @@ object RenderNative {
     /** Получить до начала декодирования, применить только если версия слоя/проекта не изменилась. */
     external fun textureUploadTicket(layerId: Int): Long
     external fun uploadBitmapIfCurrent(layerId: Int, bitmap: android.graphics.Bitmap, ticket: Long): Boolean
+    /** Теневая текстура участника символа: видна только ближайшему снимку с [CAPTURE_SHADOW]; текстура слоя в редакторе не меняется. */
+    external fun uploadShadowBitmap(layerId: Int, bitmap: android.graphics.Bitmap): Boolean
+    /** Байт в очереди загрузки текстур (ограничение памяти при массовом восстановлении). */
+    external fun pendingUploadBytes(): Long
+    /** Идёт жест камеры: результаты эффектов слоёв переиспользуются с преобразованием вида (после жеста - точный пересчёт). */
+    external fun setInteractive(renderer: Long, on: Boolean)
+    /** Флаги [captureFrame]: теневые текстуры символа / не снимать, пока у видимых слоёв нет текстур (пустой результат). */
+    const val CAPTURE_SHADOW = 1
+    const val CAPTURE_STRICT = 2
     /** Сбрасывает очередь ещё не загруженных текстур (при открытии другого проекта). */
     external fun clearPendingUploads()
     /** Удаляет все GPU-текстуры слоёв (смена проекта). Только из GL-потока. */
@@ -82,7 +91,7 @@ object RenderNative {
     external fun beginExport(renderer: Long, width: Int, height: Int)
     external fun endExport(renderer: Long)
     /** Снимок кадра w x h в память: RGBA premultiplied, строка 0 - низ кадра (как у glReadPixels); null - ошибка. Только из GL-потока. */
-    external fun captureFrame(renderer: Long, width: Int, height: Int, transparent: Boolean): ByteArray?
+    external fun captureFrame(renderer: Long, width: Int, height: Int, transparent: Boolean, flags: Int): ByteArray?
     /** Цвет пикселя экрана ARGB (пипетка); вызывать из GL-потока сразу после drawFrame. */
     external fun readPixel(renderer: Long, x: Int, y: Int): Int
     /** true = нужен ещё кадр (позже: идёт загрузка текстур). */

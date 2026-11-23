@@ -149,7 +149,7 @@ Java_com_vibetoon_nativebridge_RenderNative_setBackground(JNIEnv*, jobject, jlon
 // Передаёт Bitmap (RGBA_8888, premultiplied alpha, как выдаёт BitmapFactory) в очередь загрузки
 // текстур: пиксели копируются построчно с учётом stride, дальше путь тот же, что у слоёв PSD.
 // Возвращает false, если формат не RGBA_8888 или Bitmap нельзя заблокировать.
-static jboolean uploadBitmap(JNIEnv* env, jint layerId, jobject bitmap, bool checked, uint64_t ticket) {
+static jboolean uploadBitmap(JNIEnv* env, jint layerId, jobject bitmap, bool checked, uint64_t ticket, bool shadow = false) {
     AndroidBitmapInfo info;
     if (!bitmap || AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS) return JNI_FALSE;
     if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || info.width == 0 || info.height == 0) return JNI_FALSE;
@@ -167,6 +167,7 @@ static jboolean uploadBitmap(JNIEnv* env, jint layerId, jobject bitmap, bool che
                     static_cast<size_t>(info.width) * 4);
     }
     AndroidBitmap_unlockPixels(env, bitmap);
+    if (shadow) { vt::uploadQueue::pushShadow(std::move(up)); return JNI_TRUE; }
     if (checked) return vt::uploadQueue::pushIfCurrent(std::move(up), ticket) ? JNI_TRUE : JNI_FALSE;
     vt::uploadQueue::push(std::move(up));
     return JNI_TRUE;
@@ -183,6 +184,24 @@ Java_com_vibetoon_nativebridge_RenderNative_textureUploadTicket(JNIEnv*, jobject
 JNIEXPORT jboolean JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_uploadBitmapIfCurrent(JNIEnv* env, jobject, jint layerId, jobject bitmap, jlong ticket) {
     return uploadBitmap(env, layerId, bitmap, true, static_cast<uint64_t>(ticket));
+}
+
+// Теневая текстура участника символа: используется только ближайшим снимком символа (kCaptureShadow),
+// текстура слоя в редакторе не меняется.
+JNIEXPORT jboolean JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_uploadShadowBitmap(JNIEnv* env, jobject, jint layerId, jobject bitmap) {
+    return uploadBitmap(env, layerId, bitmap, false, 0, true);
+}
+
+// Сколько байт ждёт загрузки в GPU (ограничение памяти при массовом восстановлении текстур).
+JNIEXPORT jlong JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_pendingUploadBytes(JNIEnv*, jobject) {
+    return static_cast<jlong>(vt::uploadQueue::bytes());
+}
+
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setInteractive(JNIEnv*, jobject, jlong h, jboolean on) {
+    R(h)->setInteractive(on == JNI_TRUE);
 }
 
 // Отбрасывает ещё не загруженные в GPU текстуры предыдущего проекта
@@ -389,9 +408,9 @@ Java_com_vibetoon_nativebridge_RenderNative_endExport(JNIEnv*, jobject, jlong h)
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_vibetoon_nativebridge_RenderNative_captureFrame(JNIEnv* env, jobject, jlong h, jint w, jint hh, jboolean transparent) {
+Java_com_vibetoon_nativebridge_RenderNative_captureFrame(JNIEnv* env, jobject, jlong h, jint w, jint hh, jboolean transparent, jint flags) {
     std::vector<uint8_t> px;
-    if (!R(h)->captureFrame(w, hh, transparent == JNI_TRUE, px)) return nullptr;
+    if (!R(h)->captureFrame(w, hh, transparent == JNI_TRUE, px, flags)) return nullptr;
     jbyteArray arr = env->NewByteArray(static_cast<jsize>(px.size()));
     if (!arr) return nullptr;
     env->SetByteArrayRegion(arr, 0, static_cast<jsize>(px.size()), reinterpret_cast<const jbyte*>(px.data()));
@@ -412,9 +431,9 @@ Java_com_vibetoon_nativebridge_RenderNative_drawFrame(JNIEnv*, jobject, jlong h)
 JNIEXPORT jintArray JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_frameStats(JNIEnv* env, jobject, jlong h) {
     const vt::FrameStats& s = R(h)->lastStats();
-    const jint v[4] = {s.drawn, s.culled, s.scissoredFx, s.fxPasses};
-    jintArray out = env->NewIntArray(4);
-    if (out) env->SetIntArrayRegion(out, 0, 4, v);
+    const jint v[6] = {s.drawn, s.culled, s.scissoredFx, s.fxPasses, s.fxCached, s.missing};
+    jintArray out = env->NewIntArray(6);
+    if (out) env->SetIntArrayRegion(out, 0, 6, v);
     return out;
 }
 

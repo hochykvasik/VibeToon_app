@@ -278,4 +278,18 @@ int main() {
     PendingUpload fresh; fresh.layerId = 7;
     assert(uploadQueue::pushIfCurrent(std::move(fresh), uploadQueue::ticket(7)));
     assert(uploadQueue::pop(out) && out.layerId == 7);
+
+    // Теневые загрузки снимка символа (пакет 4) идут своей очередью: не попадают в текстуры редактора
+    // и не задерживают снимок разбором общей очереди.
+    PendingUpload sh; sh.layerId = 5; sh.rgba.resize(16);
+    uploadQueue::pushShadow(std::move(sh));
+    assert(!uploadQueue::pop(out));                       // общая очередь пуста
+    assert(uploadQueue::bytes() == 16);                   // но память учитывается
+    assert(uploadQueue::popShadow(out) && out.layerId == 5);
+    assert(!uploadQueue::popShadow(out));
+    assert(uploadQueue::bytes() == 0);
+    PendingUpload sh2; sh2.layerId = 6;
+    uploadQueue::pushShadow(std::move(sh2));
+    uploadQueue::clear();                                 // смена проекта выбрасывает и теневые
+    assert(!uploadQueue::popShadow(out));
 }

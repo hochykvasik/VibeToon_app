@@ -10,6 +10,10 @@
 #include "render/GlUtil.h"
 #include "render/GlState.h"
 #include "render/CanvasClipPolicy.h"
+#include "render/FxCachePolicy.h"
+#include "render/UploadQueue.h"
+#include <EGL/egl.h>
+#include <chrono>
 #include "render/LayerBounds.h"
 #include "render/EffectRenderPolicy.h"
 #include "render/MeshPosition.h"
@@ -450,6 +454,10 @@ int Renderer::initGL() {
 
     // Новый контекст: старые id (текстуры, FBO) недействительны.
     textures_.clear();
+    shadowTex_.clear();
+    fxCache_.clear();
+    fxCacheBytes_ = 0;
+    bumpEpoch();
     textureBytes_ = 0;
     fboPool_.clear();
     fboCreated_ = 0;
@@ -466,7 +474,8 @@ int Renderer::initGL() {
 void Renderer::setViewport(int width, int height) {
     const int w = width > 0 ? width : 1;
     const int h = height > 0 ? height : 1;
-    if (w != width_ || h != height_) releaseTargets();  // FBO привязаны к размеру экрана
+    if (w != width_ || h != height_) { releaseTargets(); dropFxCache(); }  // FBO привязаны к размеру экрана
+    bumpEpoch();
     width_ = w;
     height_ = h;
     glViewport(0, 0, width_, height_);
@@ -474,6 +483,7 @@ void Renderer::setViewport(int width, int height) {
 }
 
 void Renderer::beginExport(int width, int height) {
+    bumpEpoch();
     savedW_ = width_; savedH_ = height_;
     savedZoom_ = zoom_; savedPanX_ = panX_; savedPanY_ = panY_;
     savedRotDeg_ = rotDeg_; savedFlipX_ = flipX_; savedFlipY_ = flipY_;
@@ -505,7 +515,10 @@ void Renderer::beginExport(int width, int height) {
     }
 }
 
-bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out) {
+bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out, int flags) {
+    // Приложение в фоне: поверхность GLSurfaceView снята, контекст не текущий - любые GL-вызовы дадут мусор
+    // (раньше пустой снимок мог стать картинкой символа). Отказ - вызывающий повторит после возврата.
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT) return false;
     GLint maxTexture = 0, maxRenderbuffer = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
     glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbuffer);
@@ -537,19 +550,42 @@ bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>
             screenFbo_ = fbo;  // до beginExport: снимок, не Surface-экспорт (без внутреннего FBO)
             beginExport(w, h);
             transparentCapture_ = transparent;
-            int guard = 0;
-            while (drawFrame() && guard++ < 500) {}
-            out.assign(static_cast<size_t>(w) * h * 4, 0);
-            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-            glPixelStorei(GL_PACK_ALIGNMENT, 1);
-            glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
-            ok = checkGl("captureFrame");
+            const bool shadow = (flags & kCaptureShadow) != 0;
+            if (shadow) {
+                // Снимок символа: нужны только его теневые текстуры (их немного). Общую очередь загрузок здесь
+                // НЕ вычерпываем: после возврата из фона в ней весь проект, и раньше снимок держал GL-поток
+                // секундами (главный поток ждёт GL в onPause/onResume/surfaceChanged -> ANR).
+                uploadShadows();
+                useShadows_ = true;
+                drawFrame();
+                useShadows_ = false;
+            } else {
+                // Прочие снимки дорисовывают загрузки, но не дольше ~1.5 с (защита главного потока от ANR).
+                const auto t0 = std::chrono::steady_clock::now();
+                int guard = 0;
+                while (drawFrame() && guard++ < 500) {
+                    if (std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(1500)) break;
+                }
+            }
+            const bool notReady = (flags & kCaptureStrict) != 0 && stats_.missing > 0;
+            if (notReady) {
+                out.clear();
+                ok = true;
+            } else {
+                out.assign(static_cast<size_t>(w) * h * 4, 0);
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
+                ok = checkGl("captureFrame");
+            }
         }
     } catch (const std::exception& e) {
         LOGW("capture allocation failed: %s", e.what());
         ok = false;
     }
     transparentCapture_ = false;
+    useShadows_ = false;
+    if (flags & kCaptureShadow) clearShadows();   // теневые текстуры живут ровно один снимок
     screenFbo_ = editorScreen;
     endExport();
     releaseTargets();
@@ -558,12 +594,14 @@ bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>
     curFbo_ = editorCurrent; fboCreated_ = editorCreated;
     glDeleteFramebuffers(1, &fbo);
     glDeleteTextures(1, &tex);
+    bumpEpoch();
     if (!ok) out.clear();
     return ok;
 }
 
 void Renderer::endExport() {
     if (!exportMode_) return;
+    bumpEpoch();
     exportMode_ = false;
     if (exportToSurface_) {
         if (exportFbo_) glDeleteFramebuffers(1, &exportFbo_);
@@ -578,11 +616,13 @@ void Renderer::endExport() {
 }
 
 void Renderer::setCanvas(int width, int height) {
+    if (width != canvasW_ || height != canvasH_) bumpEpoch();
     canvasW_ = width > 0 ? width : 1;
     canvasH_ = height > 0 ? height : 1;
 }
 
 void Renderer::setWarps(const int* ids, const float* offsets, int n) {
+    bumpEpoch();
     warps_.clear();
     for (int i = 0; i < n; ++i) {
         std::array<float, 32> a;
@@ -592,6 +632,7 @@ void Renderer::setWarps(const int* ids, const float* offsets, int n) {
 }
 
 void Renderer::setPerspectives(const int* ids, const float* mats, int n) {
+    bumpEpoch();
     persps_.clear();
     for (int i = 0; i < n; ++i) {
         std::array<float, 9> a;
@@ -601,6 +642,7 @@ void Renderer::setPerspectives(const int* ids, const float* mats, int n) {
 }
 
 void Renderer::setTurbulence(const int* ids, const float* data, int n) {
+    bumpEpoch();
     turbs_.clear();
     for (int i = 0; i < n; ++i) {
         std::array<float, 4> a;
@@ -610,6 +652,7 @@ void Renderer::setTurbulence(const int* ids, const float* data, int n) {
 }
 
 void Renderer::setEffects(const int* ids, const int* counts, int n, const float* data) {
+    bumpEpoch();
     effects_.clear();
     size_t o = 0;
     for (int i = 0; i < n; ++i) {
@@ -625,6 +668,7 @@ void Renderer::setEffects(const int* ids, const int* counts, int n, const float*
 }
 
 void Renderer::setMeshes(const int* ids, const int* counts, int n, const float* verts, const int* tris) {
+    bumpEpoch();
     meshes_.clear();
     size_t vo = 0, to = 0;
     for (int i = 0; i < n; ++i) {
@@ -648,6 +692,7 @@ void Renderer::setMeshes(const int* ids, const int* counts, int n, const float* 
 }
 
 void Renderer::setScene(const int* ops, const float* params, int n) {
+    bumpEpoch();
     scene_.clear();
     scene_.reserve(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) {
@@ -908,6 +953,28 @@ void Renderer::clearTextures() {
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
     textureBytes_ = 0;
+    clearShadows();
+    dropFxCache();
+    bumpEpoch();
+}
+
+void Renderer::clearShadows() {
+    for (auto& kv : shadowTex_) { glDeleteTextures(1, &kv.second.id); textureBytes_ -= std::min(textureBytes_, kv.second.bytes); }
+    shadowTex_.clear();
+}
+
+void Renderer::setInteractive(bool on) {
+    if (interactive_ == on) return;
+    interactive_ = on;
+}
+
+const Renderer::Tex* Renderer::findTex(int layerId) const {
+    if (useShadows_) {
+        const auto s = shadowTex_.find(layerId);
+        if (s != shadowTex_.end()) return &s->second;
+    }
+    const auto t = textures_.find(layerId);
+    return t == textures_.end() ? nullptr : &t->second;
 }
 
 // Отдельная проверяемая замена; не изменяет прежнюю текстуру при отказе.
@@ -955,6 +1022,7 @@ int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, i
         return -6;
     }
     queueGuard.invalidateLayer(layerId);
+    bumpEpoch();
     const GLuint oldId = old->second.id;
     textureBytes_ -= old->second.bytes;
     old->second = std::move(t);
@@ -962,6 +1030,34 @@ int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, i
     glDeleteTextures(1, &oldId);
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(binding) == oldId ? old->second.id : static_cast<GLuint>(binding));
     return 0;
+}
+
+bool Renderer::makeTexture(const PendingUpload& up, size_t bytes, Tex& t) {
+    t.bytes = bytes;
+    t.w = up.width;
+    t.h = up.height;
+    t.alpha.resize(static_cast<size_t>(up.width) * up.height);
+    for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = up.rgba[i * 4 + 3];
+    // Отделяем ошибку новой загрузки от оставшихся ошибок предыдущего кадра.
+    checkGl("before uploadPending");
+    glGenTextures(1, &t.id);
+    glBindTexture(GL_TEXTURE_2D, t.id);
+    const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(up.width, up.height))));
+    glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, up.width, up.height);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE,
+                    up.rgba.data());
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (!t.id || !checkGl("uploadPending texture")) {
+        if (t.id) glDeleteTextures(1, &t.id);
+        t.id = 0;
+        LOGW("texture allocation failed, layer %d unchanged", up.layerId);
+        return false;
+    }
+    return true;
 }
 
 void Renderer::uploadPending() {
@@ -984,29 +1080,7 @@ void Renderer::uploadPending() {
             continue;
         }
         Tex t;
-        t.bytes = bytes;
-        t.w = up.width;
-        t.h = up.height;
-        t.alpha.resize(static_cast<size_t>(up.width) * up.height);
-        for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = up.rgba[i * 4 + 3];
-        // Отделяем ошибку новой загрузки от оставшихся ошибок предыдущего кадра.
-        checkGl("before uploadPending");
-        glGenTextures(1, &t.id);
-        glBindTexture(GL_TEXTURE_2D, t.id);
-        const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(up.width, up.height))));
-        glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, up.width, up.height);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE,
-                        up.rgba.data());
-        glGenerateMipmap(GL_TEXTURE_2D);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        if (!t.id || !checkGl("uploadPending texture")) {
-            if (t.id) glDeleteTextures(1, &t.id);
-            LOGW("texture allocation failed, layer %d unchanged", up.layerId);
-            continue;
-        }
+        if (!makeTexture(up, bytes, t)) continue;
         if (old != textures_.end()) {
             glDeleteTextures(1, &old->second.id);
             textureBytes_ -= old->second.bytes;
@@ -1015,9 +1089,40 @@ void Renderer::uploadPending() {
         textures_[up.layerId] = std::move(t);
         textureBytes_ += bytes;
         uploaded += up.rgba.size();
+        dropFxEntry(up.layerId);
+        bumpEpoch();
         up = PendingUpload();  // освобождаем CPU-буфер сразу
     }
     checkGl("uploadPending");
+}
+
+// Теневые текстуры снимка символа: кадр символа рисуется своими рисунками участников, а текстуры слоёв
+// редактора (кадр сцены) не трогаются - нет гонки «снимок символа подменил рот на холсте».
+void Renderer::uploadShadows() {
+    PendingUpload up;
+    while (uploadQueue::popShadow(up)) {
+        const size_t bytes = static_cast<size_t>(up.width) * up.height * 4 * 4 / 3;
+        if (up.width <= 0 || up.height <= 0 || bytes > kTextureBudgetBytes ||
+            textureBytes_ > kTextureBudgetBytes - bytes) {
+            LOGW("shadow texture budget exceeded, layer %d", up.layerId);
+            continue;
+        }
+        GLint maxTex = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
+        if (up.width > maxTex || up.height > maxTex) continue;
+        Tex t;
+        if (!makeTexture(up, bytes, t)) continue;
+        auto old = shadowTex_.find(up.layerId);
+        if (old != shadowTex_.end()) {
+            glDeleteTextures(1, &old->second.id);
+            textureBytes_ -= std::min(textureBytes_, old->second.bytes);
+            shadowTex_.erase(old);
+        }
+        shadowTex_[up.layerId] = std::move(t);
+        textureBytes_ += bytes;
+        up = PendingUpload();
+    }
+    checkGl("uploadShadows");
 }
 
 // ---------------------------------------------------------------- цели рендера
@@ -1198,7 +1303,7 @@ void Renderer::runEffect(GLuint srcTex, const float* e) {
 // в конце результат накладывается на родителя с прозрачностью и режимом слоя.
 void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode) {
     const auto fx = effects_.find(it.layerId);
-    if (!applyLayerEffect(clipMode, fx != effects_.end(), progFx_ != 0, textures_.find(it.layerId) != textures_.end())) {
+    if (!applyLayerEffect(clipMode, fx != effects_.end(), progFx_ != 0, findTex(it.layerId) != nullptr)) {
         drawLayerPlain(it, opacity, blend, clipMode);
         return;
     }
@@ -1212,6 +1317,9 @@ void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode
     for (const auto& e : fx->second) chain.push_back(e.data());
     const float reach = chainReach(chain.data(), static_cast<int>(chain.size()));
     const bool deformed = meshes_.count(it.layerId) || warps_.count(it.layerId) || persps_.count(it.layerId) || turbs_.count(it.layerId);
+    // Кэш результата: та же сцена и вид - без проходов эффектов; во время жеста камеры - с преобразованием вида.
+    const bool cacheable = fxCacheEnabled() && !deformed && reach >= 0.f;
+    if (cacheable && drawFxFromCache(it, va, reach, opacity, blend)) return;
     const float W = static_cast<float>(width_), H = static_cast<float>(height_);
     ScreenRect work{0.f, 0.f, W, H}, clearArea = work;
     if (reach >= 0.f && !deformed) {
@@ -1245,6 +1353,7 @@ void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode
         a = b;
         ++stats_.fxPasses;
     }
+    if (cacheable) storeFxCache(it, a.fbo, box, va);
     bindTarget(parent);
     // Наложение: рамка слоя, пересечённая с обрезкой кадра (экспорт).
     if (limited || canvasScissorOn_) {
@@ -1263,6 +1372,132 @@ void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode
     restoreCanvasScissor();
 }
 
+// ---------------------------------------------------------------- кэш результата эффектов
+
+namespace {
+constexpr size_t kFxCacheBudget = 128u * 1024u * 1024u;
+}
+
+bool Renderer::fxCacheEnabled() const {
+    return !exportMode_ && !useShadows_ && !paintActive_ && screenFbo_ == 0;
+}
+
+bool Renderer::drawFxFromCache(const Item& it, const float va[6], float reach, float opacity, int blend) {
+    auto e = fxCache_.find(it.layerId);
+    if (e == fxCache_.end() || e->second.epoch != epoch_ || !e->second.tex) return false;
+    FxEntry& c = e->second;
+    float d[6];
+    if (!fxcache::screenDelta(va, c.va, d)) return false;
+    const float W = static_cast<float>(width_), H = static_cast<float>(height_);
+    if (!fxcache::isIdentity(d)) {
+        if (!interactive_ || !fxcache::scaleAcceptable(d)) return false;
+        float dInv[6];
+        if (!fxcache::invert(d, dInv)) return false;
+        const float sc = std::sqrt(va[0] * va[0] + va[1] * va[1]);
+        const ScreenRect body = layerScreenRect(va, it.m);
+        if (body.empty()) return false;
+        const ScreenRect need = intersect(expand(body, reach * sc + 2.f), W, H);
+        if (need.empty()) { c.used = true; ++stats_.culled; return true; }   // слой ушёл за экран
+        const ScreenRect cached{static_cast<float>(c.bx), H - static_cast<float>(c.by + c.bh),
+                                static_cast<float>(c.bx + c.bw), H - static_cast<float>(c.by)};
+        if (!fxcache::covers(cached, need, dInv)) return false;   // открылась непосчитанная часть - пересчёт
+    }
+    // Строка 0 текстуры кэша = нижняя строка рамки (GL): v = 0 -> нижний край рамки на экране.
+    float ox, oy;
+    fxcache::apply(d, static_cast<float>(c.bx), H - static_cast<float>(c.by), ox, oy);
+    const float bw = static_cast<float>(c.bw), bh = static_cast<float>(c.bh);
+    GLfloat mvp[9];
+    mvpScreen(ox, oy, d[0] * bw, d[1] * bw, -d[2] * bh, -d[3] * bh, mvp);
+    restoreCanvasScissor();
+    drawTexture(c.tex, mvp, opacity, blend, false);
+    c.used = true;
+    ++stats_.fxCached;
+    return true;
+}
+
+void Renderer::storeFxCache(const Item& it, GLuint srcFbo, const int box[4], const float va[6]) {
+    const int bw = box[2], bh = box[3];
+    if (!fxcache::entryAllowed(bw, bh, width_, height_)) { dropFxEntry(it.layerId); return; }
+    const size_t bytes = static_cast<size_t>(bw) * static_cast<size_t>(bh) * 4u;
+    auto found = fxCache_.find(it.layerId);
+    const size_t oldBytes = (found != fxCache_.end() && found->second.tex) ? static_cast<size_t>(found->second.bw) * found->second.bh * 4u : 0u;
+    if (fxCacheBytes_ - std::min(fxCacheBytes_, oldBytes) + bytes > kFxCacheBudget) { dropFxEntry(it.layerId); return; }
+    FxEntry& c = fxCache_[it.layerId];
+    if (c.tex && (c.bw != bw || c.bh != bh)) {
+        glDeleteFramebuffers(1, &c.fbo);
+        glDeleteTextures(1, &c.tex);
+        fxCacheBytes_ -= std::min(fxCacheBytes_, oldBytes);
+        c.fbo = c.tex = 0;
+    }
+    if (!c.tex) {
+        glGenTextures(1, &c.tex);
+        glBindTexture(GL_TEXTURE_2D, c.tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, bw, bh);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenFramebuffers(1, &c.fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, c.fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, c.tex, 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE || !checkGl("fx cache alloc")) {
+            glDeleteFramebuffers(1, &c.fbo);
+            glDeleteTextures(1, &c.tex);
+            fxCache_.erase(it.layerId);
+            bindTarget(curFbo_);
+            return;
+        }
+        fxCacheBytes_ += bytes;
+    }
+    c.bw = bw; c.bh = bh;
+    // blit учитывает scissor: на время копии выключаем (вызывающий заново ставит scissor перед наложением)
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, c.fbo);
+    glBlitFramebuffer(box[0], box[1], box[0] + bw, box[1] + bh, 0, 0, bw, bh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, curFbo_);
+    c.bx = box[0]; c.by = box[1];
+    for (int i = 0; i < 6; ++i) c.va[i] = va[i];
+    c.epoch = epoch_;
+    c.used = true;
+}
+
+void Renderer::dropFxEntry(int layerId) {
+    auto e = fxCache_.find(layerId);
+    if (e == fxCache_.end()) return;
+    if (e->second.fbo) glDeleteFramebuffers(1, &e->second.fbo);
+    if (e->second.tex) {
+        glDeleteTextures(1, &e->second.tex);
+        fxCacheBytes_ -= std::min(fxCacheBytes_, static_cast<size_t>(e->second.bw) * e->second.bh * 4u);
+    }
+    fxCache_.erase(e);
+}
+
+void Renderer::dropFxCache() {
+    for (auto& kv : fxCache_) {
+        if (kv.second.fbo) glDeleteFramebuffers(1, &kv.second.fbo);
+        if (kv.second.tex) glDeleteTextures(1, &kv.second.tex);
+    }
+    fxCache_.clear();
+    fxCacheBytes_ = 0;
+}
+
+void Renderer::gcFxCache() {
+    for (auto it = fxCache_.begin(); it != fxCache_.end();) {
+        if (!it->second.used) {
+            if (it->second.fbo) glDeleteFramebuffers(1, &it->second.fbo);
+            if (it->second.tex) {
+                glDeleteTextures(1, &it->second.tex);
+                fxCacheBytes_ -= std::min(fxCacheBytes_, static_cast<size_t>(it->second.bw) * it->second.bh * 4u);
+            }
+            it = fxCache_.erase(it);
+        } else {
+            it->second.used = false;
+            ++it;
+        }
+    }
+}
+
 void Renderer::restoreCanvasScissor() {
     if (canvasScissorOn_) {
         int cb[4];
@@ -1275,8 +1510,11 @@ void Renderer::restoreCanvasScissor() {
 }
 
 void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool clipMode) {
-    auto t = textures_.find(it.layerId);
-    if (t == textures_.end()) return;  // текстура ещё не загружена
+    const Tex* t = findTex(it.layerId);
+    if (!t) {   // текстура ещё не загружена
+        if (it.opacity > 0.001f) ++stats_.missing;
+        return;
+    }
     // Отсечение: слой без деформаций целиком вне цели не рисуется (зум/панорама на большом холсте).
     if (!meshes_.count(it.layerId) && !warps_.count(it.layerId) && !persps_.count(it.layerId)) {
         float va[6];
@@ -1294,7 +1532,7 @@ void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool cli
     const auto tb = turbs_.find(it.layerId);
     curTurb_ = tb == turbs_.end() ? nullptr : tb->second.data();
     const auto w = warps_.find(it.layerId);
-    drawTexture(t->second.id, mvp, opacity, blend, clipMode, curMesh_ || w == warps_.end() ? nullptr : w->second.data());
+    drawTexture(t->id, mvp, opacity, blend, clipMode, curMesh_ || w == warps_.end() ? nullptr : w->second.data());
     curMesh_ = nullptr;
     curPersp_ = nullptr;
     curTurb_ = nullptr;
@@ -1418,6 +1656,7 @@ bool Renderer::drawFrame() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_SCISSOR_TEST);   // рамка выделения может выходить за холст
+    if (!exportMode_) gcFxCache();
     if (!exportMode_) drawSelection();
     glBindVertexArray(0);
     checkGl("drawFrame");
@@ -1435,6 +1674,8 @@ int Renderer::readPixel(int x, int y) const {
 void Renderer::release() {
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
+    clearShadows();
+    dropFxCache();
     textureBytes_ = 0;
     releaseTargets();
     paintFreeTargets();
