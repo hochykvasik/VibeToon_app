@@ -1261,6 +1261,11 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "В GIF нет кадров" to R.string.ui_the_gif_has_no_frames,
     "Новый PSD: замок слоя (пиксели, положение, весь слой) - замок, замок прозрачности - «Замок прозрачности»; уже открытые проекты не меняются" to R.string.ui_new_psd_a_layer_lock_pixels_position,
     "Выкл.: текстовые слои нового PSD становятся редактируемым текстом (текст, размер, цвет, выравнивание; шрифт по умолчанию, поверх слоёв PSD)" to R.string.ui_off_text_layers_of_a_new_psd_become_,
+    "Выбран слой-картинка: «+ Изображение» вписывает картинку в его рисунок на плейхеде (пропорции, по центру) вместо нового слоя; Undo возвращает рисунок" to R.string.ui_with_an_image_layer_selected_image_f,
+    "Слой изменился во время вставки: картинка не вставлена" to R.string.ui_the_layer_changed_during_insertion_t,
+    "Не удалось прочитать рисунок слоя" to R.string.ui_could_not_read_the_layer_drawing,
+    "Не удалось вставить картинку в рисунок" to R.string.ui_could_not_insert_the_picture_into_th,
+    "PNG не записан" to R.string.ui_png_was_not_written,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -1314,6 +1319,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Пин\\ (.+?):\\ тяните\\ его,\\ рисунок\\ следует\\ за\\ точкой\$" to R.string.ui_pin_drag_it_the_drawing_follows_the_,
     "^Точка\\ удалена,\\ сетка\\ перестроена\\ \\((.+?)\\ вершин\\)\$" to R.string.ui_point_deleted_mesh_rebuilt_vertices,
     "^Добавлено:\\ (.+?)\\.\\ Проект\\ продлён\\ до\\ конца\\ звука\$" to R.string.ui_added_project_extended_to_the_end_of,
+    "^Картинка\\ вставлена\\ в\\ рисунок\\ «(.+?)»\\ на\\ кадре\\ (.+?)\$" to R.string.ui_picture_inserted_into_the_drawing_at,
     "^«(.+?)»\\ появится\\ на\\ одном\\ из\\ следующих\\ этапов\$" to R.string.ui_will_appear_in_one_of_the_next_stage,
     "^Liquify:\\ проведите\\ по\\ картинке\\ ·\\ кисть\\ (.+?)\$" to R.string.ui_liquify_drag_over_the_image_brush,
     "^Выбрано:\\ (.+?)\\ \\(правка\\ применяется\\ ко\\ всем\\)\$" to R.string.ui_selected_edits_apply_to_all,

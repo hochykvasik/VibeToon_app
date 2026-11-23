@@ -962,6 +962,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun importMediaAsSymbol(uri: Uri) {
         val pid = projectId ?: return
         if (isGifUri(uri)) { importGif(uri, asSymbol = true); return }   // пакет 15: анимированный GIF - символ по кругу
+        if (insertIntoDrawingTarget() != null) { insertImageIntoDrawing(uri); return }   // пакет 17: в рисунок выбранного слоя
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         val id = nextMediaId()
         _state.value = UiState.Loading
@@ -1169,6 +1170,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun importMedia(kind: MediaKind, uri: Uri) {
         val pid = projectId ?: return
         if (kind == MediaKind.IMAGE && isGifUri(uri)) { importGif(uri, asSymbol = false); return }   // пакет 15
+        if (kind == MediaKind.IMAGE && insertIntoDrawingTarget() != null) { insertImageIntoDrawing(uri); return }   // пакет 17
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         val id = nextMediaId()
         _state.value = UiState.Loading
@@ -3968,8 +3970,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pid = projectId ?: return
         updateSymbols(f)
         for (m in media) {
-            if (m.kind != MediaKind.IMAGE || m.cells.isEmpty()) continue
-            val act = FrameMath.active(m.cells, f) ?: continue
+            if (m.kind != MediaKind.IMAGE) continue
+            // пакет 17: кадров не осталось (Undo «Добавить пустой кадр» / «Вставить в рисунок») - вернуть файл слоя
+            val file = FrameMath.shownFile(m.cells, f, m.file, cellShown[m.id]) ?: continue
+            val plain = m.cells.isEmpty()
+            if (plain && cellShown[m.id] == m.file) { cellShown.remove(m.id); continue }
+            val act = FrameCell(0, file)
             if (cellShown[m.id] == act.file || m.id in cellBusy) continue
             cellBusy += m.id
             val ticket = RenderNative.textureUploadTicket(m.id)
@@ -3982,7 +3988,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val d = withContext(decodeDispatcher) { importer.decodeImage(projects.fileOf(pid, act.file)) }
                     val uploaded = RenderNative.uploadBitmapIfCurrent(m.id, d.bitmap, ticket); d.bitmap.recycle()
                     if (!uploaded) return@launch
-                    cellShown[m.id] = act.file
+                    // обычный слой (без кадров) дальше рисуется в свой файл: запись о показанном кадре не нужна
+                    if (plain) cellShown.remove(m.id) else cellShown[m.id] = act.file
                     invalidateThumb(m.id)
                     RenderHost.view?.requestRender()
                 } catch (t: kotlinx.coroutines.CancellationException) {
@@ -4001,6 +4008,73 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         textFxKeys.clear(); cellShown.clear()
         updateTextFx(_frame.value)
         updateCells(_frame.value)
+    }
+
+    /** Пакет 17: Import → Insert Images into Existing Drawing включено и выбран подходящий слой-картинка. */
+    private fun insertIntoDrawingTarget(): MediaItem? {
+        val on = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("import_into_drawing", false)
+        if (!on) return null
+        val m = frameLayer() ?: return null
+        return m.takeIf { com.vibetoon.domain.project.DrawingInsert.accepts(it.kind, it.vector, isLockedId(it.id)) }
+    }
+
+    /**
+     * Пакет 17: картинка вписывается (пропорции, по центру) в рисунок выбранного слоя на плейхеде. Результат пишется в
+     * новый файл кадра, а рисунок на плейхеде заменяется им: прежний файл не меняется, поэтому Undo возвращает рисунок.
+     * Обычный слой-картинка при этом становится покадровым с одним рисунком.
+     */
+    fun insertImageIntoDrawing(uri: Uri) {
+        val pid = projectId ?: return
+        val m0 = insertIntoDrawingTarget() ?: return
+        if (_playing.value || importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        _state.value = UiState.Loading
+        importJob = viewModelScope.launch {
+            var out: java.io.File? = null
+            var committed = false
+            val tmp = java.io.File(getApplication<Application>().cacheDir, "insert_${java.util.UUID.randomUUID()}")
+            try {
+                if (!flushPaintSavesSafely()) { _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён"); return@launch }
+                val m = media.firstOrNull { it.id == m0.id && it.kind == MediaKind.IMAGE } ?: run { _state.value = UiState.Idle; return@launch }
+                val frame = _frame.value
+                val cells0 = m.cells.ifEmpty { listOf(FrameCell(0, m.file)) }
+                val act = FrameMath.active(cells0, frame) ?: run { _state.value = UiState.Idle; return@launch }
+                val name = newCellName(m.copy(cells = cells0))
+                val dest = projects.mediaFile(pid, name)
+                out = dest
+                withContext(decodeDispatcher) {
+                    val opts = android.graphics.BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 }
+                    val base = android.graphics.BitmapFactory.decodeFile(projects.fileOf(pid, act.file).absolutePath, opts)
+                        ?: error("Не удалось прочитать рисунок слоя")
+                    try {
+                        importer.copy(uri, tmp)
+                        val src = importer.decodeImage(tmp)
+                        try {
+                            val r = com.vibetoon.domain.project.DrawingInsert.fitRect(src.bitmap.width, src.bitmap.height, base.width, base.height)
+                            android.graphics.Canvas(base).drawBitmap(src.bitmap, null, android.graphics.RectF(r[0], r[1], r[2], r[3]),
+                                android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG or android.graphics.Paint.ANTI_ALIAS_FLAG))
+                        } finally { src.bitmap.recycle() }
+                        dest.outputStream().use { check(base.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) { "PNG не записан" } }
+                    } finally { base.recycle() }
+                }
+                // слой могли изменить, пока шла вставка: тогда ничего не трогаем
+                if (projectId != pid || closing || media.firstOrNull { it.id == m.id } != m || _frame.value != frame) {
+                    withContext(Dispatchers.IO) { dest.delete() }
+                    if (projectId == pid && !closing) _state.value = UiState.Message("Слой изменился во время вставки: картинка не вставлена")
+                    return@launch
+                }
+                commitCells(m.id, FrameMath.replaceActive(m.cells, frame, "assets/$name", m.file), frame, "Картинка вставлена в рисунок «${layerName(m.id)}» на кадре ${frame + 1}")
+                committed = true
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { if (!committed) out?.delete() }
+                throw t
+            } catch (t: Throwable) {
+                Log.e("VT/Media", "insert into drawing failed", t)
+                if (!committed) withContext(Dispatchers.IO) { out?.delete() }
+                if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось вставить картинку в рисунок")
+            } finally {
+                tmp.delete()
+            }
+        }
     }
 
     private fun commitCells(id: Int, cells: List<FrameCell>, goto: Int, message: String) {

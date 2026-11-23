@@ -1428,4 +1428,10 @@
     <string name="ui_psd_text_layers_became_editable_text_2">PSD text layers became editable text: {}; locks imported: {}</string>
     <string name="ui_psd_text_layers_became_editable_text_3">PSD text layers became editable text: {}</string>
     <string name="ui_psd_layer_locks_imported">PSD layer locks imported: {}</string>
+    <string name="ui_with_an_image_layer_selected_image_f">With an image layer selected, “+ Image” fits the picture into its drawing at the playhead (keeping proportions, centered) instead of adding a new layer; Undo restores the drawing</string>
+    <string name="ui_picture_inserted_into_the_drawing_at">Picture inserted into the drawing “{}” at frame {}</string>
+    <string name="ui_the_layer_changed_during_insertion_t">The layer changed during insertion: the picture was not inserted</string>
+    <string name="ui_could_not_read_the_layer_drawing">Could not read the layer drawing</string>
+    <string name="ui_could_not_insert_the_picture_into_th">Could not insert the picture into the drawing</string>
+    <string name="ui_png_was_not_written">PNG was not written</string>
 </resources>

@@ -1428,4 +1428,10 @@
     <string name="ui_psd_text_layers_became_editable_text_2">Текстовые слои PSD стали редактируемым текстом: {}; перенесено замков: {}</string>
     <string name="ui_psd_text_layers_became_editable_text_3">Текстовые слои PSD стали редактируемым текстом: {}</string>
     <string name="ui_psd_layer_locks_imported">Перенесено замков слоёв PSD: {}</string>
+    <string name="ui_with_an_image_layer_selected_image_f">Выбран слой-картинка: «+ Изображение» вписывает картинку в его рисунок на плейхеде (пропорции, по центру) вместо нового слоя; Undo возвращает рисунок</string>
+    <string name="ui_picture_inserted_into_the_drawing_at">Картинка вставлена в рисунок «{}» на кадре {}</string>
+    <string name="ui_the_layer_changed_during_insertion_t">Слой изменился во время вставки: картинка не вставлена</string>
+    <string name="ui_could_not_read_the_layer_drawing">Не удалось прочитать рисунок слоя</string>
+    <string name="ui_could_not_insert_the_picture_into_th">Не удалось вставить картинку в рисунок</string>
+    <string name="ui_png_was_not_written">PNG не записан</string>
 </resources>

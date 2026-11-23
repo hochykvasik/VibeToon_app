@@ -31,6 +31,23 @@ object FrameMath {
     /** Список с добавленным рисунком, упорядоченный по кадрам. */
     fun with(cells: List<FrameCell>, cell: FrameCell): List<FrameCell> = (cells + cell).sortedBy { it.start }
 
+    /**
+     * Пакет 17: рисунок, активный на [frame], заменяется файлом [file] (экспозиция та же). Старый файл не трогается -
+     * Undo возвращает прежний список. Пустой список - слой без кадров: его единственный рисунок [baseFile] на кадре 0.
+     */
+    fun replaceActive(cells: List<FrameCell>, frame: Int, file: String, baseFile: String): List<FrameCell> {
+        val list = cells.ifEmpty { listOf(FrameCell(0, baseFile)) }
+        val a = active(list, frame) ?: return list
+        return list.map { if (it == a) it.copy(file = file) else it }.sortedBy { it.start }
+    }
+
+    /**
+     * Пакет 17: что показать в текстуре слоя-картинки на [frame]: рисунок кадра или (кадров больше нет, например после
+     * Undo «Добавить пустой кадр») сам файл слоя - только если текстура раньше показывала рисунок кадра ([shown] != null).
+     */
+    fun shownFile(cells: List<FrameCell>, frame: Int, file: String, shown: String?): String? =
+        if (cells.isNotEmpty()) active(cells, frame)?.file else if (shown != null) file else null
+
     /** Список без рисунка, активного на [frame]; последний рисунок удалить нельзя (вернётся тот же список). */
     fun without(cells: List<FrameCell>, frame: Int): List<FrameCell> {
         if (cells.size <= 1) return cells

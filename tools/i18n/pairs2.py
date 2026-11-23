@@ -1120,4 +1120,10 @@ GIF не прочитан: файл повреждён или слишком б�
 Текстовые слои PSD стали редактируемым текстом: {}; перенесено замков: {}|PSD text layers became editable text: {}; locks imported: {}
 Текстовые слои PSD стали редактируемым текстом: {}|PSD text layers became editable text: {}
 Перенесено замков слоёв PSD: {}|PSD layer locks imported: {}
+Выбран слой-картинка: «+ Изображение» вписывает картинку в его рисунок на плейхеде (пропорции, по центру) вместо нового слоя; Undo возвращает рисунок|With an image layer selected, “+ Image” fits the picture into its drawing at the playhead (keeping proportions, centered) instead of adding a new layer; Undo restores the drawing
+Картинка вставлена в рисунок «{}» на кадре {}|Picture inserted into the drawing “{}” at frame {}
+Слой изменился во время вставки: картинка не вставлена|The layer changed during insertion: the picture was not inserted
+Не удалось прочитать рисунок слоя|Could not read the layer drawing
+Не удалось вставить картинку в рисунок|Could not insert the picture into the drawing
+PNG не записан|PNG was not written
 """
