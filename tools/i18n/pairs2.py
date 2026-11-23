@@ -1105,4 +1105,13 @@ PSD откроется в новом проекте: слои загружают
 Файл звука не найден в проекте - видео без звука|The sound file is missing from the project - the video will be silent
 Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука|Could not prepare the sound (the file cannot be decoded) - the video was saved without sound
 Сборка {}|Build {}
+Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость, реверс и Цикл работают для звука и видео; Цикл повторяет клип до конца проекта или сцены. Скорость и Цикл меняют и время ключей анимации слоя.|Drag clip edges on the timeline; drag the middle to move the selected clip. Speed, reverse and Loop work for sound and video; Loop repeats the clip until the end of the project or scene. Speed and Loop also change the timing of the layer's animation keys.
+GIF обрезан до {} кадров (больше за раз не импортируется)|GIF trimmed to {} frames (more cannot be imported at once)
+GIF ({} кадров) импортирован как символ «Символ {}»: крутится по кругу|GIF ({} frames) imported as symbol “Symbol {}”: it plays in a loop
+GIF без анимации импортирован как картинка|A GIF without animation was imported as an image
+GIF импортирован: {} кадров. Проект продлён до конца GIF|GIF imported: {} frames. Project extended to the end of the GIF
+GIF импортирован: {} кадров|GIF imported: {} frames
+GIF не прочитан: файл повреждён или слишком большой|Could not read the GIF: the file is damaged or too large
+Не удалось импортировать GIF|Could not import the GIF
+В GIF нет кадров|The GIF has no frames
 """

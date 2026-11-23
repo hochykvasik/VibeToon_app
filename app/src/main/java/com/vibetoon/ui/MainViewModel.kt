@@ -896,6 +896,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Импорт картинки как символа: картинка становится определением символа, на сцену ставится экземпляр. */
     fun importMediaAsSymbol(uri: Uri) {
         val pid = projectId ?: return
+        if (isGifUri(uri)) { importGif(uri, asSymbol = true); return }   // пакет 15: анимированный GIF - символ по кругу
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         val id = nextMediaId()
         _state.value = UiState.Loading
@@ -997,8 +998,112 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Пакет 15: выбранный файл - GIF (по типу или имени; без чтения файла на главном потоке). */
+    private fun isGifUri(uri: Uri): Boolean = runCatching {
+        getApplication<Application>().contentResolver.getType(uri) == "image/gif" || importer.displayName(uri).lowercase().endsWith(".gif")
+    }.getOrDefault(false)
+
+    /**
+     * Пакет 15: анимированный GIF - покадровый слой (кадр GIF -> рисунок на своём кадре проекта по задержкам GIF)
+     * или символ с этим слоем, который крутится по кругу. Кадры собираются декодером с учётом прозрачности и очистки;
+     * GIF быстрее FPS проекта прореживается. Однокадровый GIF становится обычной картинкой.
+     */
+    fun importGif(uri: Uri, asSymbol: Boolean) {
+        val pid = projectId ?: return
+        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        val id = nextMediaId()
+        _state.value = UiState.Loading
+        importJob = viewModelScope.launch {
+            val written = ArrayList<java.io.File>()
+            var inserted = false
+            val tmp = java.io.File(getApplication<Application>().cacheDir, "gif_${java.util.UUID.randomUUID()}.png")
+            try {
+                val fps = _animation.value.settings.fps
+                val name = withContext(Dispatchers.IO) { importer.displayName(uri) }
+                val result = withContext(decodeDispatcher) {
+                    val cells = ArrayList<com.vibetoon.domain.project.FrameCell>()
+                    var first: MediaItem? = null
+                    var gw = 0; var gh = 0
+                    val placer = com.vibetoon.domain.project.GifDecoder.Placer(fps)
+                    val input = getApplication<Application>().contentResolver.openInputStream(uri) ?: error("Не удалось открыть файл")
+                    val info = input.use { stream ->
+                        com.vibetoon.domain.project.GifDecoder.decode(stream, maxPixels = 2048 * 2048, onSize = { w, h -> gw = w; gh = h }) { _, argb, delay ->
+                            val start = placer.place(delay) ?: return@decode   // GIF быстрее FPS проекта: кадр пропускается
+                            if (projectId != pid || closing) throw kotlinx.coroutines.CancellationException()
+                            val bmp = android.graphics.Bitmap.createBitmap(argb, gw, gh, android.graphics.Bitmap.Config.ARGB_8888)
+                            try {
+                                if (first == null) {
+                                    tmp.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                                    val item = importMediaBlocking(pid, id, MediaKind.IMAGE, Uri.fromFile(tmp))
+                                    written += projects.fileOf(pid, item.file)
+                                    first = item
+                                    cells += com.vibetoon.domain.project.FrameCell(start, item.file)
+                                } else {
+                                    val cellName = "m${id}_c${cells.size}.png"   // служебные кадры покадрового слоя
+                                    val dest = projects.mediaFile(pid, cellName)
+                                    dest.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                                    written += dest
+                                    cells += com.vibetoon.domain.project.FrameCell(start, "assets/$cellName")
+                                }
+                            } finally { bmp.recycle() }
+                        }
+                    }
+                    Triple(checkNotNull(first) { "В GIF нет кадров" }, cells.toList(), info to placer.total)
+                }
+                val (item, cells, rest) = result
+                val (info, total) = rest
+                if (projectId != pid || closing) { withContext(Dispatchers.IO) { written.forEach { it.delete() } }; return@launch }
+                checkpoint("add", force = true)
+                val title = name.substringBeforeLast('.').ifBlank { "GIF" }
+                val layer = item.copy(name = title, cells = if (cells.size > 1) cells else emptyList())
+                val cut = info.frames >= com.vibetoon.domain.project.GifDecoder.MAX_FRAMES
+                if (asSymbol && cells.size > 1) {
+                    val gid = nextMediaId()
+                    val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
+                    media += MediaItem(gid, MediaKind.GROUP, "Символ $n", "", symDur = total)
+                    regroup = regroup + (layer.id to gid)
+                    media += layer
+                    val iid = nextMediaId()
+                    media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
+                    inserted = true
+                    rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
+                    _state.value = UiState.Message(if (cut) "GIF обрезан до ${cells.size} кадров (больше за раз не импортируется)" else "GIF (${cells.size} кадров) импортирован как символ «Символ $n»: крутится по кругу")
+                } else {
+                    val st = _animation.value.settings
+                    val extend = cells.size > 1 && total > st.durationFrames
+                    if (extend) {
+                        val d = total.coerceAtMost(TimeFormat.MAX_DURATION_FRAMES)
+                        meta = meta?.copy(durationFrames = d)
+                        _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, d))
+                    }
+                    media += layer
+                    inserted = true
+                    rebuildLayers(); pushScene(); selectLayer(layer.id); markDirty()
+                    updateCells(_frame.value)
+                    _state.value = UiState.Message(when {
+                        cells.size <= 1 -> "GIF без анимации импортирован как картинка"
+                        cut -> "GIF обрезан до ${cells.size} кадров (больше за раз не импортируется)"
+                        extend -> "GIF импортирован: ${cells.size} кадров. Проект продлён до конца GIF"
+                        else -> "GIF импортирован: ${cells.size} кадров"
+                    })
+                }
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { if (!inserted) written.forEach { it.delete() } }
+                throw t
+            } catch (t: Throwable) {
+                if (!inserted) withContext(Dispatchers.IO) { written.forEach { it.delete() } }
+                Log.e("VT/Media", "gif import failed", t)
+                if (projectId == pid && !closing) _state.value = UiState.Error(
+                    if (t is com.vibetoon.domain.project.GifDecoder.GifException) "GIF не прочитан: файл повреждён или слишком большой" else t.message ?: "Не удалось импортировать GIF")
+            } finally {
+                tmp.delete()
+            }
+        }
+    }
+
     fun importMedia(kind: MediaKind, uri: Uri) {
         val pid = projectId ?: return
+        if (kind == MediaKind.IMAGE && isGifUri(uri)) { importGif(uri, asSymbol = false); return }   // пакет 15
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         val id = nextMediaId()
         _state.value = UiState.Loading
@@ -9759,14 +9864,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         playbackStartFrame = startFrame
         var startNanos = -1L
         var lastF = startFrame
-        audioEngine.play(startFrame, settings.fps, ::clipOf)
+        audioEngine.play(startFrame, settings.fps, ::clipOf, lastFrame + 1)
         val cb = object : Choreographer.FrameCallback {
             override fun doFrame(frameTimeNanos: Long) {
                 if (!_playing.value) return
                 if (startNanos < 0) startNanos = frameTimeNanos
                 val f = if (scene != null) com.vibetoon.domain.anim.SceneMath.playFrame((frameTimeNanos - startNanos) * settings.fps / 1_000_000_000L, startFrame, scene, looping)
                     else PlaybackMath.frameAt(frameTimeNanos - startNanos, settings.fps, startFrame, settings.durationFrames, looping)
-                if (f < lastF) audioEngine.play(f, settings.fps, ::clipOf)   // цикл: звук с начала
+                if (f < lastF) audioEngine.play(f, settings.fps, ::clipOf, lastFrame + 1)   // цикл: звук с начала
                 lastF = f
                 if (f != _frame.value) {
                     setFrame(f)

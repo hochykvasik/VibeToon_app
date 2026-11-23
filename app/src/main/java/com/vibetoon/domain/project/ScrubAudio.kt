@@ -17,10 +17,7 @@ object ScrubAudio {
             val time = frame + k.toDouble() * fps / outputRate
             for (s in sources) {
                 if (s.channels <= 0 || s.sampleRate <= 0) continue
-                val c = s.clip
-                val rel = time - c.start
-                if (c.freeze || rel < 0 || rel >= c.length) continue
-                val srcFrame = if (!c.reverse) c.offset + rel * c.speed else c.offset + c.length * c.speed - rel * c.speed
+                val srcFrame = s.clip.sourceAt(time) ?: continue   // пакет 15: и цикл клипа
                 val pos = srcFrame / fps * s.sampleRate
                 val i = kotlin.math.floor(pos).toInt()
                 if (pos < 0 || i + 1 >= s.data.size / s.channels) continue

@@ -165,6 +165,23 @@ data class Clip(
     fun visibleAt(frame: Int) = if (loop) frame >= start else frame in start until end
 
     /**
+     * Пакет 15: момент источника звука/видео (в кадрах проекта при 1x, считая смещение) в момент [time] проекта
+     * или null - клип молчит (до начала, после конца без цикла, стоп-кадр). Цикл повторяет клип с его начала
+     * (как ключи анимации в [animFrame]); реверс - с конца отрезка источника.
+     */
+    fun sourceAt(time: Double): Double? {
+        if (freeze || length <= 0) return null
+        var rel = time - start
+        if (rel < 0) return null
+        if (loop) rel %= length.toDouble() else if (rel >= length) return null
+        return if (!reverse) offset + rel * speed else offset + length * speed - rel * speed
+    }
+
+    /** Клип звучит хоть где-то в отрезке [from, from + frames): с циклом - до конца отрезка. */
+    fun soundsIn(from: Int, frames: Int): Boolean =
+        !freeze && length > 0 && start < from + frames && (loop || end > from)
+
+    /**
      * Кадр анимации слоя (ключи лежат на кадрах проекта) для кадра проекта [frame]:
      * start + (frame - start) * speed; при loop - по модулю длины источника (length * speed).
      * Вне клипа (до начала) возвращается [frame] без изменений.

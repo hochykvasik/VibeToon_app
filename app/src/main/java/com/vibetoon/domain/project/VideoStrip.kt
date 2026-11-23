@@ -8,7 +8,9 @@ import kotlin.math.min
 object VideoTime {
     fun sourceMs(clip: Clip, frame: Float, fps: Int): Long {
         val last = (clip.length - 1).coerceAtLeast(0).toFloat()
-        val local = (frame - clip.start).coerceIn(0f, last)
+        // пакет 15: зацикленный клип повторяет видео с начала отрезка (вместе со звуком и ключами)
+        val len = clip.length.coerceAtLeast(1).toFloat()
+        val local = if (clip.loop && frame >= clip.start) ((frame - clip.start) % len).coerceIn(0f, last) else (frame - clip.start).coerceIn(0f, last)
         val step = when {
             clip.freeze -> 0f
             clip.reverse -> (last - local) * clip.speed

@@ -1413,4 +1413,13 @@
     <string name="ui_the_sound_file_is_missing_from_the_p">Файл звука не найден в проекте - видео без звука</string>
     <string name="ui_could_not_prepare_the_sound_the_file">Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука</string>
     <string name="ui_build">Сборка {}</string>
+    <string name="ui_drag_clip_edges_on_the_timeline_drag_2">Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость, реверс и Цикл работают для звука и видео; Цикл повторяет клип до конца проекта или сцены. Скорость и Цикл меняют и время ключей анимации слоя.</string>
+    <string name="ui_gif_trimmed_to_frames_more_cannot_be">GIF обрезан до {} кадров (больше за раз не импортируется)</string>
+    <string name="ui_gif_frames_imported_as_symbol_symbol">GIF ({} кадров) импортирован как символ «Символ {}»: крутится по кругу</string>
+    <string name="ui_a_gif_without_animation_was_imported">GIF без анимации импортирован как картинка</string>
+    <string name="ui_gif_imported_frames_project_extended">GIF импортирован: {} кадров. Проект продлён до конца GIF</string>
+    <string name="ui_gif_imported_frames">GIF импортирован: {} кадров</string>
+    <string name="ui_could_not_read_the_gif_the_file_is_d">GIF не прочитан: файл повреждён или слишком большой</string>
+    <string name="ui_could_not_import_the_gif">Не удалось импортировать GIF</string>
+    <string name="ui_the_gif_has_no_frames">В GIF нет кадров</string>
 </resources>

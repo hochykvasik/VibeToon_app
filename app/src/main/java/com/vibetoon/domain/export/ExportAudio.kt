@@ -47,8 +47,7 @@ object ExportAudio {
         media.filter { (it.kind == MediaKind.AUDIO || it.kind == MediaKind.VIDEO) && it.file.isNotBlank() }
 
     /** Клип звучит в отрезке [start, start + frames): пересечение с клипом, без стоп-кадра. */
-    fun overlaps(c: Clip, start: Int, frames: Int): Boolean =
-        !c.freeze && c.end > c.start && c.end > start && c.start < start + frames.coerceAtLeast(0)
+    fun overlaps(c: Clip, start: Int, frames: Int): Boolean = c.soundsIn(start, frames.coerceAtLeast(0))   // с циклом - до конца отрезка
 
     fun stateOf(t: Track, start: Int, frames: Int): TrackState = when {
         t.muted -> TrackState.MUTED

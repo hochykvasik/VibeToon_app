@@ -86,7 +86,8 @@ class AudioEngine {
     /** Ключи громкости дорожек (id -> ключи); выставляется из проекта. */
     @Volatile var volumes: Map<Int, List<com.vibetoon.domain.project.VolKey>> = emptyMap()
 
-    fun play(frame: Int, fps: Int, clipOf: (Int) -> Clip) {
+    /** [endFrame] - конец проигрывания (конец проекта или сцены): до него звучит зацикленный клип (пакет 15). */
+    fun play(frame: Int, fps: Int, clipOf: (Int) -> Clip, endFrame: Int = Int.MAX_VALUE / 4) {
         cancelScrub()
         stopAll()
         for ((id, f) in files) {
@@ -94,8 +95,8 @@ class AudioEngine {
             val p = pcm[f]
             if (p == null) { ensureDecoded(f); Log.w(TAG, "track $id not decoded yet"); continue }
             val clip = clipOf(id)
-            if (clip.freeze || frame >= clip.end) continue
-            sessions[id] = Session(id, p, clip, frame, fps, vol = volumes[id].orEmpty()).also { it.start() }
+            if (clip.freeze || (!clip.loop && frame >= clip.end) || frame >= endFrame) continue
+            sessions[id] = Session(id, p, clip, frame, fps, vol = volumes[id].orEmpty(), endFrame = endFrame).also { it.start() }
         }
     }
 
@@ -107,7 +108,7 @@ class AudioEngine {
             if (id in muted) continue
             val p = pcm[f] ?: continue
             val clip = clipOf(id)
-            if (clip.freeze || frame < clip.start || frame >= clip.end) continue
+            if (clip.sourceAt(frame.toDouble()) == null) continue   // пакет 15: учитывает и цикл клипа
             src += ScrubSrc(p, clip, volumes[id].orEmpty())
         }
         if (src.isEmpty()) { cancelScrub(); return }
@@ -259,7 +260,7 @@ class AudioEngine {
     }
 
     /** Один поток воспроизведения одной дорожки. */
-    private class Session(val trackId: Int, val p: Pcm, val clip: Clip, val startFrame: Int, val fps: Int, val limitMs: Int = 0, val vol: List<com.vibetoon.domain.project.VolKey> = emptyList()) : Thread("vt-audio-$trackId") {
+    private class Session(val trackId: Int, val p: Pcm, val clip: Clip, val startFrame: Int, val fps: Int, val limitMs: Int = 0, val vol: List<com.vibetoon.domain.project.VolKey> = emptyList(), val endFrame: Int = Int.MAX_VALUE / 4) : Thread("vt-audio-$trackId") {
         @Volatile private var stopped = false
         @Volatile private var track: AudioTrack? = null
 
@@ -287,7 +288,9 @@ class AudioEngine {
             track = t
             try {
                 val tStart = max(startFrame, clip.start)
-                var total = (clip.end - tStart).toLong() * sr / fps          // выходных кадров до конца клипа
+                // выходных кадров до конца клипа; зацикленный клип звучит до конца проекта/сцены (пакет 15)
+                val stopAt = if (clip.loop) endFrame else minOf(clip.end, endFrame)
+                var total = (stopAt - tStart).coerceAtLeast(0).toLong() * sr / fps
                 if (limitMs > 0) total = min(total, sr.toLong() * limitMs / 1000)   // скраббинг: только короткий фрагмент
                 val chunk = sr / 4
                 val out = ShortArray(chunk * ch)
@@ -304,15 +307,14 @@ class AudioEngine {
                 }
                 var i = 0L
                 var gain = 1f
-                val speed = clip.speed.toDouble()
                 val srcTotal = p.frames.toDouble()
                 while (!stopped && i < total) {
                     val m = min(chunk.toLong(), total - i).toInt()
                     for (k in 0 until m) {
                         if (vol.isNotEmpty() && k % 64 == 0) gain = com.vibetoon.domain.project.VolumeMath.at(vol, tStart + (i + k).toDouble() * fps / sr)
-                        val rel = (i + k).toDouble() * fps / sr + (tStart - clip.start)      // кадры от начала клипа
-                        val srcFrame = if (!clip.reverse) clip.offset + rel * speed else clip.offset + clip.length * speed - rel * speed
-                        val pos = srcFrame / fps * sr
+                        // момент источника - то же правило, что у экспорта и скраббинга (Clip.sourceAt, с циклом)
+                        val srcFrame = clip.sourceAt(tStart + (i + k).toDouble() * fps / sr)
+                        val pos = if (srcFrame == null) -1.0 else srcFrame / fps * sr
                         val i0 = Math.floor(pos).toInt()
                         val frac = (pos - i0).toFloat()
                         for (c in 0 until ch) {

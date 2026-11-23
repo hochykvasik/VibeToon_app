@@ -1254,6 +1254,11 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Громкость звука на нуле - видео без звука" to R.string.ui_sound_volume_is_at_zero_the_video_wi,
     "Файл звука не найден в проекте - видео без звука" to R.string.ui_the_sound_file_is_missing_from_the_p,
     "Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука" to R.string.ui_could_not_prepare_the_sound_the_file,
+    "Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость, реверс и Цикл работают для звука и видео; Цикл повторяет клип до конца проекта или сцены. Скорость и Цикл меняют и время ключей анимации слоя." to R.string.ui_drag_clip_edges_on_the_timeline_drag_2,
+    "GIF без анимации импортирован как картинка" to R.string.ui_a_gif_without_animation_was_imported,
+    "GIF не прочитан: файл повреждён или слишком большой" to R.string.ui_could_not_read_the_gif_the_file_is_d,
+    "Не удалось импортировать GIF" to R.string.ui_could_not_import_the_gif,
+    "В GIF нет кадров" to R.string.ui_the_gif_has_no_frames,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -1282,6 +1287,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^(.+?)\\ КБ\\.\\ Сохранено\\ в\\ папку\\ проекта;\\ копию\\ в\\ галерею\\ создать\\ не\\ удалось\\.\$" to R.string.ui_kb_saved_in_the_project_folder_the_g,
     "^Добавлено:\\ (.+?)\\.\\ Проект\\ продлён\\ до\\ максимума,\\ конец\\ звука\\ не\\ поместился\$" to R.string.ui_added_project_extended_to_its_maximu,
     "^Секвенция\\ импортирована:\\ (.+?)\\ кадров\\.\\ Проект\\ продлён\\ до\\ конца\\ секвенции\$" to R.string.ui_sequence_imported_frames_project_ext,
+    "^GIF\\ \\((.+?)\\ кадров\\)\\ импортирован\\ как\\ символ\\ «Символ\\ (.+?)»:\\ крутится\\ по\\ кругу\$" to R.string.ui_gif_frames_imported_as_symbol_symbol,
     "^Скрыто\\ служебных\\ файлов\\ \\(кэш\\ миниатюр,\\ Liquify,\\ кадры\\ анимации\\):\\ (.+?)\$" to R.string.ui_hidden_service_files_thumbnail_cache,
     "^«(.+?)»\\ и\\ все\\ его\\ файлы\\ будут\\ удалены\\ без\\ возможности\\ восстановления\\.\$" to R.string.ui_and_all_its_files_will_be_deleted_pe,
     "^Выделение\\ вынесено\\ в\\ слой\\ «(.+?)»:\\ теперь\\ его\\ можно\\ привязать\\ к\\ кости\$" to R.string.ui_selection_moved_to_layer_you_can_now,
@@ -1290,7 +1296,9 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Лесенка:\\ (.+?)\\ клипов\\ встык,\\ конец\\ каждого\\ =\\ началу\\ следующего\$" to R.string.ui_stagger_clips_back_to_back_each_end_,
     "^Пустая\\ группа\\ «Группа\\ (.+?)»:\\ перетащите\\ в\\ неё\\ слои\\ ручкой\\ ≡\$" to R.string.ui_empty_group_group_drag_layers_into_i,
     "^Сетка\\ привязана\\ к\\ костям\\ \\((.+?)\\):\\ вершины\\ двигаются\\ по\\ весам\$" to R.string.ui_mesh_bound_to_bones_vertices_move_by,
+    "^GIF\\ обрезан\\ до\\ (.+?)\\ кадров\\ \\(больше\\ за\\ раз\\ не\\ импортируется\\)\$" to R.string.ui_gif_trimmed_to_frames_more_cannot_be,
     "^Секвенция\\ \\((.+?)\\ кадров\\)\\ импортирована\\ как\\ символ\\ «Символ\\ (.+?)»\$" to R.string.ui_sequence_frames_imported_as_symbol_s,
+    "^GIF\\ импортирован:\\ (.+?)\\ кадров\\.\\ Проект\\ продлён\\ до\\ конца\\ GIF\$" to R.string.ui_gif_imported_frames_project_extended,
     "^Нет\\ шрифтов:\\ (.+?)\\ \\-\\ текст\\ покажется\\ шрифтом\\ по\\ умолчанию\$" to R.string.ui_missing_fonts_the_text_will_use_the_,
     "^Редактирование\\ «(.+?)»:\\ правки\\ видны\\ во\\ всех\\ экземплярах\$" to R.string.ui_editing_changes_show_in_all_instance,
     "^Видео\\ (.+?)×(.+?),\\ (.+?)\\ кадров,\\ со\\ звуком\\ \\(AAC,\\ стерео\\ 44,1\\ кГц\\)\$" to R.string.ui_video_frames_with_sound_aac_stereo_4,
@@ -1328,6 +1336,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Сетка\\ по\\ контуру:\\ (.+?)\\ вершин\$" to R.string.ui_outline_mesh_vertices,
     "^Кость\\ создана,\\ родитель:\\ (.+?)\$" to R.string.ui_bone_created_parent,
     "^Вставлено\\ из\\ библиотеки:\\ (.+?)\$" to R.string.ui_inserted_from_the_library,
+    "^GIF\\ импортирован:\\ (.+?)\\ кадров\$" to R.string.ui_gif_imported_frames,
     "^Лишние\\ данные\\ в\\ позиции\\ (.+?)\$" to R.string.ui_extra_data_at_position,
     "^Настройки\\ инструмента\\ «(.+?)»\$" to R.string.ui_tool_settings,
     "^Маркеры\\ продублированы:\\ (.+?)\$" to R.string.ui_markers_duplicated,
