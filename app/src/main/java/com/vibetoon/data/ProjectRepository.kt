@@ -5,6 +5,7 @@ import android.util.Log
 import com.vibetoon.domain.project.BackupMath
 import com.vibetoon.domain.project.NewProjectSpec
 import com.vibetoon.domain.project.ProjectData
+import com.vibetoon.domain.project.ProjectArchive
 import com.vibetoon.domain.project.ProjectJson
 import com.vibetoon.domain.project.ProjectMeta
 import java.io.File
@@ -180,12 +181,21 @@ class ProjectRepository(context: Context) {
         return n to bytes
     }
 
-    /** Резервная копия: ZIP проекта (.tsproj) с манифестом; экспорты и временные файлы не входят. */
+    private val appContext = context.applicationContext
+    private val fontsDir get() = File(appContext.filesDir, "fonts")
+    private val importRoot get() = File(appContext.filesDir, "import_tmp")
+
+    /**
+     * Резервная копия: ZIP проекта (.tsproj) с манифестом; экспорты и временные файлы не входят.
+     * Пакет 13: формат 2 - в архив кладутся и импортированные шрифты, которые использует текст проекта (fonts/).
+     */
     fun exportBackup(id: String, out: java.io.OutputStream) {
         val src = dir(id)
+        val data = load(id).getOrNull()
         java.util.zip.ZipOutputStream(out.buffered()).use { z ->
             z.putNextEntry(java.util.zip.ZipEntry(BackupMath.MANIFEST))
-            z.write(BackupMath.manifest().toByteArray()); z.closeEntry()
+            val manifest = if (data != null) ProjectArchive.manifest(ProjectJson.VERSION, data.meta.name) else BackupMath.manifest()
+            z.write(manifest.toByteArray()); z.closeEntry()
             for (f in src.walkTopDown().filter { it.isFile }) {
                 val rel = f.relativeTo(src).invariantSeparatorsPath
                 if (!BackupMath.included(rel)) continue
@@ -193,35 +203,82 @@ class ProjectRepository(context: Context) {
                 f.inputStream().use { it.copyTo(z) }
                 z.closeEntry()
             }
+            if (data != null) for (name in ProjectArchive.usedFontFiles(data)) {
+                val f = File(fontsDir, name)
+                if (!f.isFile) continue
+                z.putNextEntry(java.util.zip.ZipEntry(ProjectArchive.FONTS_DIR + name))
+                f.inputStream().use { it.copyTo(z) }
+                z.closeEntry()
+            }
         }
     }
 
-    /** Импорт .tsproj: проект распаковывается в новую папку с новым id. Возвращает id или null, если файл не наш. */
-    fun importBackup(input: java.io.InputStream): String? {
-        val newId = UUID.randomUUID().toString().take(8)
-        val target = dir(newId)
-        var hasJson = false
-        try {
-            java.util.zip.ZipInputStream(input.buffered()).use { z ->
-                while (true) {
-                    val e = z.nextEntry ?: break
-                    if (e.isDirectory || e.name == BackupMath.MANIFEST) continue
-                    val rel = BackupMath.safePath(e.name) ?: continue   // защита от ../ в именах
-                    val f = File(target, rel)
-                    f.parentFile?.mkdirs()
-                    f.outputStream().use { z.copyTo(it) }
-                    if (rel == "project.json") hasJson = true
+    /** Результат импорта: готовый проект или PSD, для которого вызывающий создаёт новый проект. */
+    sealed interface Imported {
+        data class Project(val report: ProjectArchive.Report) : Imported
+        data class Psd(val width: Int, val height: Int) : Imported
+    }
+
+    /** Остатки прерванного импорта (приложение закрыли посреди распаковки). */
+    fun cleanStaleImports() { runCatching { importRoot.deleteRecursively() } }
+
+    /**
+     * Пакет 13: импорт проекта (.tsproj / .zip / project.json; PSD - распознаётся). Проект распаковывается во временную
+     * папку, проверяется (версия, project.json, отсутствующие файлы), получает новый id и неповторяющееся имя и только
+     * потом целиком появляется в списке. Существующие проекты не меняются. Ошибки - [ProjectArchive.ImportException].
+     */
+    fun importProject(open: () -> java.io.InputStream, existingNames: Collection<String>): Imported {
+        val head = ByteArray(32)
+        val n = try {
+            open().use { s -> var r = 0; while (r < head.size) { val k = s.read(head, r, head.size - r); if (k < 0) break; r += k }; r }
+        } catch (e: java.io.IOException) { throw ProjectArchive.ImportException(ProjectArchive.Reason.READ_FAILED, e) }
+        val kind = ProjectArchive.detect(head, n)
+        if (kind == ProjectArchive.Kind.PSD) {
+            val (w, h) = ProjectArchive.psdSize(head) ?: throw ProjectArchive.ImportException(ProjectArchive.Reason.DAMAGED)
+            return Imported.Psd(w, h)
+        }
+        if (kind == ProjectArchive.Kind.UNKNOWN) throw ProjectArchive.ImportException(ProjectArchive.Reason.NOT_PROJECT)
+        val staging = File(importRoot, UUID.randomUUID().toString().take(12))
+        return try {
+            staging.mkdirs()
+            val input = try { open() } catch (e: Exception) { throw ProjectArchive.ImportException(ProjectArchive.Reason.READ_FAILED, e) }
+            input.use { s ->
+                if (kind == ProjectArchive.Kind.ZIP) ProjectArchive.unzip(s, staging)
+                else {
+                    val bytes = s.readBytes()
+                    if (bytes.size > 64 * 1024 * 1024) throw ProjectArchive.ImportException(ProjectArchive.Reason.TOO_LARGE)
+                    File(staging, "project.json").writeBytes(bytes)
                 }
             }
-            if (!hasJson) { target.deleteRecursively(); return null }
-            val data = load(newId).getOrNull() ?: run { target.deleteRecursively(); return null }
-            val now = System.currentTimeMillis()
-            save(data.copy(meta = data.meta.copy(id = newId, updatedAt = now)))
-            return newId
-        } catch (t: Throwable) {
-            Log.w(TAG, "import failed: ${t.message}")
-            target.deleteRecursively()
-            return null
+            val root = ProjectArchive.locateRoot(staging) ?: throw ProjectArchive.ImportException(ProjectArchive.Reason.NOT_PROJECT)
+            var newId: String
+            do { newId = UUID.randomUUID().toString().take(8) } while (dir(newId).exists())
+            val report0 = ProjectArchive.prepare(root, newId, System.currentTimeMillis(), existingNames)
+            val archiveFonts = File(root, "fonts").takeIf { it.isDirectory } ?: File(staging, "fonts").takeIf { it.isDirectory }
+            val (restored, fontsMissing) = ProjectArchive.restoreFonts(archiveFonts, fontsDir, ProjectArchive.usedFontFiles(report0.data))
+            File(root, "fonts").deleteRecursively()
+            File(root, BackupMath.MANIFEST).delete()
+            File(root, "project.json.tmp").delete()
+            // project.json переписывается текущим форматом (новый id, имя, время), затем папка целиком встаёт на место
+            val json = File(root, "project.json")
+            val tmp = File(root, "project.json.new")
+            tmp.writeText(ProjectJson.encode(report0.data))
+            check(tmp.renameTo(json) || run { tmp.copyTo(json, overwrite = true); tmp.delete() }) { "project.json" }
+            val target = dir(newId)
+            if (!root.renameTo(target)) {
+                root.copyRecursively(target, overwrite = false)
+            }
+            check(File(target, "project.json").isFile) { "project.json" }
+            Log.i(TAG, "imported ${report0.data.meta.name} as $newId (v${report0.sourceVersion}, missing ${report0.missing.size}, fonts +$restored)")
+            Imported.Project(report0.copy(fontsRestored = restored, fontsMissing = fontsMissing))
+        } catch (e: ProjectArchive.ImportException) {
+            throw e
+        } catch (e: java.io.IOException) {
+            throw ProjectArchive.ImportException(if (ProjectArchive.isNoSpace(e)) ProjectArchive.Reason.NO_SPACE else ProjectArchive.Reason.READ_FAILED, e)
+        } catch (e: OutOfMemoryError) {
+            throw ProjectArchive.ImportException(ProjectArchive.Reason.TOO_LARGE, e)
+        } finally {
+            runCatching { staging.deleteRecursively() }
         }
     }
 }

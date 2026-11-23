@@ -1384,4 +1384,25 @@
     <string name="ui_tool_panel_shown">Tool panel shown</string>
     <string name="ui_tool_panel_hidden_tap_the_tool_again">Tool panel hidden: tap the tool again to bring it back</string>
     <string name="ui_keys_volume_changes_linearly_between_3">Keys: {}. Volume changes linearly between keys; it holds before the first and after the last. Works in playback, ruler scrubbing, WAV and MP4 sound (for video - its own audio track).</string>
+    <string name="ui_the_file_does_not_look_like_a_vibeto_2">The file does not look like a VibeToon project: use .tsproj, a .zip with project.json, project.json or a PSD</string>
+    <string name="ui_the_project_was_created_in_a_newer_v">The project was created in a newer version of VibeToon: update the app and import again</string>
+    <string name="ui_the_project_file_is_damaged_or_trunc">The project file is damaged or truncated: project.json cannot be read</string>
+    <string name="ui_the_archive_is_too_large_or_contains">The archive is too large or contains too many files</string>
+    <string name="ui_not_enough_storage_space_on_the_devi">Not enough storage space on the device to import</string>
+    <string name="ui_could_not_read_the_selected_file">Could not read the selected file</string>
+    <string name="ui_importing_project">Importing project…</string>
+    <string name="ui_the_file_is_being_unpacked_and_check">The file is being unpacked and checked. Existing projects are not changed.</string>
+    <string name="ui_a_project_with_this_name_already_exi">A project with this name already exists - the imported one got a different name, your project is unchanged.</string>
+    <string name="ui_all_project_files_are_in_place">All project files are in place.</string>
+    <string name="ui_files_not_found_these_layers_will_be">Files not found: {}. These layers will be empty; their data (keys, bones, effects) is kept.</string>
+    <string name="ui_fonts_added">Fonts added: {}</string>
+    <string name="ui_missing_fonts_the_text_will_use_the_">Missing fonts: {} - the text will use the default font</string>
+    <string name="ui_undo_import_delete_this_project_othe">Undo import - delete this project; other projects are not affected.</string>
+    <string name="ui_open">Open</string>
+    <string name="ui_undo_import">Undo import</string>
+    <string name="ui_import_failed">Import failed</string>
+    <string name="ui_existing_projects_were_not_changed">Existing projects were not changed.</string>
+    <string name="ui_choose_another_file">Choose another file</string>
+    <string name="ui_the_psd_opens_in_a_new_project_loadi">The PSD opens in a new project: loading layers</string>
+    <string name="ui_import_undone_the_project_was_delete">Import undone: the project was deleted</string>
 </resources>

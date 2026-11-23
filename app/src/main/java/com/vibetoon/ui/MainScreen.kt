@@ -105,9 +105,10 @@ private fun axisRatios(a: PointerInputChange, b: PointerInputChange): Pair<Float
 }
 
 @Composable
-fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
+fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri? = null, onBack: () -> Unit) {
     // Открываем проект при входе на экран; системная кнопка "назад" возвращает к списку проектов
-    LaunchedEffect(projectId) { vm.openProject(projectId) }
+    // (пакет 13: PSD, выбранный в «Импорте» на экране проектов, загружается сразу после открытия нового проекта)
+    LaunchedEffect(projectId) { vm.openProject(projectId, pendingPsd) }
     // системная «Назад» требует двойного нажатия, чтобы случайно не выйти из редактора (стрелка в шапке выходит сразу)
     var backAt by remember { mutableLongStateOf(0L) }
     val selectionExtractInProgress by vm.selectionExtractBusy.collectAsStateWithLifecycle()

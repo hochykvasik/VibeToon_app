@@ -1384,4 +1384,25 @@
     <string name="ui_tool_panel_shown">Панель инструмента показана</string>
     <string name="ui_tool_panel_hidden_tap_the_tool_again">Панель инструмента скрыта: тап по нему ещё раз вернёт её</string>
     <string name="ui_keys_volume_changes_linearly_between_3">Ключей: {}. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки, в WAV и в звуке MP4 (у видео - его звуковая дорожка).</string>
+    <string name="ui_the_file_does_not_look_like_a_vibeto_2">Файл не похож на проект VibeToon: нужен .tsproj, .zip с project.json, project.json или PSD</string>
+    <string name="ui_the_project_was_created_in_a_newer_v">Проект создан в более новой версии VibeToon: обновите приложение и повторите импорт</string>
+    <string name="ui_the_project_file_is_damaged_or_trunc">Файл проекта повреждён или обрезан: project.json не читается</string>
+    <string name="ui_the_archive_is_too_large_or_contains">Архив слишком большой или содержит слишком много файлов</string>
+    <string name="ui_not_enough_storage_space_on_the_devi">Недостаточно места на устройстве для импорта</string>
+    <string name="ui_could_not_read_the_selected_file">Не удалось прочитать выбранный файл</string>
+    <string name="ui_importing_project">Импорт проекта…</string>
+    <string name="ui_the_file_is_being_unpacked_and_check">Файл распаковывается и проверяется. Существующие проекты не меняются.</string>
+    <string name="ui_a_project_with_this_name_already_exi">Проект с таким именем уже есть - импортированный назван по-другому, ваш проект не изменён.</string>
+    <string name="ui_all_project_files_are_in_place">Все файлы проекта на месте.</string>
+    <string name="ui_files_not_found_these_layers_will_be">Не найдено файлов: {}. Эти слои будут пустыми; данные (ключи, кости, эффекты) сохранены.</string>
+    <string name="ui_fonts_added">Добавлено шрифтов: {}</string>
+    <string name="ui_missing_fonts_the_text_will_use_the_">Нет шрифтов: {} - текст покажется шрифтом по умолчанию</string>
+    <string name="ui_undo_import_delete_this_project_othe">Отменить импорт - удалить этот проект; остальные проекты не затрагиваются.</string>
+    <string name="ui_open">Открыть</string>
+    <string name="ui_undo_import">Отменить импорт</string>
+    <string name="ui_import_failed">Импорт не удался</string>
+    <string name="ui_existing_projects_were_not_changed">Существующие проекты не изменены.</string>
+    <string name="ui_choose_another_file">Выбрать другой файл</string>
+    <string name="ui_the_psd_opens_in_a_new_project_loadi">PSD откроется в новом проекте: слои загружаются</string>
+    <string name="ui_import_undone_the_project_was_delete">Импорт отменён: проект удалён</string>
 </resources>

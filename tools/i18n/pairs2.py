@@ -1075,4 +1075,26 @@ PSD проекта уже разложен на слои; вставка дру�
 Панель инструмента показана|Tool panel shown
 Панель инструмента скрыта: тап по нему ещё раз вернёт её|Tool panel hidden: tap the tool again to bring it back
 Ключей: {}. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки, в WAV и в звуке MP4 (у видео - его звуковая дорожка).|Keys: {}. Volume changes linearly between keys; it holds before the first and after the last. Works in playback, ruler scrubbing, WAV and MP4 sound (for video - its own audio track).
+Файл не похож на проект VibeToon: нужен .tsproj, .zip с project.json, project.json или PSD|The file does not look like a VibeToon project: use .tsproj, a .zip with project.json, project.json or a PSD
+Проект создан в более новой версии VibeToon: обновите приложение и повторите импорт|The project was created in a newer version of VibeToon: update the app and import again
+Файл проекта повреждён или обрезан: project.json не читается|The project file is damaged or truncated: project.json cannot be read
+Архив слишком большой или содержит слишком много файлов|The archive is too large or contains too many files
+Недостаточно места на устройстве для импорта|Not enough storage space on the device to import
+Не удалось прочитать выбранный файл|Could not read the selected file
+Импорт проекта…|Importing project…
+Файл распаковывается и проверяется. Существующие проекты не меняются.|The file is being unpacked and checked. Existing projects are not changed.
+Проект с таким именем уже есть - импортированный назван по-другому, ваш проект не изменён.|A project with this name already exists - the imported one got a different name, your project is unchanged.
+Все файлы проекта на месте.|All project files are in place.
+Не найдено файлов: {}. Эти слои будут пустыми; данные (ключи, кости, эффекты) сохранены.|Files not found: {}. These layers will be empty; their data (keys, bones, effects) is kept.
+Добавлено шрифтов: {}|Fonts added: {}
+Нет шрифтов: {} - текст покажется шрифтом по умолчанию|Missing fonts: {} - the text will use the default font
+Отменить импорт - удалить этот проект; остальные проекты не затрагиваются.|Undo import - delete this project; other projects are not affected.
+Открыть|Open
+Отменить импорт|Undo import
+Закрыть|Close
+Импорт не удался|Import failed
+Существующие проекты не изменены.|Existing projects were not changed.
+Выбрать другой файл|Choose another file
+PSD откроется в новом проекте: слои загружаются|The PSD opens in a new project: loading layers
+Импорт отменён: проект удалён|Import undone: the project was deleted
 """

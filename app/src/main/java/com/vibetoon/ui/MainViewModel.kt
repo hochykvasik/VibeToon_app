@@ -453,7 +453,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- проект
 
     /** Открывает проект: размер холста, fps, фон, сохранённые трансформации и ключи, затем PSD. */
-    fun openProject(id: String) {
+    fun openProject(id: String, psdAfterOpen: Uri? = null) {
         if (projectId == id || _selectionExtractBusy.value || rasterRecoveryRequired) return
         closing = false
         openJob?.cancel()
@@ -544,6 +544,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 com.vibetoon.ui.shell.Lesson.pending = false
                 addLessonShapes()
             }
+            if (psdAfterOpen != null && ref == null) loadUserPsd(psdAfterOpen)   // пакет 13: импорт PSD с экрана проектов
         }
     }
 

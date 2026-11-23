@@ -118,7 +118,7 @@ class MainActivity : ComponentActivity() {
                 when (val s = screen) {
                     // Сначала список проектов; рабочий экран открывается для выбранного проекта
                     Screen.Projects -> ProjectsScreen(app)
-                    is Screen.Editor -> MainScreen(editor, s.id) {
+                    is Screen.Editor -> MainScreen(editor, s.id, s.psd) {
                         // выход: сохранить проект, снять миниатюру, вернуться к списку
                         editor.closeProject { app.goProjects() }
                     }

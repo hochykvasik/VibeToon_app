@@ -18,7 +18,18 @@ import java.io.File
 /** Экраны приложения. Два экрана, поэтому обходимся простым состоянием без navigation-compose. */
 sealed interface Screen {
     data object Projects : Screen
-    data class Editor(val id: String) : Screen
+    /** [psd] - пакет 13: PSD из импорта на экране проектов, загружается сразу после открытия нового проекта. */
+    data class Editor(val id: String, val psd: android.net.Uri? = null) : Screen
+}
+
+/** Пакет 13: состояние импорта проекта для окна на экране проектов. */
+sealed interface ImportUi {
+    data object Busy : ImportUi
+    data class Done(
+        val id: String, val name: String, val missing: List<String>, val fontsRestored: Int,
+        val fontsMissing: List<String>, val renamed: Boolean, val sourceVersion: Int
+    ) : ImportUi
+    data class Failed(val message: String) : ImportUi
 }
 
 /** Список проектов и переход между экранами. Редактор живёт в [MainViewModel]. */
@@ -32,8 +43,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val projects: StateFlow<List<ProjectMeta>> = _projects.asStateFlow()
 
     init {
+        repo.cleanStaleImports()   // пакет 13: остатки прерванного импорта
         refresh()
     }
+
+    private val _import = MutableStateFlow<ImportUi?>(null)
+    /** Пакет 13: окно импорта (идёт / готово / ошибка); null - окна нет. */
+    val importState: StateFlow<ImportUi?> = _import.asStateFlow()
 
     private val prefs = app.getSharedPreferences("vt_manager", android.content.Context.MODE_PRIVATE)
     private val starterMutex = kotlinx.coroutines.sync.Mutex()
@@ -96,15 +112,73 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Пакет 13: импорт проекта (.tsproj, .zip, project.json, PSD). Новый проект добавляется рядом с существующими
+     * (они не меняются); окно результата предлагает открыть его или отменить импорт.
+     */
     fun importBackup(uri: android.net.Uri) {
+        if (_import.value == ImportUi.Busy) return
+        _import.value = ImportUi.Busy
         viewModelScope.launch {
-            val id = withContext(Dispatchers.IO) {
-                runCatching { getApplication<Application>().contentResolver.openInputStream(uri)!!.use { repo.importBackup(it) } }.getOrNull()
+            val cr = getApplication<Application>().contentResolver
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val names = repo.list().map { it.name }
+                    repo.importProject({
+                        cr.openInputStream(uri) ?: throw com.vibetoon.domain.project.ProjectArchive.ImportException(com.vibetoon.domain.project.ProjectArchive.Reason.READ_FAILED)
+                    }, names)
+                }
             }
             refresh()
-            _note.tryEmit(if (id != null) "Проект импортирован" else "Файл не похож на резервную копию VibeToon (.tsproj)")
+            result.onSuccess { r ->
+                when (r) {
+                    is ProjectRepository.Imported.Project -> {
+                        val rep = r.report
+                        if (rep.data.meta.folder.isNotBlank()) addFolder(rep.data.meta.folder)   // папка проекта появляется в менеджере
+                        _import.value = ImportUi.Done(rep.data.meta.id, rep.data.meta.name, rep.missing, rep.fontsRestored, rep.fontsMissing, rep.renamed, rep.sourceVersion)
+                    }
+                    is ProjectRepository.Imported.Psd -> {
+                        // PSD: новый проект размером с PSD (не больше 4096 по длинной стороне), слои загрузятся в редакторе
+                        val name = displayName(uri).substringBeforeLast('.').ifBlank { "PSD" }
+                        val (w, h) = com.vibetoon.domain.project.ProjectArchive.psdCanvas(r.width, r.height)
+                        val meta = withContext(Dispatchers.IO) {
+                            repo.create(NewProjectSpec(com.vibetoon.domain.project.ProjectArchive.uniqueName(name, _projects.value.map { it.name }), w, h, 24, 0xFFFFFFFFL))
+                        }
+                        _import.value = null
+                        _note.tryEmit("PSD откроется в новом проекте: слои загружаются")
+                        _screen.value = Screen.Editor(meta.id, uri)
+                    }
+                }
+            }.onFailure { t ->
+                android.util.Log.w("VT/Import", "project import failed", t)
+                val msg = (t as? com.vibetoon.domain.project.ProjectArchive.ImportException)?.reason?.message
+                    ?: if (t is OutOfMemoryError) com.vibetoon.domain.project.ProjectArchive.Reason.TOO_LARGE.message
+                    else com.vibetoon.domain.project.ProjectArchive.Reason.READ_FAILED.message
+                _import.value = ImportUi.Failed(msg)
+            }
         }
     }
+
+    /** Открыть только что импортированный проект. */
+    fun openImported(id: String) { _import.value = null; open(id) }
+
+    /** Отменить импорт: импортированный проект удаляется целиком, остальные не затрагиваются. */
+    fun undoImport(id: String) {
+        _import.value = null
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repo.delete(id) }
+            refresh()
+            _note.tryEmit("Импорт отменён: проект удалён")
+        }
+    }
+
+    fun dismissImport() { if (_import.value != ImportUi.Busy) _import.value = null }
+
+    private fun displayName(uri: android.net.Uri): String = runCatching {
+        getApplication<Application>().contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "PSD"
 
     fun open(id: String) {
         _screen.value = Screen.Editor(id)

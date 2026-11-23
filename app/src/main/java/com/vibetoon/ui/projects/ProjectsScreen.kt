@@ -66,6 +66,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -117,6 +118,54 @@ fun ProjectsScreen(app: AppViewModel) {
     var showNew by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     if (showSettings) com.vibetoon.ui.shell.SettingsDialog(null) { showSettings = false }
+    // пакет 13: окно импорта проекта - ход, итог (открыть / отменить импорт) или понятная ошибка
+    val importState by app.importState.collectAsStateWithLifecycle()
+    when (val st = importState) {
+        com.vibetoon.ui.ImportUi.Busy -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Импорт проекта…") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text("Файл распаковывается и проверяется. Существующие проекты не меняются.", fontSize = 13.sp)
+                }
+            },
+            confirmButton = {}
+        )
+        is com.vibetoon.ui.ImportUi.Done -> AlertDialog(
+            onDismissRequest = { app.dismissImport() },
+            title = { Text("Проект импортирован") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    Text("«" + st.name + "»", fontWeight = FontWeight.Bold)
+                    if (st.renamed) Text("Проект с таким именем уже есть - импортированный назван по-другому, ваш проект не изменён.", fontSize = 13.sp)
+                    if (st.missing.isEmpty()) Text("Все файлы проекта на месте.", fontSize = 13.sp)
+                    else {
+                        Text(com.vibetoon.ui.i18n.L("Не найдено файлов: ${st.missing.size}. Эти слои будут пустыми; данные (ключи, кости, эффекты) сохранены."), fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                        Text(st.missing.take(6).joinToString("\n") { it.substringAfterLast('/') } + if (st.missing.size > 6) "\n…" else "", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                    }
+                    if (st.fontsRestored > 0) Text(com.vibetoon.ui.i18n.L("Добавлено шрифтов: ${st.fontsRestored}"), fontSize = 13.sp)
+                    if (st.fontsMissing.isNotEmpty()) Text(com.vibetoon.ui.i18n.L("Нет шрифтов: ${st.fontsMissing.joinToString()} - текст покажется шрифтом по умолчанию"), fontSize = 13.sp)
+                    Text("Отменить импорт - удалить этот проект; остальные проекты не затрагиваются.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                }
+            },
+            confirmButton = { TextButton({ app.openImported(st.id) }) { Text("Открыть") } },
+            dismissButton = {
+                Row {
+                    TextButton({ app.undoImport(st.id) }) { Text("Отменить импорт") }
+                    TextButton({ app.dismissImport() }) { Text("Закрыть") }
+                }
+            }
+        )
+        is com.vibetoon.ui.ImportUi.Failed -> AlertDialog(
+            onDismissRequest = { app.dismissImport() },
+            title = { Text("Импорт не удался") },
+            text = { Text(com.vibetoon.ui.i18n.L(st.message) + "\n\n" + com.vibetoon.ui.i18n.L("Существующие проекты не изменены.")) },
+            confirmButton = { TextButton({ app.dismissImport(); importLauncher.launch(arrayOf("*/*")) }) { Text("Выбрать другой файл") } },
+            dismissButton = { TextButton({ app.dismissImport() }) { Text("Закрыть") } }
+        )
+        null -> {}
+    }
     var renaming by remember { mutableStateOf<ProjectMeta?>(null) }
     var deleting by remember { mutableStateOf<ProjectMeta?>(null) }
     var article by remember { mutableStateOf<Tutorial?>(null) }
