@@ -54,6 +54,7 @@ private val RU: Map<String, String> = mapOf(
     "Flip Canvas (вертикально)" to "Отразить холст по вертикали",
     "Play Audio While Scrubbing" to "Звук при протяжке по линейке",
     "Compatible Video Export" to "Совместимый экспорт видео",
+    "Performance HUD" to "Панель метрик производительности",
     "Quick Layer Delete: рисунок (иначе анимация)" to "Быстрое удаление: рисунок (иначе анимация)",
     "Follow Camera" to "Следовать за камерой",
     "Reset Frame After Pause" to "Вернуть кадр после паузы",
@@ -101,7 +102,7 @@ private fun ru(t: String) = RU[t] ?: t
 private val TABS: List<Pair<String, List<Item>>> = listOf(
     APPEARANCE to emptyList(),   // рабочая вкладка: язык, тема, акцентный цвет (остальные пункты - заготовки)
     "General" to toggles(
-        "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)", "Show Grid", "Play Audio While Scrubbing", "Compatible Video Export",
+        "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)", "Show Grid", "Play Audio While Scrubbing", "Compatible Video Export", "Performance HUD",
         "Quick Layer Delete: рисунок (иначе анимация)", "Follow Camera", "Reset Frame After Pause",
         "Forward/Backward: кадры (иначе рисунки)", "Vector Workflow", "Auto-Add Keyframes"
     ),
@@ -176,7 +177,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         when (item) {
                             is Toggle -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 val st = com.vibetoon.ui.theme.LocalAppSettings.current
-                                val available = st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers")
+                                val available = st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers")
                                 Column(Modifier.weight(1f)) {
                                     Text(ru(item.title), fontSize = 14.sp)
                                     if (!available) Text("В разработке", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -200,12 +201,14 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                         "Only Erase/Smudge Selected Path Layers" -> Text("Ластик и смаз действуют только на выбранных слоях-контурах", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Temporary Pivots" -> Text("Пивот действует только на время перетаскивания и не сохраняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Rotate Canvas 2 Fingers" -> Text("Поворот после 8° двумя пальцами, снап к 0/90/180/270°; только вид, экспорт не меняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Performance HUD" -> Text("Время сборки кадра (UI) и отрисовки (GL), доля медленных кадров, слои вне экрана и проходы эффектов", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Layer Pivot Editing" -> Text("Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                                 if (item.title == "Left Handed" && st != null) Switch(checked = st.leftHanded, onCheckedChange = { st.leftHanded = it; st.save() })
                                 else if (item.title == "Show Grid" && st != null) Switch(checked = st.showGrid, onCheckedChange = { st.showGrid = it; st.saveGrid() })
                                 else if (item.title == "Play Audio While Scrubbing" && st != null) Switch(checked = st.audioWhileScrubbing, onCheckedChange = { st.audioWhileScrubbing = it; st.savePlaybackAndDisplay(); if (!it) vm?.stopScrubPreview() })
+                                else if (item.title == "Performance HUD" && st != null) Switch(checked = st.perfHud, onCheckedChange = { st.perfHud = it; st.saveExport(); vm?.setPerfHud(it) })
                                 else if (item.title == "Compatible Video Export" && st != null) Switch(checked = st.compatibleVideoExport, onCheckedChange = { st.compatibleVideoExport = it; st.saveExport() })
                                 else if (item.title == "Reset Frame After Pause" && st != null) Switch(checked = st.resetFrameAfterPause, onCheckedChange = { st.resetFrameAfterPause = it; st.savePlaybackAndDisplay() })
                                 else if (item.title == "Checker Pattern in Thumbnails" && st != null) Switch(checked = st.checkerThumbnails, onCheckedChange = { st.checkerThumbnails = it; st.savePlaybackAndDisplay() })

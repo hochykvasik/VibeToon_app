@@ -171,18 +171,34 @@ fun SymbolTimeTab(vm: MainViewModel, instId: Int) {
     val keys by vm.timeKeys.collectAsStateWithLifecycle()
     val markers = vm.markersOfInstance(instId)
     val cur = if (keys.containsKey(instId)) vm.currentMarkerName(instId, frame) else null
+    var loop by remember(instId) { mutableStateOf(vm.symbolLoops(instId)) }
+    val ease = if (keys.containsKey(instId)) vm.timeKeyEaseAt(instId, frame) else null
     Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Символ: ${vm.symbolName(vm.symbolRefOf(instId))}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Время:", fontSize = 13.sp)
-            Text(cur ?: "по кругу", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+            Text(cur ?: if (loop) "по кругу (цикл)" else "кадр 1 (Hold)", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton({ vm.openMarkerPanel(instId) }, enabled = markers.isNotEmpty()) { Text("Выбрать маркер", fontSize = 12.sp) }
             OutlinedButton({ vm.addTimeKeyHere(instId) }) { Icon(Icons.Default.Key, "Добавить ключ времени", Modifier.size(16.dp)) }
         }
         if (markers.isEmpty()) Text("У символа нет маркеров. Двойной тап по символу открывает его: кнопка «Маркеры» ставит имя на кадр.", fontSize = 11.sp)
-        Text("Ключей: ${keys[instId]?.size ?: 0}. Ключ времени всегда Hold: символ мгновенно переключается на кадр маркера и держит его до следующего ключа.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        Text("Ключей: ${keys[instId]?.size ?: 0}. Новый ключ из маркера - Hold: символ мгновенно переключается на форму и держит её до следующего ключа. Без ключей символ стоит на первом кадре.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        if (ease != null) {
+            Text("Переход к следующему ключу: ${vm.timeEaseName(ease)}", fontSize = 12.sp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (e in listOf(com.vibetoon.domain.project.TimeEase.HOLD, com.vibetoon.domain.project.TimeEase.SMOOTH, com.vibetoon.domain.project.TimeEase.LINEAR,
+                        com.vibetoon.domain.project.TimeEase.EASE_IN, com.vibetoon.domain.project.TimeEase.EASE_OUT))
+                    AssistChip(onClick = { vm.setTimeKeyEase(instId, e) }, label = { Text(vm.timeEaseName(e), fontSize = 11.sp) },
+                        border = if (e == ease) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF7E57C2)) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline))
+            }
+            Text("Hold - резкая смена формы. Плавно/Линейно - кадры символа между двумя ключами проигрываются по кривой.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.Switch(checked = loop, onCheckedChange = { loop = it; vm.setSymbolLoop(instId, it) })
+            Text("Цикл без ключей (внутренняя анимация по кругу)", fontSize = 12.sp)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton({ vm.removeTimeKey(instId) }) { Text("Убрать ключ", fontSize = 12.sp) }
             TextButton({ vm.clearTimeKeys(instId) }) { Text("Очистить", fontSize = 12.sp) }

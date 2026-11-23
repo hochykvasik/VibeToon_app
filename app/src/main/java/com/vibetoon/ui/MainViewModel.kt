@@ -64,6 +64,8 @@ import com.vibetoon.domain.project.FrameMarker
 import com.vibetoon.domain.project.MAX_SYMBOL_DEPTH
 import com.vibetoon.domain.project.SymbolMath
 import com.vibetoon.domain.project.TimeKey
+import com.vibetoon.domain.project.TimeEase
+import com.vibetoon.domain.project.TimelineItemOps
 import androidx.compose.ui.graphics.asImageBitmap
 import com.vibetoon.domain.project.MEDIA_ID_BASE
 import com.vibetoon.domain.project.MediaItem
@@ -946,13 +948,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- библиотека ассетов
 
-    /** Библиотека ассетов: файлы из папки assets проекта (картинки, импортированные ранее). */
-    fun assetLibrary(): List<Pair<String, String>> {
+    /**
+     * Библиотека ассетов: картинки слоёв проекта (с названием слоя) и файлы удалённых слоёв; кэш (миниатюры маркеров,
+     * Liquify, снимки выделения, кадры покадровых слоёв) скрыт - см. [com.vibetoon.domain.project.AssetCatalog].
+     */
+    fun assetLibrary(): List<com.vibetoon.domain.project.AssetCatalog.Entry> {
         val pid = projectId ?: return emptyList()
         val dir = projects.mediaDir(pid)
         if (!dir.exists()) return emptyList()
-        return dir.listFiles()?.filter { it.isFile && it.extension.lowercase() in setOf("png", "jpg", "jpeg", "webp") }
-            ?.map { it.name to "assets/${it.name}" }?.sortedBy { it.first } ?: emptyList()
+        val files = dir.listFiles()?.filter { it.isFile }?.map { it.name }.orEmpty()
+        val (used, cells) = assetRefs()
+        return com.vibetoon.domain.project.AssetCatalog.library(files, used, cells)
+    }
+
+    /** Сколько служебных файлов скрыто из библиотеки (для подписи). */
+    fun assetServiceCount(): Int {
+        val pid = projectId ?: return 0
+        val files = projects.mediaDir(pid).listFiles()?.filter { it.isFile }?.map { it.name }.orEmpty()
+        val (used, cells) = assetRefs()
+        return com.vibetoon.domain.project.AssetCatalog.serviceCount(files, used, cells)
+    }
+
+    private fun assetRefs(): Pair<Map<String, String>, Set<String>> {
+        val used = HashMap<String, String>()
+        val cells = HashSet<String>()
+        for (m in media) {
+            if (m.kind != MediaKind.IMAGE || m.file.isEmpty()) continue
+            if (m.cells.isNotEmpty()) { m.cells.forEach { cells += it.file.substringAfterLast('/') }; continue }
+            used[m.file.substringAfterLast('/')] = m.name
+        }
+        return used to cells
+    }
+
+    /** Миниатюра ассета (~160 px), декодируется в фоне с уменьшением - без загрузки полной картинки в память. */
+    suspend fun assetThumb(rel: String): androidx.compose.ui.graphics.ImageBitmap? {
+        val pid = projectId ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val f = projects.fileOf(pid, rel)
+                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(f.absolutePath, o)
+                var sample = 1
+                while (maxOf(o.outWidth, o.outHeight) / (sample * 2) >= 160) sample *= 2
+                android.graphics.BitmapFactory.decodeFile(f.absolutePath, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+            }.getOrNull()
+        }
     }
 
     /** Вставка ассета из библиотеки как новый слой-картинку. */
@@ -1552,8 +1592,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refreshPerspOverlay()
         refreshRasterOverlays()
         val quads = (_selection.value + _lassoLayers.value).mapNotNull { id -> scene?.selectionQuads?.get(id)?.let { q -> contentQuad(id, q) ?: q } }
-        RenderHost.view?.setSelection(if (quads.isEmpty()) null else quads.fold(FloatArray(0)) { a, b -> a + b })
-        refreshInspector()
+        RenderHost.view?.setSelection(if (quads.isEmpty()) null else FloatArray(quads.sumOf { it.size }).also { out -> var o = 0; for (q in quads) { q.copyInto(out, o); o += q.size } })
+        if (!_playing.value) refreshInspector()
     }
 
     private fun computePivots(nodes: List<com.vibetoon.domain.model.Node>): Map<Int, Pair<Float, Float>> {
@@ -1708,8 +1748,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         // вне клипа слой невидим: нулевая прозрачность (у группы скрывает и всех потомков)
         val rest = _boneMode.value && _bindPose.value   // Bind Pose: кости не деформируют картинку
+        val ghostById = if (ghosts.isEmpty()) emptyMap() else ghosts.associateBy { it.id }
         return ids.filter { !(rest && it >= BONE_ID_BASE) }.associateWith { id ->
-            ghosts.firstOrNull { it.id == id }?.let { g -> return@associateWith effective(g.owner).let { o -> o.copy(opacity = o.opacity * g.alpha) } }   // призрак кальки идёт за своим слоем
+            ghostById[id]?.let { g -> return@associateWith effective(g.owner).let { o -> o.copy(opacity = o.opacity * g.alpha) } }   // призрак кальки идёт за своим слоем
             val t0 = effective(id)
             val t = fxLayers[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.spinAngle(id, l, _animation.value, _frame.value, _animation.value.settings.fps)) } ?: t0
             val c = _clips.value[id]
@@ -1740,10 +1781,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         scene = sc
         RenderHost.view?.setScene(sc)
-        warpTarget()?.let { id -> if (id in turbLayers) _turb.value = turbEffective(id) }
-        refreshFxState()
+        // Во время Play панели (инспектор, эффекты, турбулентность) не пересчитываются каждый кадр: их перерисовка в Compose
+        // съедала UI-поток. Значения обновляются при паузе (pause() -> refreshPanelsAfterPlay).
+        if (!_playing.value) {
+            warpTarget()?.let { id -> if (id in turbLayers) _turb.value = turbEffective(id) }
+            refreshFxState()
+        }
         refreshBoneOverlay()
         updateSelectionFrame()
+    }
+
+    private fun refreshPanelsAfterPlay() {
+        warpTarget()?.let { id -> if (id in turbLayers) _turb.value = turbEffective(id) }
+        refreshFxState()
+        refreshInspector()
     }
 
     /**
@@ -2513,9 +2564,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _symMarkers = MutableStateFlow<List<FrameMarker>>(emptyList())
     /** Маркеры кадров открытого символа (пусто на главной сцене). */
     val symMarkers: StateFlow<List<FrameMarker>> = _symMarkers.asStateFlow()
-    private val _timeKeys = MutableStateFlow<Map<Int, List<Int>>>(emptyMap())
+    private val _markerSel = MutableStateFlow<Set<Int>>(emptySet())
+    /** Выделенные маркеры открытого символа (кадры). Операции как у ключей: сдвиг, копия, вставка, дубликат, зеркало. */
+    val markerSelection: StateFlow<Set<Int>> = _markerSel.asStateFlow()
+    private val _timeKeys = MutableStateFlow<Map<Int, List<TimeKey>>>(emptyMap())
     /** Кадры ключей времени экземпляров символов: слой -> кадры (фиолетовые засечки на таймлайне). */
-    val timeKeys: StateFlow<Map<Int, List<Int>>> = _timeKeys.asStateFlow()
+    val timeKeys: StateFlow<Map<Int, List<TimeKey>>> = _timeKeys.asStateFlow()
+    private val _instMarkers = MutableStateFlow<Map<Int, List<FrameMarker>>>(emptyMap())
+    /** Маркеры символа каждого экземпляра на сцене: подписи отрезков одинаковой формы на таймлайне. */
+    val instanceMarkers: StateFlow<Map<Int, List<FrameMarker>>> = _instMarkers.asStateFlow()
     private val _markerThumbs = MutableStateFlow<Map<String, androidx.compose.ui.graphics.ImageBitmap>>(emptyMap())
     /** Миниатюры кадров с маркерами для окна «Выбрать маркер»: ключ "определение:кадр". */
     val markerThumbs: StateFlow<Map<String, androidx.compose.ui.graphics.ImageBitmap>> = _markerThumbs.asStateFlow()
@@ -2553,12 +2610,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun symbolRefOf(instId: Int): Int = media.firstOrNull { it.id == instId }?.symRef ?: 0
     fun timeKeysOf(instId: Int): List<TimeKey> = media.firstOrNull { it.id == instId }?.timeKeys.orEmpty()
 
-    private fun symbolMembers(gid: Int): Set<Int> = SymbolMath.descendants(gid, layers.filter { it.parentId >= 0 }.associate { it.id to it.parentId })
+    // Кэш участников символов: раньше дерево «слой -> родитель» строилось заново несколько раз на КАЖДЫЙ кадр
+    // (hiddenIds, updateSymbols, symbolCycles), что на 50+ слоях заметно тормозило Play и скраббинг.
+    private var memberCacheLayers: List<LayerInfo>? = null
+    private val memberCache = HashMap<Int, Set<Int>>()
+    private var hiddenCacheKey: Any? = null
+    private var hiddenCache: Set<Int> = emptySet()
+
+    private fun symbolMembers(gid: Int): Set<Int> {
+        if (memberCacheLayers !== layers) { memberCache.clear(); memberCacheLayers = layers; hiddenCacheKey = null }
+        return memberCache.getOrPut(gid) { SymbolMath.descendants(gid, layers.filter { it.parentId >= 0 }.associate { it.id to it.parentId }) }
+    }
 
     private fun refreshSymbolState() {
         val ctx = _editingSymbol.value
         _symMarkers.value = if (ctx == null) emptyList() else media.firstOrNull { it.id == ctx }?.markers.orEmpty()
-        _timeKeys.value = media.filter { it.kind == MediaKind.SYMBOL && it.timeKeys.isNotEmpty() }.associate { it.id to it.timeKeys.map { k -> k.frame } }
+        _timeKeys.value = media.filter { it.kind == MediaKind.SYMBOL && it.timeKeys.isNotEmpty() }.associate { it.id to it.timeKeys.sortedBy { k -> k.frame } }
+        _instMarkers.value = media.filter { it.kind == MediaKind.SYMBOL }.associate { inst -> inst.id to media.firstOrNull { it.id == inst.symRef }?.markers.orEmpty() }
+        _markerSel.value = _markerSel.value.filterTo(HashSet()) { f -> _symMarkers.value.any { it.frame == f } }
     }
 
     /** Слои, скрытые на сцене: в главной сцене - содержимое символов (видны экземпляры), при редактировании символа [ctx] - всё кроме него. */
@@ -2566,6 +2635,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val defs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.map { it.id }
         if (defs.isEmpty() && ctx == null) return emptySet()
         val cams = media.filter { it.kind == MediaKind.CAMERA || it.kind == MediaKind.NULLOBJ }.mapTo(HashSet()) { it.id }
+        val key = listOf(layers, ctx, defs, cams)   // тот же список слоёв (сравнение по ссылке) - тот же результат
+        if (key == hiddenCacheKey) return hiddenCache
+        return symbolHiddenUncached(ctx, defs, cams).also { hiddenCache = it; hiddenCacheKey = key }
+    }
+
+    private fun symbolHiddenUncached(ctx: Int?, defs: List<Int>, cams: Set<Int>): Set<Int> {
         val leaves = layers.filter { it.kind == LayerKind.LAYER && it.id !in cams }.mapTo(HashSet()) { it.id }
         if (ctx != null) return leaves - symbolMembers(ctx)
         val inside = HashSet<Int>()
@@ -2590,10 +2665,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 (m.kind == MediaKind.SYMBOL && (SymbolMath.timeKeysMove(m.timeKeys) || (m.timeKeys.isEmpty() && symbolCycles(m.symRef, guard + 1))))) }
     }
 
-    /** Внутренний кадр экземпляра на кадре сцены [f]: ключи времени (Hold) главнее, иначе держим кадр 0 (без самопроизвольного цикла). */
+    /**
+     * Внутренний кадр экземпляра на кадре сцены [f]: ключи времени главнее; без ключей - Hold на кадре 0. Цикл внутренней
+     * анимации только по явному флагу экземпляра «Цикл» (раньше любой анимированный участник - кость, ключ слоя - запускал
+     * самопроизвольное перелистывание форм).
+     */
     private fun symbolKey(inst: MediaItem, def: MediaItem, f: Int): Int =
-        SymbolMath.timeAt(inst.timeKeys, f)?.coerceIn(0, maxOf(0, def.symDur - 1))
-            ?: SymbolMath.defaultFrame(f, def.symDur, symbolCycles(def.id))
+        SymbolMath.instanceFrame(inst.timeKeys, f, def.symDur, inst.symLoop && symbolCycles(def.id), inst.symLoop)
+
+    /** Экземпляру нужны все внутренние кадры (цикл или плавный переход между ключами), а не только кадры ключей. */
+    private fun needsAllFrames(inst: MediaItem, def: MediaItem): Boolean =
+        (inst.timeKeys.isEmpty() && inst.symLoop && symbolCycles(def.id)) ||
+            inst.timeKeys.sortedBy { it.frame }.zipWithNext().any { (a, b) -> a.ease != TimeEase.HOLD && a.value != b.value }
 
     private fun computeSymbolDuration(gid: Int): Int {
         val mem = symbolMembers(gid)
@@ -2708,7 +2791,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val insts = top.filter { it.symRef == d.id }
             val n = d.symDur.coerceAtLeast(1)
             val keys: Collection<Int> = if (frame != null) insts.map { symbolKey(it, d, frame) }.toSet()
-                else if (symbolCycles(d.id)) (0 until n).toList()
+                else if (insts.any { needsAllFrames(it, d) }) (0 until n).toList()
                 else (insts.flatMap { i -> i.timeKeys.map { it.value.coerceIn(0, n - 1) } } + 0).toSet()   // статичный символ: только кадры ключей
             val list = MutableList<ByteArray?>(n) { null }
             for (k in keys) {
@@ -2830,6 +2913,95 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun pickMarker(instId: Int, marker: FrameMarker) =
         editInstance(instId, "«${marker.name}» с кадра ${_frame.value + 1}") { it.copy(timeKeys = SymbolMath.withKey(it.timeKeys, TimeKey(_frame.value, marker.frame))) }
     fun removeTimeKey(instId: Int) = editInstance(instId, "Ключ времени удалён") { it.copy(timeKeys = SymbolMath.withoutKey(it.timeKeys, _frame.value)) }
+
+    /** Цикл внутренней анимации экземпляра без ключей времени (по умолчанию выкл. - Hold на первом кадре). */
+    fun setSymbolLoop(instId: Int, on: Boolean) =
+        editInstance(instId, if (on) "Символ без ключей крутит свою анимацию по кругу" else "Символ без ключей держит первый кадр (Hold)") { it.copy(symLoop = on) }
+    fun symbolLoops(instId: Int): Boolean = media.firstOrNull { it.id == instId }?.symLoop == true
+
+    /** Переход ключа времени на текущем кадре (или выделенных ключей времени): Hold / Linear / Smooth / Ease in / Ease out. */
+    fun setTimeKeyEase(instId: Int, ease: Int) {
+        val inst = media.firstOrNull { it.id == instId && it.kind == MediaKind.SYMBOL } ?: return
+        val picked = _keySel.value.filter { it.first == instId }.mapTo(HashSet()) { it.second }.ifEmpty { setOf(_frame.value) }
+        val frames = picked.filterTo(HashSet()) { f -> inst.timeKeys.any { it.frame == f } }
+        if (frames.isEmpty()) { _state.value = UiState.Message("На этом кадре нет ключа времени: сначала выберите маркер"); return }
+        editInstance(instId, "Переход: ${timeEaseName(ease)} (ключей: ${frames.size})") { it.copy(timeKeys = TimelineItemOps.withEase(it.timeKeys, frames, ease)) }
+    }
+    fun timeKeyEaseAt(instId: Int, frame: Int): Int? = media.firstOrNull { it.id == instId }?.timeKeys?.lastOrNull { it.frame <= frame }?.ease
+    fun timeEaseName(e: Int): String = when (e) {
+        TimeEase.LINEAR -> "Линейно"; TimeEase.SMOOTH -> "Плавно"; TimeEase.EASE_IN -> "Плавное начало"; TimeEase.EASE_OUT -> "Плавный конец"; else -> "Hold (резко)"
+    }
+
+    // ---- маркеры кадров открытого символа как ключи: выделение, сдвиг, копия/вставка, дубликат, зеркало, удаление
+
+    private var markerClip: List<FrameMarker> = emptyList()
+    private val _hasMarkerClip = MutableStateFlow(false)
+    val hasMarkerClip: StateFlow<Boolean> = _hasMarkerClip.asStateFlow()
+
+    fun selectMarkers(frames: Set<Int>) { _markerSel.value = frames.filterTo(HashSet()) { f -> _symMarkers.value.any { it.frame == f } } }
+    fun toggleMarkerSelected(frame: Int) { selectMarkers(if (frame in _markerSel.value) _markerSel.value - frame else _markerSel.value + frame) }
+    fun clearMarkerSelection() { if (_markerSel.value.isNotEmpty()) _markerSel.value = emptySet() }
+
+    private fun editMarkers(tag: String, message: String?, change: (List<FrameMarker>) -> List<FrameMarker>?, nextSel: Set<Int>?): Boolean {
+        val gid = _editingSymbol.value ?: return false
+        if (_playing.value) return false
+        val i = media.indexOfFirst { it.id == gid }
+        if (i < 0) return false
+        val next = change(media[i].markers) ?: run { _state.value = UiState.Message("Маркеры не изменены: занятый кадр или выход за границы символа"); return false }
+        if (next == media[i].markers) return false
+        checkpoint(tag, force = true)
+        media[i] = media[i].copy(markers = next)
+        if (nextSel != null) _markerSel.value = nextSel
+        refreshSymbolState(); markDirty()
+        regenMarkerThumbs(gid, force = true)
+        if (message != null) _state.value = UiState.Message(message)
+        return true
+    }
+
+    private fun markerLast(): Int = maxOf(duration() - 1, 0)
+
+    fun moveSelectedMarkers(delta: Int) {
+        val sel = _markerSel.value
+        if (sel.isEmpty() || delta == 0) return
+        val d = TimelineItemOps.clampDelta(sel, delta, markerLast())
+        editMarkers("fmarker-move", null, { TimelineItemOps.move(it, sel, d, markerLast(), TimelineItemOps.MARKERS) }, sel.mapTo(HashSet()) { it + d })
+    }
+    fun deleteSelectedMarkers() {
+        val sel = _markerSel.value
+        if (sel.isEmpty()) return
+        editMarkers("fmarker-del", "Маркеров удалено: ${sel.size}", { TimelineItemOps.delete(it, sel, TimelineItemOps.MARKERS) }, emptySet())
+    }
+    fun copySelectedMarkers() {
+        val gid = _editingSymbol.value ?: return
+        markerClip = TimelineItemOps.copy(media.firstOrNull { it.id == gid }?.markers.orEmpty(), _markerSel.value, TimelineItemOps.MARKERS)
+        _hasMarkerClip.value = markerClip.isNotEmpty()
+        _state.value = UiState.Message(if (markerClip.isEmpty()) "Маркеры не выбраны" else "Скопировано маркеров: ${markerClip.size}")
+    }
+    fun cutSelectedMarkers() { copySelectedMarkers(); if (markerClip.isNotEmpty()) deleteSelectedMarkers() }
+    fun pasteMarkers() {
+        val clip = markerClip
+        if (clip.isEmpty()) return
+        val at = _frame.value
+        editMarkers("fmarker-paste", "Вставлено маркеров: ${clip.size}", { TimelineItemOps.paste(it, clip, at, markerLast(), TimelineItemOps.MARKERS) },
+            TimelineItemOps.pastedFrames(clip, at, TimelineItemOps.MARKERS))
+    }
+    fun duplicateSelectedMarkers() {
+        val gid = _editingSymbol.value ?: return
+        val r = TimelineItemOps.duplicate(media.firstOrNull { it.id == gid }?.markers.orEmpty(), _markerSel.value, markerLast(), TimelineItemOps.MARKERS)
+            ?: run { _state.value = UiState.Message("Дубликат не помещается в длительность"); return }
+        editMarkers("fmarker-dup", "Маркеры продублированы: ${r.second.size}", { r.first }, r.second)
+    }
+    fun mirrorSelectedMarkers() {
+        val sel = _markerSel.value
+        if (sel.size < 2) return
+        val lo = sel.min(); val hi = sel.max()
+        editMarkers("fmarker-mirror", "Маркеры отзеркалены", { TimelineItemOps.mirror(it, sel, TimelineItemOps.MARKERS) }, sel.mapTo(HashSet()) { lo + hi - it })
+    }
+    fun renameMarker(frame: Int, name: String) {
+        val clean = name.trim().take(24)
+        if (clean.isEmpty()) return
+        editMarkers("fmarker-rename", null, { list -> list.map { if (it.frame == frame) it.copy(name = clean) else it } }, null)
+    }
     fun clearTimeKeys(instId: Int) = editInstance(instId, "Ключи времени очищены: символ держит первый кадр") { it.copy(timeKeys = emptyList()) }
 
     /** Миниатюры маркеров символа экземпляра [instId]: сначала из файлов проекта, недостающие дорисовываются в фоне. */
@@ -2876,7 +3048,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun addTimeKeyHere(instId: Int) {
         val inst = media.firstOrNull { it.id == instId && it.kind == MediaKind.SYMBOL } ?: return
         val def = media.firstOrNull { it.id == inst.symRef && it.symDur > 0 } ?: return
-        val v = SymbolMath.timeAt(inst.timeKeys, _frame.value) ?: SymbolMath.defaultFrame(_frame.value, def.symDur, symbolCycles(def.id))
+        val v = symbolKey(inst, def, _frame.value)
         editInstance(instId, "Ключ времени (Hold) на кадре ${_frame.value + 1}") { it.copy(timeKeys = SymbolMath.withKey(it.timeKeys, TimeKey(_frame.value, v))) }
     }
 
@@ -2988,6 +3160,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         ghosts = list
         val pid = projectId ?: return
         val need = list.filter { ghostShown[it.id] != it.file }
+        if (same && need.isEmpty()) return   // ничего не поменялось: без корутины и пересборки сцены на каждом кадре
         val tickets = need.associate { it.id to RenderNative.textureUploadTicket(it.id) }
         viewModelScope.launch {
             if (need.isNotEmpty()) {
@@ -8021,6 +8194,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun selectKeys(keys: Set<Pair<Int, Int>>) { _keySel.value = keys }
     fun clearKeySelection() { if (_keySel.value.isNotEmpty()) _keySel.value = emptySet() }
 
+    /**
+     * Ключи времени экземпляров символов участвуют в общем выделении ключей (пара «экземпляр, кадр»): сдвиг, растяжение,
+     * реверс, копия/вставка и удаление работают с ними так же, как с ключами трансформации.
+     * [op] получает ключи экземпляра и выделенные кадры; null - операция невозможна (занятый кадр/границы) - ничего не меняется.
+     */
+    private fun planTimeKeys(sel: Set<Pair<Int, Int>>, op: (List<TimeKey>, Set<Int>) -> List<TimeKey>?): Map<Int, List<TimeKey>>? {
+        val out = HashMap<Int, List<TimeKey>>()
+        for ((inst, frames) in sel.groupBy({ it.first }, { it.second })) {
+            val m = media.firstOrNull { it.id == inst && it.kind == MediaKind.SYMBOL } ?: continue
+            val fs = frames.filterTo(HashSet()) { f -> m.timeKeys.any { it.frame == f } }
+            if (fs.isEmpty()) continue
+            out[inst] = op(m.timeKeys, fs) ?: return null
+        }
+        return out
+    }
+
+    private fun applyTimeKeys(plan: Map<Int, List<TimeKey>>) {
+        if (plan.isEmpty()) return
+        for ((inst, keys) in plan) {
+            val i = media.indexOfFirst { it.id == inst }
+            if (i >= 0) { media[i] = media[i].copy(timeKeys = keys); symShown.remove(inst) }
+        }
+        refreshSymbolState()
+        updateSymbols(_frame.value)
+    }
+
+    /** Кадры ключей времени экземпляра (для жестов таймлайна). */
+    fun timeKeyFrames(id: Int): List<Int> = _timeKeys.value[id]?.map { it.frame }.orEmpty()
+
+    private var timeKeyClip: List<Pair<Int, TimeKey>> = emptyList()
+
     /** Сдвигает выделенные ключи на [delta] кадров (все дорожки слоя вместе, граница проекта останавливает всех). */
     fun moveSelectedKeys(delta: Int, singleGesture: Boolean = false) {
         val sel = _keySel.value
@@ -8030,11 +8234,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val maxF = sel.maxOf { it.second }
         val d = delta.coerceIn(-minF, last - maxF)
         if (d == 0) return
-        if (!com.vibetoon.domain.anim.KeyMovePolicy.canMove(_animation.value, sel, d)) {
+        val tkPlan = planTimeKeys(sel) { keys, fs -> TimelineItemOps.move(keys, fs, d, last, TimelineItemOps.TIME_KEYS)?.takeIf { it.size == keys.size } }
+        if (tkPlan == null || !com.vibetoon.domain.anim.KeyMovePolicy.canMove(_animation.value, sel, d)) {
             _state.value = UiState.Message("На целевом кадре уже есть ключ: перенос отменён")
             return
         }
         checkpoint("keymove", force = singleGesture)
+        applyTimeKeys(tkPlan)
         var anim = _animation.value
         val byLayer = sel.groupBy({ it.first }, { it.second })
         for ((layer, frames) in byLayer) {
@@ -8065,6 +8271,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         var anim = _animation.value
         val byLayer = sel.groupBy({ it.first }, { it.second })
         val picked = HashSet<Pair<Int, Int>>()
+        val tkPlan = planTimeKeys(sel) { keys, fs -> TimelineItemOps.mirrorTimeKeys(keys, fs) }.orEmpty()
+        for ((inst, _) in tkPlan) {
+            val fs = sel.filter { it.first == inst }.map { it.second }
+            val lo = fs.min(); val hi = fs.max()
+            fs.forEach { picked += inst to (lo + hi - it) }
+        }
+        applyTimeKeys(tkPlan)
         for ((layer, frames) in byLayer) for (id in TrackGroups.ids(layer, anim.tracks)) {
             val track = anim.tracks[id] ?: continue
             val chosen = track.keys.filter { it.frame in frames }
@@ -8083,7 +8296,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (sel.size < 2 || _playing.value) return
         val last = duration() - 1
         val lo = sel.minOf { it.second }; val hi = sel.maxOf { it.second }
-        if (!com.vibetoon.domain.anim.KeyMovePolicy.canRemap(_animation.value, sel) { map(it, lo, hi).coerceIn(0, last) }) {
+        val tkPlan = planTimeKeys(sel) { keys, fs ->
+            val moved = keys.map { if (it.frame in fs) it.copy(frame = map(it.frame, lo, hi).coerceIn(0, last)) else it }
+            moved.takeIf { m -> m.map { it.frame }.toSet().size == m.size }?.sortedBy { it.frame }
+        }
+        if (tkPlan == null || !com.vibetoon.domain.anim.KeyMovePolicy.canRemap(_animation.value, sel) { map(it, lo, hi).coerceIn(0, last) }) {
             _state.value = UiState.Message("Ключи совпадают после изменения: операция отменена")
             return
         }
@@ -8091,6 +8308,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         var anim = _animation.value
         val byLayer = sel.groupBy({ it.first }, { it.second })
         val picked = HashSet<Pair<Int, Int>>()
+        for ((inst, _) in tkPlan) sel.filter { it.first == inst }.forEach { picked += inst to map(it.second, lo, hi).coerceIn(0, last) }
+        applyTimeKeys(tkPlan)
         for ((layer, frames) in byLayer) for (id in TrackGroups.ids(layer, anim.tracks)) {
             val track = anim.tracks[id] ?: continue
             val moving = track.keys.filter { it.frame in frames }
@@ -8108,6 +8327,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val sel = _keySel.value
         if (sel.isEmpty() || _playing.value) return
         checkpoint("keydelete", force = true)
+        applyTimeKeys(planTimeKeys(sel) { keys, fs -> TimelineItemOps.delete(keys, fs, TimelineItemOps.TIME_KEYS) }.orEmpty())
         removeKeys(sel)
         _keySel.value = emptySet()
         override.clear()
@@ -8144,26 +8364,66 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _animation.value.tracks[id]?.keyAt(frame)?.let { out += KeyClipEntry(id, frame - base0, it, layer) }
         }
         keyClip = out
-        _hasKeyClip.value = out.isNotEmpty()
-        _state.value = UiState.Message(if (out.isEmpty()) "В выделении нет ключей" else "Скопировано ключей: ${out.size}")
+        timeKeyClip = sel.flatMap { (layer, frame) ->
+            media.firstOrNull { it.id == layer && it.kind == MediaKind.SYMBOL }?.timeKeys?.filter { it.frame == frame }.orEmpty().map { layer to it.copy(frame = frame - base0) }
+        }
+        val total = out.size + timeKeyClip.size
+        _hasKeyClip.value = total > 0
+        _state.value = UiState.Message(if (total == 0) "В выделении нет ключей" else "Скопировано ключей: $total")
     }
 
     fun cutSelectedKeys() {
         if (_playing.value) return
         copySelectedKeys()
-        if (keyClip.isNotEmpty()) deleteSelectedKeys()
+        if (keyClip.isNotEmpty() || timeKeyClip.isNotEmpty()) deleteSelectedKeys()
     }
 
     /**
      * Вставляет скопированные ключи так, чтобы самый ранний встал на текущий кадр. Куда: на те же дорожки; если
      * скопирован один слой, а сейчас выделен другой (не группа), ключи (в том числе вершины сетки и пины) переносятся на него.
      */
-    fun pasteKeys() {
+    fun pasteKeys() = pasteKeysAt(_frame.value)
+
+    /** Дубликат выделенных ключей сразу после выделения (самый ранний встаёт на «последний выделенный + 1»). */
+    fun duplicateSelectedKeys() {
+        val sel = _keySel.value
+        if (sel.isEmpty() || _playing.value) return
+        copySelectedKeys()
+        pasteKeysAt(sel.maxOf { it.second } + 1)
+    }
+
+    /** Вставка ключей времени буфера с кадра [cur]: на тот же экземпляр или на выделенный экземпляр символа. */
+    private fun pasteTimeKeysAt(cur: Int): Set<Pair<Int, Int>>? {
+        val tclip = timeKeyClip
+        if (tclip.isEmpty()) return emptySet()
+        val srcs = tclip.map { it.first }.toSet()
+        val target = _selected.value?.takeIf { sel -> srcs.size == 1 && sel != srcs.first() && media.any { it.id == sel && it.kind == MediaKind.SYMBOL } }
+        val last = duration() - 1
+        val plan = HashMap<Int, List<TimeKey>>()
+        val picked = HashSet<Pair<Int, Int>>()
+        for ((src, entries) in tclip.groupBy({ it.first }, { it.second })) {
+            val inst = target ?: src
+            val m = media.firstOrNull { it.id == inst && it.kind == MediaKind.SYMBOL } ?: return null
+            plan[inst] = TimelineItemOps.paste(m.timeKeys, entries, cur, last, TimelineItemOps.TIME_KEYS) ?: return null
+            entries.forEach { picked += inst to (cur + it.frame) }
+        }
+        applyTimeKeys(plan)
+        return picked
+    }
+
+    private fun pasteKeysAt(cur: Int) {
         val clip = keyClip
-        if (clip.isEmpty() || _playing.value) return
+        if (_playing.value) return
+        if (clip.isEmpty()) {
+            if (timeKeyClip.isEmpty()) return
+            checkpoint("keypaste", force = true)
+            val picked = pasteTimeKeysAt(cur) ?: run { _state.value = UiState.Message("Ключи времени не вставлены: выход за границы или символ удалён"); return }
+            _keySel.value = picked; markDirty()
+            _state.value = UiState.Message("Вставлено ключей времени: ${picked.size}")
+            return
+        }
         val srcLayers = clip.map { it.layer }.toSet()
         val target = _selected.value?.takeIf { srcLayers.size == 1 && it != srcLayers.first() && layers.any { l -> l.id == it } }
-        val cur = _frame.value
         val knownTargets = layers.mapTo(HashSet()) { it.id }.apply { addAll(_bones.value.map { it.id }) }
         if ((target == null && srcLayers.any { it !in knownTargets }) || (target != null && target !in knownTargets)) {
             _state.value = UiState.Message("Ключи не вставлены: слой удалён")
@@ -8195,6 +8455,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val count = planned.size
         _animation.value = anim
+        pasteTimeKeysAt(cur)?.let { picked += it }
         _keySel.value = picked
         override.clear()
         pushScene()
@@ -8265,6 +8526,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setFrame(frame: Int) {
         val f = frame.coerceIn(0, _animation.value.settings.durationFrames - 1)
         if (f == _frame.value) return
+        val t0 = if (com.vibetoon.render.RenderMetrics.enabled) System.nanoTime() else 0L
         cancelPendingLasso()
         override.clear()
         _frame.value = f
@@ -8274,6 +8536,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         updateTextFx(f)
         updateCells(f)
         refreshOnion()
+        if (t0 != 0L) recordFrameMetrics((System.nanoTime() - t0) / 1e6f)
+    }
+
+    // ---- метрики производительности (Настройки -> «Панель метрик»): время сборки кадра на UI-потоке и счётчики GL
+
+    private val frameTimer = com.vibetoon.domain.render.FrameTimer(120)
+    private val drawTimer = com.vibetoon.domain.render.FrameTimer(120)
+    private var lastHudAt = 0L
+    private val _perfHud = MutableStateFlow<String?>(null)
+    /** Строка панели метрик или null (панель выключена). */
+    val perfHud: StateFlow<String?> = _perfHud.asStateFlow()
+
+    init {
+        if (getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("perf_hud", false)) setPerfHud(true)
+    }
+
+    fun setPerfHud(on: Boolean) {
+        com.vibetoon.render.RenderMetrics.enabled = on
+        frameTimer.clear(); drawTimer.clear()
+        _perfHud.value = if (on) "Метрики: прокрутите или запустите Play" else null
+    }
+
+    private fun recordFrameMetrics(ms: Float) {
+        frameTimer.add(ms)
+        drawTimer.add(com.vibetoon.render.RenderMetrics.drawMs)
+        val now = SystemClock.uptimeMillis()
+        if (now - lastHudAt < 500) return
+        lastHudAt = now
+        val budget = 1000f / _animation.value.settings.fps.coerceAtLeast(1)
+        val m = com.vibetoon.render.RenderMetrics
+        fun f1(v: Float) = String.format(java.util.Locale.US, "%.1f", v)
+        // Строка-шаблон с {}: панель переводится через L() как остальные сообщения.
+        _perfHud.value = "Кадр (UI): ср ${f1(frameTimer.average())} / p95 ${f1(frameTimer.percentile(0.95f))} мс · GL: ${f1(drawTimer.average())} мс · " +
+            "медленных ${(frameTimer.overBudget(budget) * 100).toInt()}% · слоёв ${m.drawn}, вне экрана ${m.culled} · FX в рамке ${m.scissoredFx}, проходов ${m.fxPasses}"
     }
 
     private val videoFrames = com.vibetoon.data.VideoFrames { RenderHost.view?.requestRender() }
@@ -8378,6 +8674,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         audioEngine.pause()
         frameCallback?.let { Choreographer.getInstance().removeFrameCallback(it) }
         frameCallback = null
+        refreshPanelsAfterPlay()
         Log.i("VT/Anim", "pause at frame ${_frame.value}")
     }
 
@@ -8422,6 +8719,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val symInside = HashSet<Int>().also { st0 -> media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.forEach { st0 += symbolMembers(it.id) } }
         val symInst = if (symbol == null) media.filter { it.kind == MediaKind.SYMBOL && it.id !in symInside } else emptyList()
         val symDefs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to (it.symDur to symbolCycles(it.id)) }
+        val symLoops = symInst.associate { it.id to it.symLoop }
         val symExp = HashMap<Int, Int>()
         val cellExp = HashMap<Int, String>()
         val pidExp = projectId
@@ -8440,7 +8738,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             for (si in symInst) {   // экземпляры символов: готовая картинка вложенной сцены на этом кадре
                 val frames = symCache[si.symRef] ?: continue
                 val def = symDefs[si.symRef] ?: continue
-                val key = (SymbolMath.timeAt(si.timeKeys, pf)?.coerceIn(0, maxOf(0, def.first - 1))) ?: SymbolMath.defaultFrame(pf, def.first, def.second)
+                val loop = symLoops[si.id] == true
+                val key = SymbolMath.instanceFrame(si.timeKeys, pf, def.first, def.second && loop, loop)
                 if (symExp[si.id] == key) continue
                 val png = frames.getOrNull(key) ?: continue
                 runCatching {

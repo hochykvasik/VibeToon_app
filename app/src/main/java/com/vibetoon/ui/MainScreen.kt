@@ -312,6 +312,7 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         PinOverlayLayer(vm)
         BrushCircleLayer(vm)
         CameraAngleBadge(vm)
+        PerfHudLayer(vm)
         PivotOverlay(vm)
         RulerGuideLayer(vm)
         PaintCursorLayer(vm)
@@ -799,6 +800,17 @@ private fun RulerGuideLayer(vm: MainViewModel) {
     }
 }
 
+/** Панель метрик производительности (Настройки -> General): только в редакторе, не попадает в экспорт. */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.PerfHudLayer(vm: MainViewModel) {
+    val hud by vm.perfHud.collectAsStateWithLifecycle()
+    val text = hud ?: return
+    Box(
+        Modifier.align(Alignment.BottomStart).padding(6.dp).clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF101418).copy(alpha = 0.78f)).padding(horizontal = 8.dp, vertical = 4.dp)
+    ) { Text(text, color = Color(0xFFB2FF59), fontSize = 10.sp, lineHeight = 12.sp) }
+}
+
 /** Бейдж угла поворота холста: виден при ненулевом повороте; тап сбрасывает в 0°, долгий тап — поворот на 90°. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -839,10 +851,18 @@ private fun PivotOverlay(vm: MainViewModel) {
     val p = vm.pivotScreen(sel) ?: return
     Canvas(Modifier.fillMaxSize().clipToBounds()) {
         val c = Offset(p.first, p.second)
-        drawCircle(Color(0xFFFFC107), radius = 9.dp.toPx(), style = Stroke(2.dp.toPx()))
-        drawCircle(Color(0xFFFFC107), radius = 2.5.dp.toPx())
-        drawLine(Color(0xFFFFC107), c + Offset(-14.dp.toPx(), 0f), c + Offset(14.dp.toPx(), 0f), 1.5.dp.toPx())
-        drawLine(Color(0xFFFFC107), c + Offset(0f, -14.dp.toPx()), c + Offset(0f, 14.dp.toPx()), 1.5.dp.toPx())
+        // Центр задаётся явно: без center drawCircle рисует в центре Canvas (то есть экрана), и раньше кольцо с точкой
+        // «отрывалось» от крестика пивота и висело посреди холста.
+        val shadow = Color.Black.copy(alpha = 0.45f)
+        val col = Color(0xFFFFC107)
+        val arm = 14.dp.toPx()
+        drawCircle(shadow, radius = 9.dp.toPx(), center = c, style = Stroke(3.5.dp.toPx()))
+        drawLine(shadow, c + Offset(-arm, 0f), c + Offset(arm, 0f), 3.dp.toPx())
+        drawLine(shadow, c + Offset(0f, -arm), c + Offset(0f, arm), 3.dp.toPx())
+        drawCircle(col, radius = 9.dp.toPx(), center = c, style = Stroke(2.dp.toPx()))
+        drawCircle(col, radius = 2.5.dp.toPx(), center = c)
+        drawLine(col, c + Offset(-arm, 0f), c + Offset(arm, 0f), 1.5.dp.toPx())
+        drawLine(col, c + Offset(0f, -arm), c + Offset(0f, arm), 1.5.dp.toPx())
     }
 }
 

@@ -881,4 +881,38 @@ Warp для групп: в разработке|Warp for groups: coming soon
 Связи|Links
 Группы, связи и опорные точки|Groups, links and pivots
 Совместимый экспорт видео|Compatible video export
+Маркеры форм|Form markers
+Hold (резко)|Hold (instant)
+Hold - резкая смена формы. Плавно/Линейно - кадры символа между двумя ключами проигрываются по кривой.|Hold is an instant form change. Smooth/Linear play the symbol frames between two keys along a curve.
+В проекте|In the project
+Время сборки кадра (UI) и отрисовки (GL), доля медленных кадров, слои вне экрана и проходы эффектов|Frame build time (UI) and draw time (GL), share of slow frames, off-screen layers and effect passes
+Вставлено ключей времени: {}|Time keys pasted: {}
+Вставлено маркеров: {}|Markers pasted: {}
+Дубликат не помещается в длительность|The duplicate does not fit in the duration
+Ключей: {}. Новый ключ из маркера - Hold: символ мгновенно переключается на форму и держит её до следующего ключа. Без ключей символ стоит на первом кадре.|Keys: {}. A new key from a marker is Hold: the symbol instantly switches to that form and holds it until the next key. Without keys the symbol stays on its first frame.
+Ключи времени не вставлены: выход за границы или символ удалён|Time keys not pasted: out of range or the symbol was deleted
+Маркеров удалено: {}|Markers deleted: {}
+Маркеров: {}|Markers: {}
+Маркеры не выбраны|No markers selected
+Маркеры не изменены: занятый кадр или выход за границы символа|Markers unchanged: the frame is taken or outside the symbol
+Маркеры отзеркалены|Markers mirrored
+Маркеры продублированы: {}|Markers duplicated: {}
+Метрики: прокрутите или запустите Play|Metrics: scrub or press Play
+На этом кадре нет ключа времени: сначала выберите маркер|No time key on this frame: pick a marker first
+Панель метрик производительности|Performance HUD
+Переход к следующему ключу: {}|Transition to the next key: {}
+Переход: {} (ключей: {})|Transition: {} (keys: {})
+Переход:|Transition:
+Плавно|Smooth
+Пока пусто: импортированные картинки и рисунки слоёв появятся здесь|Empty for now: imported pictures and layer drawings will appear here
+Символ без ключей держит первый кадр (Hold)|A symbol without keys holds its first frame (Hold)
+Символ без ключей крутит свою анимацию по кругу|A symbol without keys loops its own animation
+Скопировано маркеров: {}|Markers copied: {}
+Скрыто служебных файлов (кэш миниатюр, Liquify, кадры анимации): {}|Hidden service files (thumbnail cache, Liquify, animation frames): {}
+Скрыть файлы удалённых слоёв ({})|Hide files of deleted layers ({})
+Файлы удалённых слоёв ({})|Files of deleted layers ({})
+Цикл без ключей (внутренняя анимация по кругу)|Loop without keys (inner animation repeats)
+кадр 1 (Hold)|frame 1 (Hold)
+по кругу (цикл)|looping
+Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}|Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}
 """

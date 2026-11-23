@@ -53,7 +53,9 @@ class AppSettings(context: Context) {
     fun saveGrid() { p.edit().putBoolean("show_grid", showGrid).putInt("grid_cells", gridCells).apply() }
     var resetFrameAfterPause by mutableStateOf(p.getBoolean("reset_frame_after_pause", false))
     var compatibleVideoExport by mutableStateOf(p.getBoolean("compatible_video_export", false))
-    fun saveExport() { p.edit().putBoolean("compatible_video_export", compatibleVideoExport).apply() }
+    fun saveExport() { p.edit().putBoolean("compatible_video_export", compatibleVideoExport).putBoolean("perf_hud", perfHud).apply() }
+    /** Панель метрик производительности поверх холста (время кадра, отсечённые слои, проходы эффектов). */
+    var perfHud by mutableStateOf(p.getBoolean("perf_hud", false))
     /** Векторный режим работы: кисть/ластик автоматически выбирают или создают слой по типу инструмента. */
     var vectorWorkflow by mutableStateOf(p.getBoolean("vector_workflow", false))
     /** Авто-режим пиксельного редактирования: при выборе кисти/ластика слой выбирается или создаётся сам. */

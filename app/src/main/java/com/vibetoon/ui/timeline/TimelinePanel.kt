@@ -83,6 +83,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -111,6 +112,7 @@ import kotlin.math.roundToInt
 
 private val ROW_H = 28.dp
 private val RULER_H = 26.dp
+private val MARKER_H = 26.dp
 private val NAME_W = 156.dp
 private const val DEFAULT_FRAME_DP = 10f   // ширина одного кадра на линейке (меняется щипком)
 private const val MIN_FRAME_DP = 1.5f
@@ -146,6 +148,10 @@ fun TimelinePanel(
     val timeKeyMap by vm.timeKeys.collectAsStateWithLifecycle()
     val multi by vm.multiSelect.collectAsStateWithLifecycle()
     val keySel by vm.keySelection.collectAsStateWithLifecycle()
+    val markerSel by vm.markerSelection.collectAsStateWithLifecycle()
+    val hasMarkerClip by vm.hasMarkerClip.collectAsStateWithLifecycle()
+    val editingSym by vm.editingSymbol.collectAsStateWithLifecycle()
+    val instMarkers by vm.instanceMarkers.collectAsStateWithLifecycle()
     val haptic = LocalHapticFeedback.current
     val keyScope = rememberCoroutineScope()
     var keyDragDelta by remember { mutableIntStateOf(0) }
@@ -286,7 +292,31 @@ fun TimelinePanel(
             OutlinedButton(onClick = { vm.stretchSelectedKeys(0.5f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Сжать ÷2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::reverseSelectedKeys, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Реверс", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::duplicateSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Дублировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::deleteSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            // переход ключей времени символа (если они есть в выделении): резкая смена формы или плавное проигрывание кадров
+            val tkInst = keySel.firstOrNull { (id, f) -> timeKeyMap[id]?.any { it.frame == f } == true }?.first
+            if (tkInst != null) {
+                Text("Переход:", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                for ((e, t) in listOf(com.vibetoon.domain.project.TimeEase.HOLD to "Hold", com.vibetoon.domain.project.TimeEase.SMOOTH to "Плавно", com.vibetoon.domain.project.TimeEase.LINEAR to "Линейно"))
+                    OutlinedButton(onClick = { vm.setTimeKeyEase(tkInst, e) }, enabled = !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            }
+        }
+        // ---- Маркеры кадров открытого символа: те же операции, что у ключей ----
+        if (!collapsed && editingSym != null && (markerSel.isNotEmpty() || hasMarkerClip)) Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            val mb = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            Text(if (markerSel.isEmpty()) "Маркеры" else "Маркеров: ${markerSel.size}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            OutlinedButton(onClick = vm::copySelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::cutSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Вырезать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::pasteMarkers, enabled = hasMarkerClip && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::duplicateSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Дублировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::mirrorSelectedMarkers, enabled = markerSel.size >= 2 && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Зеркало", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::deleteSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            TextButton(onClick = vm::clearMarkerSelection, enabled = markerSel.isNotEmpty()) { Text("Снять", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
         // ---- Панель инструментов таймлайна ----
         if (!collapsed && (!phone || toolsOpen)) Row(
@@ -430,13 +460,86 @@ fun TimelinePanel(
                             )
                         }
                     }
-                    for (m in markers) {
-                        val mx = m * frameWPx
-                        val flag = Path().apply { moveTo(mx, 0f); lineTo(mx + 9.dp.toPx(), 5.dp.toPx()); lineTo(mx, 10.dp.toPx()); close() }
-                        drawLine(markerColor, Offset(mx, 0f), Offset(mx, size.height), strokeWidth = 2f)
-                        drawPath(flag, markerColor)
+                    // Плейхед рисуется ПОД маркерами: раньше красная линия закрывала линию маркера, и был виден только
+                    // флажок справа - казалось, что маркер встал правее текущего кадра. Теперь метка симметрична.
+                    drawPlayhead(frame * frameWPx, playheadColor)
+                    for (m in markers) drawMarkerTag(m * frameWPx, markerColor, 5.dp.toPx(), 10.dp.toPx())
+                }
+            }
+        }
+
+        // ---- Полоса маркеров открытого символа: флажки с именами, диапазоны форм, выделение и перенос как у ключей ----
+        if (editingSym != null) Row {
+            Row(Modifier.width(NAME_W).height(MARKER_H).padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Flag, null, Modifier.size(14.dp), tint = Color(0xFFAB47BC))
+                Text(" Маркеры форм", fontSize = 11.sp, maxLines = 1, softWrap = false)
+            }
+            val markersNow = rememberUpdatedState(symMarkers)
+            val mSelNow = rememberUpdatedState(markerSel)
+            val multiNow = rememberUpdatedState(multi)
+            var mDrag by remember { mutableIntStateOf(0) }
+            Box(Modifier.horizontalScroll(hScroll, enabled = false)) {
+                Canvas(
+                    Modifier
+                        .width(contentW)
+                        .height(MARKER_H)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        .pointerInput(frameWPx) {
+                            val grab = 14.dp.toPx()
+                            fun hitAt(x: Float): Int? = markersNow.value.minByOrNull { abs(it.frame * frameWPx - x) }
+                                ?.takeIf { abs(it.frame * frameWPx - x) <= grab }?.frame
+                            detectTapGestures { pt ->
+                                val hit = hitAt(pt.x)
+                                when {
+                                    hit == null -> { vm.clearMarkerSelection(); vm.scrubTo((pt.x / frameWPx).roundToInt().coerceIn(0, duration - 1)) }
+                                    multiNow.value -> vm.toggleMarkerSelected(hit)
+                                    else -> { vm.selectMarkers(setOf(hit)); vm.scrubTo(hit) }
+                                }
+                            }
+                        }
+                        .pointerInput(frameWPx, duration) {
+                            val grab = 14.dp.toPx()
+                            var startX = 0f
+                            var acc = 0f
+                            var active = false
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { p ->
+                                    val hit = markersNow.value.minByOrNull { abs(it.frame * frameWPx - p.x) }?.takeIf { abs(it.frame * frameWPx - p.x) <= grab }?.frame
+                                    active = hit != null
+                                    if (hit != null) {
+                                        if (hit !in mSelNow.value) vm.selectMarkers(mSelNow.value + hit)
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    }
+                                    startX = p.x; acc = 0f; mDrag = 0
+                                },
+                                onDragEnd = { if (active && mDrag != 0) vm.moveSelectedMarkers(mDrag); mDrag = 0; active = false },
+                                onDragCancel = { mDrag = 0; active = false }
+                            ) { change, d ->
+                                if (!active) return@detectDragGesturesAfterLongPress
+                                change.consume()
+                                acc += d.x
+                                val sel = mSelNow.value
+                                if (sel.isNotEmpty()) mDrag = (acc / frameWPx).roundToInt().coerceIn(-sel.min(), duration - 1 - sel.max())
+                            }
+                        }
+                ) {
+                    val purple = Color(0xFFAB47BC)
+                    val sorted = symMarkers.sortedBy { it.frame }
+                    // диапазон формы: от маркера до следующего (последний - до конца); чередование оттенков разделяет соседние формы
+                    sorted.forEachIndexed { i, mk ->
+                        val x0 = mk.frame * frameWPx
+                        val x1 = (sorted.getOrNull(i + 1)?.frame ?: duration) * frameWPx
+                        drawRect(purple.copy(alpha = if (i % 2 == 0) 0.16f else 0.08f), Offset(x0, size.height * 0.55f), androidx.compose.ui.geometry.Size((x1 - x0).coerceAtLeast(1f), size.height * 0.4f))
                     }
                     drawPlayhead(frame * frameWPx, playheadColor)
+                    for (mk in sorted) {
+                        val picked = mk.frame in markerSel
+                        val x = (mk.frame + if (picked) mDrag else 0) * frameWPx
+                        val c = if (picked) Color(0xFFFB8C00) else purple
+                        if (picked) drawCircle(c.copy(alpha = 0.35f), size.height * 0.45f, Offset(x, size.height / 2f))
+                        drawMarkerTag(x, c, 5.dp.toPx(), 9.dp.toPx())
+                        drawText(measurer, mk.name, topLeft = Offset(x + 4.dp.toPx(), size.height * 0.45f), style = TextStyle(fontSize = 9.sp, color = textColor), maxLines = 1)
+                    }
                 }
             }
         }
@@ -533,6 +636,12 @@ fun TimelinePanel(
             val rowsNow = rememberUpdatedState(shownRows)
             val animNow = rememberUpdatedState(animation)
             val keySelNow = rememberUpdatedState(keySel)
+            val timeKeysNow = rememberUpdatedState(timeKeyMap)
+            // ключи слоя + ключи времени экземпляра символа: оба вида выделяются, тянутся и копируются одинаково
+            fun rowKeyFrames(id: Int): Collection<Int> {
+                val tk = timeKeysNow.value[id] ?: return TrackGroups.frames(id, animNow.value.tracks)
+                return TrackGroups.frames(id, animNow.value.tracks).toHashSet().apply { tk.forEach { add(it.frame) } }
+            }
             Box(Modifier.horizontalScroll(hScroll)) {
                 Column(
                     Modifier.then(
@@ -544,7 +653,7 @@ fun TimelinePanel(
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                 val row = rowsNow.value.getOrNull((down.position.y / rowH).toInt())?.takeIf { !it.isGroup }
-                                val frameHit = row?.let { TrackGroups.frames(it.layer.id, animNow.value.tracks)
+                                val frameHit = row?.let { rowKeyFrames(it.layer.id)
                                     .minByOrNull { f -> abs(f * frameWPx - down.position.x) }
                                     ?.takeIf { f -> abs(f * frameWPx - down.position.x) <= grab } }
                                 if (row == null || frameHit == null) return@awaitEachGesture
@@ -595,7 +704,7 @@ fun TimelinePanel(
                                 rowsNow.value.forEachIndexed { i, row ->
                                     val cy = (i + 0.5f) * rowH
                                     if (row.isGroup || cy < r.top || cy > r.bottom) return@forEachIndexed
-                                    TrackGroups.frames(row.layer.id, animNow.value.tracks).forEach { f ->
+                                    rowKeyFrames(row.layer.id).forEach { f ->
                                         val kx = f * frameWPx
                                         if (kx >= r.left && kx <= r.right) out += row.layer.id to f
                                     }
@@ -606,7 +715,7 @@ fun TimelinePanel(
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                 val rowIdx = (down.position.y / rowH).toInt()
                                 val hit = rowsNow.value.getOrNull(rowIdx)?.takeIf { !it.isGroup }?.let { row ->
-                                    TrackGroups.frames(row.layer.id, animNow.value.tracks)
+                                    rowKeyFrames(row.layer.id)
                                         .minByOrNull { abs(it * frameWPx - down.position.x) }
                                         ?.takeIf { abs(it * frameWPx - down.position.x) <= grab }
                                         ?.let { row.layer.id to it }
@@ -720,12 +829,44 @@ fun TimelinePanel(
                                 if (k.easing == EasingType.LINEAR) drawDiamond(x, size.height / 2f, size.height * 0.28f, kc)
                                 else drawCircle(kc, size.height * 0.26f, Offset(x, size.height / 2f))
                             }
-                            drawPlayhead(frame * frameWPx, playheadColor)
-                            // ключи времени символа: рисуются поверх плейхеда и сдвинуты вправо от своего кадра, чтобы на 0-м кадре не прятаться под ним
-                            timeKeyMap[l.id]?.forEach { tf ->
-                                val tx = tf * frameWPx + 3.dp.toPx()
-                                drawRoundRect(Color(0xFFAB47BC), Offset(tx, size.height * 0.15f), androidx.compose.ui.geometry.Size(4.dp.toPx(), size.height * 0.7f), androidx.compose.ui.geometry.CornerRadius(2f, 2f))
+                            // ключи времени символа: ровно на своём кадре (по центру, как ромбы ключей и плейхед).
+                            // Раньше засечка рисовалась со сдвигом +3dp вправо и выглядела «сбоку» от красной линии.
+                            timeKeyMap[l.id]?.let { tks ->
+                                val purple = Color(0xFFAB47BC)
+                                // отрезки одинаковой формы: сплошная полупрозрачная полоса + подпись; переход - клин к следующей форме
+                                val names = instMarkers[l.id].orEmpty()
+                                for (run in com.vibetoon.domain.project.SymbolMath.formRuns(tks, duration)) {
+                                    val x0 = run.start * frameWPx
+                                    val x1 = run.end * frameWPx
+                                    val top = size.height * 0.62f
+                                    val h = size.height * 0.26f
+                                    if (run.hold) {
+                                        drawRoundRect(purple.copy(alpha = 0.22f), Offset(x0, top), androidx.compose.ui.geometry.Size((x1 - x0).coerceAtLeast(2f), h), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
+                                        drawLine(purple.copy(alpha = 0.7f), Offset(x0, top + h / 2f), Offset(x1, top + h / 2f), strokeWidth = 1.5f)
+                                    } else {
+                                        val wedge = Path().apply { moveTo(x0, top + h); lineTo(x1, top); lineTo(x1, top + h); close() }
+                                        drawPath(wedge, purple.copy(alpha = 0.3f))
+                                    }
+                                    val label = names.firstOrNull { it.frame == run.value }?.name ?: "${run.value + 1}"
+                                    if (x1 - x0 > 28.dp.toPx()) drawText(measurer, label, topLeft = Offset(x0 + 6.dp.toPx(), top - 1.dp.toPx()),
+                                        style = TextStyle(fontSize = 8.sp, color = textColor.copy(alpha = 0.8f)), maxLines = 1)
+                                }
+                                for (tk in tks) {
+                                    val picked = (l.id to tk.frame) in keySel
+                                    val x = (tk.frame + if (picked) keyDragDelta else 0) * frameWPx
+                                    val c = if (picked) Color(0xFFFB8C00) else purple
+                                    if (picked) drawCircle(c.copy(alpha = 0.45f), size.height * 0.42f, Offset(x, size.height / 2f))
+                                    val w = 6.dp.toPx()
+                                    // песочные часы = ключ времени; Hold - сплошные, плавный переход - контур
+                                    val glass = Path().apply {
+                                        moveTo(x - w / 2f, size.height * 0.14f); lineTo(x + w / 2f, size.height * 0.14f); lineTo(x, size.height * 0.5f)
+                                        lineTo(x + w / 2f, size.height * 0.86f); lineTo(x - w / 2f, size.height * 0.86f); lineTo(x, size.height * 0.5f); close()
+                                    }
+                                    if (tk.ease == com.vibetoon.domain.project.TimeEase.HOLD) drawPath(glass, c)
+                                    else drawPath(glass, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+                                }
                             }
+                            drawPlayhead(frame * frameWPx, playheadColor)
                         }
                     }
                     // Полосы аудио: клип звука (по умолчанию длина файла), края и середина тянутся как у слоёв
@@ -906,6 +1047,13 @@ private fun TimelineSettingsDialog(duration: Int, fps: Int, onApply: (Int, Int) 
         confirmButton = { TextButton(onClick = { if (d != null && f != null) { onApply(d, f); onDismiss() } }, enabled = d != null && f != null) { Text("Применить") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
     )
+}
+
+/** Метка маркера: треугольник остриём вниз, центр ровно на кадре [x], и тонкая линия кадра поверх плейхеда. */
+private fun DrawScope.drawMarkerTag(x: Float, color: Color, halfW: Float, h: Float) {
+    drawLine(color, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.5f)
+    val tag = Path().apply { moveTo(x - halfW, 0f); lineTo(x + halfW, 0f); lineTo(x, h); close() }
+    drawPath(tag, color)
 }
 
 private fun DrawScope.drawPlayhead(x: Float, color: Color) {

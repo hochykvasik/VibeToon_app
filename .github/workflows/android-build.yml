@@ -26,6 +26,8 @@ jobs:
         run: |
           g++ -std=c++17 -pthread -I app/src/main/cpp app/src/test/cpp/UploadQueueTest.cpp app/src/main/cpp/render/UploadQueue.cpp -o /tmp/vibetoon-upload-queue-test
           /tmp/vibetoon-upload-queue-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/LayerBoundsTest.cpp -o /tmp/vibetoon-layer-bounds-test
+          /tmp/vibetoon-layer-bounds-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
       - name: Run unit tests

@@ -87,4 +87,6 @@ object RenderNative {
     external fun readPixel(renderer: Long, x: Int, y: Int): Int
     /** true = нужен ещё кадр (позже: идёт загрузка текстур). */
     external fun drawFrame(renderer: Long): Boolean
+    /** Метрики последнего кадра: [нарисовано слоёв, отсечено, эффектов в рамке слоя, проходов эффектов]. */
+    external fun frameStats(renderer: Long): IntArray?
 }

@@ -10,6 +10,7 @@
 #include "render/GlUtil.h"
 #include "render/GlState.h"
 #include "render/CanvasClipPolicy.h"
+#include "render/LayerBounds.h"
 #include "render/EffectRenderPolicy.h"
 #include "render/MeshPosition.h"
 #include "render/UploadQueue.h"
@@ -64,10 +65,12 @@ void main() { outColor = uColor; }
 )";
 
 // Обычное наложение: premultiplied текстура * прозрачность (фиксированный blend функцией GL).
+// highp: mediump UV (fp16) на текстурах >2048 px теряет до 1-2 текселей точности - «мыло» и дрожание.
 const char* kFragTex = R"(#version 300 es
-precision mediump float;
+precision highp float;
 uniform sampler2D uTex;
 uniform float uOpacity;
+uniform float uLodBias;               // экспорт: -0.5 (менее размытый mip при уменьшении), редактор: 0
 uniform vec4 uTurb;                   // intensity (доля слоя), size (ячеек на слой), complexity (октавы), seed; intensity = 0 - выкл
 in vec2 vUv;
 out vec4 outColor;
@@ -89,7 +92,7 @@ void main() {
         int oct = int(uTurb.z);
         uv += (vec2(fbm(p, oct), fbm(p + 31.4, oct)) - 0.5) * 2.0 * uTurb.x;
     }
-    outColor = texture(uTex, uv) * uOpacity;
+    outColor = texture(uTex, uv, uLodBias) * uOpacity;
 }
 )";
 
@@ -104,6 +107,7 @@ uniform float uOpacity;
 uniform int uMode;                    // 1 = multiply, 2 = screen, 3 = overlay, 5 = soft light, 6 = add, 7 = darken, 8 = lighten, 9 = color dodge, 10 = color burn
 uniform int uClip;                    // 1 = обтравка: src *= alpha подложки, альфа подложки не меняется
 uniform vec4 uTurb;
+uniform float uLodBias;
 in vec2 vUv;
 out vec4 outColor;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -151,7 +155,7 @@ void main() {
         int oct = int(uTurb.z);
         uv += (vec2(fbm(p, oct), fbm(p + 31.4, oct)) - 0.5) * 2.0 * uTurb.x;
     }
-    vec4 s = texture(uTex, uv) * uOpacity;
+    vec4 s = texture(uTex, uv, uLodBias) * uOpacity;
     vec4 d = texelFetch(uBackdrop, ivec2(gl_FragCoord.xy), 0);
     float ab = d.a;
     if (uClip != 0) s *= ab;   // обтравка: src *= clipAlpha до смешивания, нижний слой (Dst) не обнуляется
@@ -363,6 +367,8 @@ int Renderer::initGL() {
     uSolidColor_ = glGetUniformLocation(progSolid_, "uColor");
     uTexMvp_ = glGetUniformLocation(progTex_, "uMvp");
     uTexOpacity_ = glGetUniformLocation(progTex_, "uOpacity");
+    uTexLod_ = glGetUniformLocation(progTex_, "uLodBias");
+    uBlLod_ = glGetUniformLocation(progBlend_, "uLodBias");
     uTexSampler_ = glGetUniformLocation(progTex_, "uTex");
     uTexWarp_ = glGetUniformLocation(progTex_, "uWarp");
     uTexOff_ = glGetUniformLocation(progTex_, "uOff");
@@ -1130,6 +1136,7 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
         glUniform1i(uTexSampler_, 0);
         glUniformMatrix3fv(uTexMvp_, 1, GL_FALSE, mvp);
         glUniform1f(uTexOpacity_, opacity);
+        glUniform1f(uTexLod_, exportLodBias(exportMode_));
         glUniform1i(uTexMesh_, curMesh_ ? 1 : 0);
         glUniform1i(uTexPersp_, curPersp_ ? 1 : 0);
         if (curTurb_) glUniform4fv(uTexTurb_, 1, curTurb_); else glUniform4f(uTexTurb_, 0.f, 0.f, 0.f, 0.f);
@@ -1152,6 +1159,7 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
     glUniform1i(uBlClip_, clipMode ? 1 : 0);
     glUniformMatrix3fv(uBlMvp_, 1, GL_FALSE, mvp);
     glUniform1f(uBlOpacity_, opacity);
+    glUniform1f(uBlLod_, exportLodBias(exportMode_));
     glUniform1i(uBlMesh_, curMesh_ ? 1 : 0);
     glUniform1i(uBlPersp_, curPersp_ ? 1 : 0);
     if (curTurb_) glUniform4fv(uBlTurb_, 1, curTurb_); else glUniform4f(uBlTurb_, 0.f, 0.f, 0.f, 0.f);
@@ -1194,23 +1202,89 @@ void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode
         drawLayerPlain(it, opacity, blend, clipMode);
         return;
     }
+    // Эффекты считаются только в экранной рамке слоя + охват цепочки (scissor), а не на весь экран:
+    // групповой эффект на 60 слоях раньше давал 60 x (очистка + проходы + наложение) полноэкранных FBO.
+    float va[6];
+    viewAffine(va);
+    const float sc = std::sqrt(va[0] * va[0] + va[1] * va[1]);
+    std::vector<const float*> chain;
+    chain.reserve(fx->second.size());
+    for (const auto& e : fx->second) chain.push_back(e.data());
+    const float reach = chainReach(chain.data(), static_cast<int>(chain.size()));
+    const bool deformed = meshes_.count(it.layerId) || warps_.count(it.layerId) || persps_.count(it.layerId) || turbs_.count(it.layerId);
+    const float W = static_cast<float>(width_), H = static_cast<float>(height_);
+    ScreenRect work{0.f, 0.f, W, H}, clearArea = work;
+    if (reach >= 0.f && !deformed) {
+        const float pad = reach * sc + 2.f;
+        const ScreenRect body = layerScreenRect(va, it.m);
+        if (body.empty() || outsideTarget(expand(body, pad), W, H)) { ++stats_.culled; return; }
+        work = intersect(expand(body, pad), W, H);
+        clearArea = intersect(expand(body, pad * 2.f + 2.f), W, H);   // чтения за рамкой видят нули, а не мусор пула
+    }
+    int box[4] = {0, 0, width_, height_}, cbox[4] = {0, 0, width_, height_};
+    const bool limited = !(work.x0 <= 0.f && work.y0 <= 0.f && work.x1 >= W && work.y1 >= H);
+    if (limited) {
+        ++stats_.scissoredFx;
+        scissorBox(clearArea, height_, cbox);
+        scissorBox(work, height_, box);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(cbox[0], cbox[1], cbox[2], cbox[3]);
+    } else if (canvasScissorOn_) {
+        glDisable(GL_SCISSOR_TEST);   // внутренние проходы - на всю цель, обрезка кадром только при наложении
+    }
     const GLuint parent = curFbo_;
     Fbo a = acquireFbo();
+    if (limited) glScissor(box[0], box[1], box[2], box[3]);
     drawLayerPlain(it, 1.f, kNormal, false);
     for (const auto& e : fx->second) {
+        if (limited) glScissor(cbox[0], cbox[1], cbox[2], cbox[3]);   // очистка с запасом
         Fbo b = acquireFbo();
+        if (limited) glScissor(box[0], box[1], box[2], box[3]);       // проход - только рамка
         runEffect(a.tex, e.data());
         releaseFbo(a);
         a = b;
+        ++stats_.fxPasses;
     }
     bindTarget(parent);
+    // Наложение: рамка слоя, пересечённая с обрезкой кадра (экспорт).
+    if (limited || canvasScissorOn_) {
+        ScreenRect comp = work;
+        if (canvasScissorOn_) {
+            comp.x0 = std::max(comp.x0, canvasScissor_.x0); comp.y0 = std::max(comp.y0, canvasScissor_.y0);
+            comp.x1 = std::min(comp.x1, canvasScissor_.x1); comp.y1 = std::min(comp.y1, canvasScissor_.y1);
+        }
+        int cb[4];
+        if (!scissorBox(comp, height_, cb)) cb[2] = cb[3] = 0;
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(cb[0], cb[1], cb[2], cb[3]);
+    }
     compositeFbo(a, opacity, blend);
     releaseFbo(a);
+    restoreCanvasScissor();
+}
+
+void Renderer::restoreCanvasScissor() {
+    if (canvasScissorOn_) {
+        int cb[4];
+        scissorBox(canvasScissor_, height_, cb);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(cb[0], cb[1], cb[2], cb[3]);
+    } else {
+        glDisable(GL_SCISSOR_TEST);
+    }
 }
 
 void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool clipMode) {
     auto t = textures_.find(it.layerId);
     if (t == textures_.end()) return;  // текстура ещё не загружена
+    // Отсечение: слой без деформаций целиком вне цели не рисуется (зум/панорама на большом холсте).
+    if (!meshes_.count(it.layerId) && !warps_.count(it.layerId) && !persps_.count(it.layerId)) {
+        float va[6];
+        viewAffine(va);
+        const ScreenRect r = layerScreenRect(va, it.m);
+        if (r.empty() || outsideTarget(expand(r, 1.f), static_cast<float>(width_), static_cast<float>(height_))) { ++stats_.culled; return; }
+    }
+    ++stats_.drawn;
     GLfloat mvp[9];
     mvpFor(it.m, mvp);
     const auto m = meshes_.find(it.layerId);
@@ -1272,7 +1346,12 @@ bool Renderer::drawFrame() {
         const int y1 = static_cast<int>(std::ceil(maxY));
         glEnable(GL_SCISSOR_TEST);
         glScissor(x0, height_ - y1, std::max(0, x1 - x0), std::max(0, y1 - y0));  // начало координат снизу
+        canvasScissorOn_ = true;
+        canvasScissor_ = {static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x1), static_cast<float>(y1)};
+    } else {
+        canvasScissorOn_ = false;
     }
+    stats_ = FrameStats{};
 
     // Обход потока операций снизу вверх.
     std::vector<Frame> stack;

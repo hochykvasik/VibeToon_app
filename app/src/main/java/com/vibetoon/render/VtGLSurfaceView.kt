@@ -63,7 +63,14 @@ class VtRenderer(
         RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY, p.camera.rotDeg, p.camera.flipX, p.camera.flipY)
         RenderNative.setSelection(handle, p.selectionQuad)
         RenderNative.setBackground(handle, p.background)
+        val t0 = if (RenderMetrics.enabled) System.nanoTime() else 0L
         val more = RenderNative.drawFrame(handle)
+        if (RenderMetrics.enabled) {
+            RenderMetrics.drawMs = (System.nanoTime() - t0) / 1e6f
+            RenderNative.frameStats(handle)?.let { st ->
+                if (st.size >= 4) { RenderMetrics.drawn = st[0]; RenderMetrics.culled = st[1]; RenderMetrics.scissoredFx = st[2]; RenderMetrics.fxPasses = st[3] }
+            }
+        }
         sampleReq?.let { (x, y, cb) -> sampleReq = null; cb(RenderNative.readPixel(handle, x, y)) }
         val checks = afterFrameChecks.toList(); afterFrameChecks.clear()
         checks.forEach { (id, callback) -> callback(layerSize(id)) }

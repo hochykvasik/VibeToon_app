@@ -10,10 +10,21 @@
 #include <unordered_map>
 #include <vector>
 
+#include "render/LayerBounds.h"
+
 namespace vt {
+
+// Счётчики последнего кадра (метрики производительности, читаются через JNI).
+struct FrameStats {
+    int drawn = 0;        // нарисовано слоёв
+    int culled = 0;       // отсечено (вне экрана)
+    int scissoredFx = 0;  // слоёв с эффектами, посчитанных только в своей рамке
+    int fxPasses = 0;     // проходов эффектов
+};
 
 class Renderer {
 public:
+    const FrameStats& lastStats() const { return stats_; }
     // Вызывать из onSurfaceCreated. Возвращает GL_MAX_TEXTURE_SIZE или -1 при ошибке.
     int initGL();
     void setViewport(int width, int height);
@@ -143,6 +154,7 @@ private:
         Fbo fbo;
     };
 
+    void restoreCanvasScissor();
     void uploadPending();                        // не более kUploadBytesPerFrame за кадр
     void viewTransform(float& scale, float& ox, float& oy) const;  // холст -> экран с камерой
     void viewAffine(float a[6]) const;  // холст -> экран: аффинная матрица (поворот/отражение вида)
@@ -231,10 +243,13 @@ private:
     const MeshGeom* curMesh_ = nullptr;  // сетка слоя, который рисуется сейчас
     GLuint meshVao_ = 0, meshVbo_ = 0, meshIbo_ = 0;
     GLint uSolidMvp_ = -1, uSolidColor_ = -1;
-    GLint uTexMvp_ = -1, uTexOpacity_ = -1, uTexSampler_ = -1;
+    GLint uTexMvp_ = -1, uTexOpacity_ = -1, uTexSampler_ = -1, uTexLod_ = -1, uBlLod_ = -1;
     GLint uBlMvp_ = -1, uBlOpacity_ = -1, uBlTex_ = -1, uBlBackdrop_ = -1, uBlMode_ = -1, uBlClip_ = -1;
 
     GLuint curFbo_ = 0;
+    bool canvasScissorOn_ = false;     // экспорт: сцена обрезана кадром (AABB холста на экране)
+    ScreenRect canvasScissor_{};
+    FrameStats stats_{};
     std::vector<Fbo> fboPool_;                   // свободные FBO
     int fboCreated_ = 0;
     GLuint backdropTex_ = 0, backdropFbo_ = 0;

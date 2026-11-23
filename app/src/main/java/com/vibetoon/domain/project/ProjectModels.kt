@@ -100,6 +100,8 @@ data class MediaItem(
     val markers: List<FrameMarker> = emptyList(),
     /** SYMBOL (экземпляр): ключи времени (Time Remapping) - какой внутренний кадр символа показывать, Hold. */
     val timeKeys: List<TimeKey> = emptyList(),
+    /** SYMBOL (экземпляр): без ключей времени крутить внутреннюю анимацию по кругу. false (по умолчанию) - Hold на первом кадре. */
+    val symLoop: Boolean = false,
     /** IMAGE: векторный слой - контур/примитивы [vectors] перерисовываются в картинку слоя при каждой правке. */
     val vector: Boolean = false,
     val vectors: List<com.vibetoon.domain.vector.VectorShape> = emptyList(),

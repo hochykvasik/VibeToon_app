@@ -1425,25 +1425,50 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
     }
 }
 
-/** Библиотека ассетов: картинки из папки assets проекта; тап вставляет как новый слой. */
+/** Библиотека ассетов: картинки слоёв проекта и файлы удалённых слоёв (миниатюры); тап вставляет как новый слой. Кэш скрыт. */
 @Composable
 private fun AssetLibraryDialog(vm: MainViewModel, onDismiss: () -> Unit) {
     val assets = remember { vm.assetLibrary() }
+    val hidden = remember { vm.assetServiceCount() }
+    var showUnused by remember { mutableStateOf(false) }
+    val inProject = assets.filter { it.kind == com.vibetoon.domain.project.AssetCatalog.Kind.IN_PROJECT }
+    val unused = assets.filter { it.kind == com.vibetoon.domain.project.AssetCatalog.Kind.UNUSED }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Библиотека ассетов") },
         text = {
-            if (assets.isEmpty()) Text("Пока пусто: импортированные картинки появятся здесь")
-            else androidx.compose.foundation.lazy.LazyColumn {
-                items(assets.size) { i ->
-                    val (name, rel) = assets[i]
-                    androidx.compose.material3.TextButton(
-                        onClick = { vm.insertAsset(rel); onDismiss() },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(name, modifier = Modifier.fillMaxWidth()) }
+            androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (assets.isEmpty()) item { Text("Пока пусто: импортированные картинки и рисунки слоёв появятся здесь") }
+                if (inProject.isNotEmpty()) item { Text("В проекте", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
+                items(inProject.chunked(3).size) { i -> val row = inProject.chunked(3)[i]; AssetRow(vm, row) { vm.insertAsset(it); onDismiss() } }
+                if (unused.isNotEmpty()) item {
+                    androidx.compose.material3.TextButton(onClick = { showUnused = !showUnused }) {
+                        Text(if (showUnused) "Скрыть файлы удалённых слоёв (${unused.size})" else "Файлы удалённых слоёв (${unused.size})", fontSize = 12.sp)
+                    }
                 }
+                if (showUnused) items(unused.chunked(3).size) { i -> val row = unused.chunked(3)[i]; AssetRow(vm, row) { vm.insertAsset(it); onDismiss() } }
+                if (hidden > 0) item { Text("Скрыто служебных файлов (кэш миниатюр, Liquify, кадры анимации): $hidden", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         },
         confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Закрыть") } }
     )
+}
+
+@Composable
+private fun AssetRow(vm: MainViewModel, row: List<com.vibetoon.domain.project.AssetCatalog.Entry>, onPick: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (e in row) {
+            val thumb by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, e.rel) { value = vm.assetThumb(e.rel) }
+            Column(
+                Modifier.width(84.dp).clip(RoundedCornerShape(8.dp)).clickable { onPick(e.rel) }.padding(2.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(Modifier.size(76.dp).background(androidx.compose.ui.graphics.Color(0xFFEFEFEF), RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
+                    val t = thumb
+                    if (t != null) androidx.compose.foundation.Image(t, e.title, Modifier.size(72.dp)) else Text("…", fontSize = 12.sp)
+                }
+                Text(e.title, fontSize = 11.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+        }
+    }
 }
