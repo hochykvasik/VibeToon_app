@@ -20,8 +20,9 @@ class AssetCatalogTest {
         assertEquals(Kind.SERVICE, k("liq_100002.png"))
         assertEquals(Kind.SERVICE, k("m100005_c0.png"))
         assertEquals(Kind.SERVICE, k("m100007_c3.png"))            // кадр покадрового слоя
-        assertEquals(Kind.SERVICE, k("source.psd"))
-        assertEquals(Kind.SERVICE, k("m100003_x.mp4"))
+        assertEquals(Kind.IN_PROJECT, k("source.psd"))             // пакет 11: папка PSD
+        assertEquals(Kind.UNUSED, k("m100003_x.mp4"))              // пакет 11: видео удалённого слоя в папке «Видео»
+        assertEquals(Kind.SERVICE, k("m100003_x.mp4.wave"))        // кэш волны
         assertEquals(Kind.UNUSED, k("m100009_old.png"))            // файл удалённого слоя
     }
 

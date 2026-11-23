@@ -259,7 +259,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun refreshWaveforms() {
         val pid = projectId
-        _waveforms.value = if (pid == null) emptyMap() else media.filter { !it.isVisual }.mapNotNull { m -> audioEngine.peaksFor(projects.fileOf(pid, m.file))?.let { m.id to it } }.toMap()
+        _waveforms.value = if (pid == null) emptyMap() else media.filter { it.hasSoundTrack }.mapNotNull { m -> audioEngine.peaksFor(projects.fileOf(pid, m.file))?.let { m.id to it } }.toMap()
+    }
+
+    /** Пакет 11: громкость и «без звука» передаются звуковому движку для аудио и звука видео. */
+    private fun pushAudioMix() {
+        audioEngine.volumes = media.filter { it.hasSoundTrack && it.volKeys.isNotEmpty() }.associate { it.id to it.volKeys }
+        audioEngine.muted = media.filter { it.hasSoundTrack && it.muted }.mapTo(HashSet()) { it.id }
     }
 
     /** Клипы слоёв на таймлайне: границы видимости и ретайминг. Нет записи - слой виден весь проект. */
@@ -617,6 +623,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         setProps(emptyMap())
         pinSel = -1
         videoFrames.release()
+        videoThumbs.clear()
         _perspTool.value = false
         _perspOverlay.value = FloatArray(0)
         _meshOverlay.value = MeshOverlay()
@@ -865,10 +872,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             AudioTrackInfo(it.id, it.name, ProjectMath.framesFor(it.durationMs, fps))
         }
         val pid = projectId
+        // пакет 11: звуковая дорожка видео тоже звучит (воспроизведение, линейка, WAV) и рисует волну на полосе клипа
         audioEngine.setSources(
-            if (pid == null) emptyMap() else media.filter { !it.isVisual }.associate { it.id to projects.fileOf(pid, it.file) }
+            if (pid == null) emptyMap() else media.filter { it.hasSoundTrack }.associate { it.id to projects.fileOf(pid, it.file) }
         )
-        audioEngine.volumes = media.filter { !it.isVisual && it.volKeys.isNotEmpty() }.associate { it.id to it.volKeys }
+        pushAudioMix()
         audioEngine.onDecoded = { viewModelScope.launch { refreshWaveforms() } }
         refreshWaveforms()
     }
@@ -903,6 +911,81 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             catch (t: Throwable) {
                 Log.e("VT/Media", "import as symbol failed", t)
                 if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось импортировать")
+            }
+        }
+    }
+
+    /**
+     * Пакет 11: секвенция картинок (несколько файлов) - один покадровый слой, рисунок на кадр, порядок по именам
+     * (frame2 раньше frame10). [asSymbol] - слой кладётся в новый символ, экземпляр крутится по кругу.
+     */
+    fun importImageSequence(uris: List<Uri>, asSymbol: Boolean) {
+        val pid = projectId ?: return
+        if (uris.isEmpty()) return
+        if (uris.size == 1) { if (asSymbol) importMediaAsSymbol(uris[0]) else importMedia(MediaKind.IMAGE, uris[0]); return }
+        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        val id = nextMediaId()
+        _state.value = UiState.Loading
+        importJob = viewModelScope.launch {
+            val copied = ArrayList<java.io.File>()
+            var inserted = false
+            try {
+                val names = withContext(Dispatchers.IO) { uris.map { importer.displayName(it) } }
+                val order = com.vibetoon.domain.project.SequenceImport.order(names)
+                val picked = order.take(com.vibetoon.domain.project.SequenceImport.MAX_FRAMES)
+                val (first, cells) = withContext(decodeDispatcher) {
+                    val item = importMediaBlocking(pid, id, MediaKind.IMAGE, uris[picked[0]])
+                    copied += projects.fileOf(pid, item.file)
+                    val files = arrayListOf(item.file)
+                    for (k in 1 until picked.size) {
+                        val name = "m${id}_c$k.png"   // кадры покадрового слоя: служебные файлы, в библиотеке не видны
+                        val dest = projects.mediaFile(pid, name)
+                        importer.copy(uris[picked[k]], dest)
+                        copied += dest
+                        files += "assets/$name"
+                    }
+                    item to com.vibetoon.domain.project.SequenceImport.cells(files)
+                }
+                if (projectId != pid || closing) { copied.forEach { it.delete() }; return@launch }
+                checkpoint("add", force = true)
+                val title = com.vibetoon.domain.project.SequenceImport.title(names[picked[0]])
+                val layer = first.copy(name = title, cells = cells)
+                val frames = cells.size
+                val cut = order.size > picked.size
+                if (asSymbol) {
+                    val gid = nextMediaId()
+                    val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
+                    media += MediaItem(gid, MediaKind.GROUP, "Символ $n", "", symDur = frames)
+                    regroup = regroup + (layer.id to gid)
+                    media += layer
+                    val iid = nextMediaId()
+                    media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
+                    inserted = true
+                    rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
+                    _state.value = UiState.Message(if (cut) "Секвенция обрезана до $frames кадров (больше за раз не импортируется)" else "Секвенция ($frames кадров) импортирована как символ «Символ $n»")
+                } else {
+                    val st = _animation.value.settings
+                    val extend = frames > st.durationFrames
+                    if (extend) {
+                        val d = frames.coerceAtMost(TimeFormat.MAX_DURATION_FRAMES)
+                        meta = meta?.copy(durationFrames = d)
+                        _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, d))
+                    }
+                    media += layer
+                    inserted = true
+                    rebuildLayers(); pushScene(); selectLayer(layer.id); markDirty()
+                    updateCells(_frame.value)
+                    _state.value = UiState.Message(when {
+                        cut -> "Секвенция обрезана до $frames кадров (больше за раз не импортируется)"
+                        extend -> "Секвенция импортирована: $frames кадров. Проект продлён до конца секвенции"
+                        else -> "Секвенция импортирована: $frames кадров"
+                    })
+                }
+            } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+            catch (t: Throwable) {
+                if (!inserted) withContext(Dispatchers.IO) { copied.forEach { it.delete() } }
+                Log.e("VT/Media", "sequence import failed", t)
+                if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось импортировать секвенцию")
             }
         }
     }
@@ -1028,6 +1111,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val used = HashMap<String, String>()
         val cells = HashSet<String>()
         for (m in media) {
+            if ((m.kind == MediaKind.VIDEO || m.kind == MediaKind.AUDIO) && m.file.isNotEmpty()) { used[m.file.substringAfterLast('/')] = m.name; continue }   // пакет 11
             if (m.kind != MediaKind.IMAGE || m.file.isEmpty()) continue
             if (m.cells.isNotEmpty()) { m.cells.forEach { cells += it.file.substringAfterLast('/') }; continue }
             used[m.file.substringAfterLast('/')] = m.name
@@ -1041,6 +1125,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return withContext(Dispatchers.IO) {
             runCatching {
                 val f = projects.fileOf(pid, rel)
+                when (com.vibetoon.domain.project.AssetCatalog.typeOf(rel)) {
+                    com.vibetoon.domain.project.AssetCatalog.Type.AUDIO, com.vibetoon.domain.project.AssetCatalog.Type.PSD -> return@runCatching null
+                    com.vibetoon.domain.project.AssetCatalog.Type.VIDEO -> {
+                        // пакет 11: первый кадр видео (уменьшенный)
+                        val r = android.media.MediaMetadataRetriever()
+                        try {
+                            r.setDataSource(f.absolutePath)
+                            val b = r.getFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return@runCatching null
+                            val k = 160f / maxOf(b.width, b.height).coerceAtLeast(1)
+                            val sb = if (k < 1f) android.graphics.Bitmap.createScaledBitmap(b, maxOf(1, (b.width * k).toInt()), maxOf(1, (b.height * k).toInt()), true).also { if (it !== b) b.recycle() } else b
+                            return@runCatching sb.asImageBitmap()
+                        } finally { runCatching { r.release() } }
+                    }
+                    else -> Unit
+                }
                 val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 android.graphics.BitmapFactory.decodeFile(f.absolutePath, o)
                 var sample = 1
@@ -1050,9 +1149,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Вставка ассета из библиотеки как новый слой-картинку. */
+    /** Вставка ассета из библиотеки как новый слой-картинку; видео и аудио (пакет 11) - новым видео-слоем / дорожкой. */
     fun insertAsset(relPath: String) {
         val pid = projectId ?: return
+        when (com.vibetoon.domain.project.AssetCatalog.typeOf(relPath)) {
+            com.vibetoon.domain.project.AssetCatalog.Type.VIDEO, com.vibetoon.domain.project.AssetCatalog.Type.AUDIO -> { insertMediaAsset(pid, relPath); return }
+            com.vibetoon.domain.project.AssetCatalog.Type.PSD -> { _state.value = UiState.Message("PSD проекта уже разложен на слои; вставка другого PSD из библиотеки - в разработке"); return }
+            else -> Unit
+        }
         val id = nextMediaId()
         val ticket = RenderNative.textureUploadTicket(id)
         viewModelScope.launch {
@@ -1072,6 +1176,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = UiState.Message("Вставлено из библиотеки: ${item.name}")
             } catch (t: Throwable) {
                 Log.e("VT/Media", "insert asset failed", t)
+                if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось вставить ассет")
+            }
+        }
+    }
+
+    /** Видео или аудио из библиотеки: тот же файл проекта (без копии), новый слой или дорожка. */
+    private fun insertMediaAsset(pid: String, relPath: String) {
+        if (importJob?.isActive == true) return
+        val id = nextMediaId()
+        val video = com.vibetoon.domain.project.AssetCatalog.typeOf(relPath) == com.vibetoon.domain.project.AssetCatalog.Type.VIDEO
+        val ticket = RenderNative.textureUploadTicket(id)
+        val title = media.firstOrNull { it.file == relPath }?.name ?: relPath.substringAfterLast('/')
+        importJob = viewModelScope.launch {
+            try {
+                val item = withContext(decodeDispatcher) {
+                    val f = projects.fileOf(pid, relPath)
+                    check(f.exists()) { "Файл ассета не найден" }
+                    if (!video) MediaItem(id, MediaKind.AUDIO, title, relPath, durationMs = importer.audioDurationMs(f))
+                    else {
+                        val d = importer.decodeVideoFrame(f)
+                        val r = ProjectMath.fitInside(d.srcWidth, d.srcHeight, canvasW, canvasH)
+                        val ok = RenderNative.uploadBitmapIfCurrent(id, d.bitmap, ticket)
+                        d.bitmap.recycle()
+                        if (!ok) error("Не удалось передать изображение в графику")
+                        MediaItem(id, MediaKind.VIDEO, title, relPath, d.srcWidth, d.srcHeight, r[0], r[1], r[2], r[3], d.durationMs)
+                    }
+                }
+                if (projectId != pid || closing) return@launch
+                checkpoint("add", force = true)
+                media += item
+                rebuildLayers(); pushScene(); if (item.isVisual) selectLayer(item.id); markDirty()
+                _state.value = UiState.Message("Вставлено из библиотеки: ${item.name}")
+            } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+            catch (t: Throwable) {
+                Log.e("VT/Media", "insert media asset failed", t)
                 if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось вставить ассет")
             }
         }
@@ -1457,6 +1596,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         RenderHost.view?.setCamera(camera)
         refreshBoneOverlay()
         refreshRasterOverlays()
+    }
+
+    /** Пакет 11: состояние отражения вида (переключатели Flip Canvas в настройках). */
+    fun cameraFlipped(): Pair<Boolean, Boolean> = camera.flipX to camera.flipY
+    fun setCameraFlip(horizontal: Boolean, on: Boolean) {
+        if (horizontal) { if (camera.flipX != on) flipCameraX() } else if (camera.flipY != on) flipCameraY()
     }
 
     fun flipCameraY() {
@@ -2686,6 +2831,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun symbolName(id: Int): String = media.firstOrNull { it.id == id }?.name ?: ""
     fun isAudioTrack(id: Int): Boolean = media.any { it.id == id && it.kind == MediaKind.AUDIO }
 
+    /** Пакет 11: у слоя есть звук (аудио или видео) - вкладка «Громкость» и «Без звука». */
+    fun hasSound(id: Int): Boolean = media.any { it.id == id && it.hasSoundTrack }
+    fun isMuted(id: Int): Boolean = media.any { it.id == id && it.muted }
+    /** У видео не нашлось звуковой дорожки (после попытки декодирования). */
+    fun videoWithoutSound(id: Int): Boolean {
+        val pid = projectId ?: return false
+        val m = media.firstOrNull { it.id == id && it.kind == MediaKind.VIDEO } ?: return false
+        return audioEngine.hasNoAudio(projects.fileOf(pid, m.file))
+    }
+
+    /** «Без звука» для аудио или видео: одной записью Undo, сохраняется в проекте. */
+    fun setMuted(id: Int, on: Boolean) {
+        val i = media.indexOfFirst { it.id == id && it.hasSoundTrack }
+        if (i < 0 || media[i].muted == on) return
+        checkpoint("mute$id", force = true)
+        media[i] = media[i].copy(muted = on)
+        pushAudioMix()
+        if (_playing.value) { pause() }
+        markDirty()
+        _state.value = UiState.Message(if (on) "Звук слоя выключен" else "Звук слоя включён")
+    }
+
     /** Громкость аудио-слоя на текущем кадре (0..1). */
     fun volumeAt(id: Int): Float = com.vibetoon.domain.project.VolumeMath.at(media.firstOrNull { it.id == id }?.volKeys.orEmpty(), _frame.value.toDouble())
     fun volumeKeyCount(id: Int): Int = media.firstOrNull { it.id == id }?.volKeys?.size ?: 0
@@ -2693,20 +2860,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Ставит ключ громкости на текущий кадр (0..1); между ключами громкость меняется линейно. */
     fun setVolumeKey(id: Int, value: Float) {
-        val i = media.indexOfFirst { it.id == id && it.kind == MediaKind.AUDIO }
+        val i = media.indexOfFirst { it.id == id && it.hasSoundTrack }
         if (i < 0 || !value.isFinite()) return
         checkpoint("vol$id")
         media[i] = media[i].copy(volKeys = com.vibetoon.domain.project.VolumeMath.withKey(media[i].volKeys, com.vibetoon.domain.project.VolKey(_frame.value, value.coerceIn(0f, 1f))))
-        audioEngine.volumes = media.filter { !it.isVisual && it.volKeys.isNotEmpty() }.associate { it.id to it.volKeys }
+        pushAudioMix()
         markDirty()
     }
 
     fun removeVolumeKey(id: Int) {
-        val i = media.indexOfFirst { it.id == id && it.kind == MediaKind.AUDIO }
+        val i = media.indexOfFirst { it.id == id && it.hasSoundTrack }
         if (i < 0) return
         checkpoint("vol$id", force = true)
         media[i] = media[i].copy(volKeys = com.vibetoon.domain.project.VolumeMath.withoutKey(media[i].volKeys, _frame.value))
-        audioEngine.volumes = media.filter { !it.isVisual && it.volKeys.isNotEmpty() }.associate { it.id to it.volKeys }
+        pushAudioMix()
         markDirty()
     }
 
@@ -9298,6 +9465,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _keySel.value = sel
     }
 
+    // ---------------------------------------------------------------- список ключей (пакет 11)
+
+    private fun isBoneId(id: Int) = _bones.value.any { it.id == id }
+
+    /** Ключи слоя или кости [id] по кадрам (для окна «Список ключей»). */
+    fun keyListOf(id: Int): List<com.vibetoon.domain.anim.KeyList.Row> =
+        com.vibetoon.domain.anim.KeyList.rows(id, _animation.value.tracks, isBoneId(id))
+
+    /** Интерполяция одного ключа (все дорожки узла на этом кадре), одной записью Undo. */
+    fun setKeyEasingAt(id: Int, frame: Int, type: EasingType) {
+        if (_playing.value) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        checkpoint("keylist", force = true)
+        _animation.value = com.vibetoon.domain.anim.KeyList.withEasing(_animation.value, id, frame, type, isBoneId(id))
+        pushScene(); refreshInspector(); markDirty()
+    }
+
+    /** Одна интерполяция всем ключам узла. */
+    fun setAllKeysEasing(id: Int, type: EasingType) {
+        if (_playing.value) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        checkpoint("keylist", force = true)
+        _animation.value = com.vibetoon.domain.anim.KeyList.withEasingAll(_animation.value, id, type, isBoneId(id))
+        pushScene(); refreshInspector(); markDirty()
+        _state.value = UiState.Message("Интерполяция всем ключам: ${keyListOf(id).size}")
+    }
+
+    /** Перейти к ключу: плейхед на кадр, ключ выделяется на таймлайне. */
+    fun goToKey(id: Int, frame: Int) {
+        pause()
+        val r = activeRange()
+        if (r != null && frame !in r.start until r.end) showAllScenes()   // ключ вне открытой сцены - весь таймлайн
+        setFrame(frame)
+        _keySel.value = setOf(id to frame)
+    }
+
+    /** Удалить ключ узла на кадре (все дорожки, как ромб на таймлайне). */
+    fun deleteKeyAt(id: Int, frame: Int) {
+        if (_playing.value) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        checkpoint("keydelete", force = true)
+        removeKeys(setOf(id to frame))
+        _keySel.value = _keySel.value - (id to frame)
+        override.clear(); pushScene(); refreshInspector(); markDirty()
+    }
+
     // ---------------------------------------------------------------- иерархия трансформаций (пакет 10)
 
     /** Привязать узел [child] к [parent] (null - отвязать) из окна «Иерархия трансформаций». */
@@ -9421,14 +9634,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val videoFrames = com.vibetoon.data.VideoFrames { RenderHost.view?.requestRender() }
 
     /** Кадр источника для видео-слоя на кадре проекта [f]: учитывает начало клипа, скорость, реверс, стоп-кадр и смещение. */
-    private fun videoSourceMs(clip: Clip, f: Int, fps: Int): Long {
-        val local = (f - clip.start).coerceIn(0, (clip.length - 1).coerceAtLeast(0))
-        val step = when {
-            clip.freeze -> 0f
-            clip.reverse -> (clip.length - 1 - local) * clip.speed
-            else -> local * clip.speed
+    private fun videoSourceMs(clip: Clip, f: Int, fps: Int): Long = com.vibetoon.domain.project.VideoTime.sourceMs(clip, f.toFloat(), fps)
+
+    // ---- пакет 11: плёнка видео на полосе клипа (кадры в фоне, кэш)
+    private val stripRedrawPosted = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val _filmstripVersion = MutableStateFlow(0)
+    /** Меняется, когда в кэше плёнки появились новые кадры: таймлайн перерисовывает полосы видео. */
+    val filmstripVersion: StateFlow<Int> = _filmstripVersion.asStateFlow()
+    private val videoThumbs = com.vibetoon.data.VideoThumbs {
+        if (stripRedrawPosted.compareAndSet(false, true)) viewModelScope.launch {
+            kotlinx.coroutines.delay(60)   // пачка готовых кадров - одна перерисовка
+            stripRedrawPosted.set(false)
+            _filmstripVersion.value++
         }
-        return ((clip.offset + step) * 1000f / fps.coerceAtLeast(1)).toLong().coerceAtLeast(0L)
+    }
+
+    /** id видео-слоёв (для плёнки и волны звука на таймлайне). */
+    fun videoIds(): Set<Int> = media.filter { it.kind == MediaKind.VIDEO }.mapTo(HashSet()) { it.id }
+
+    /** Ширина / высота кадра видео (для ширины плиток плёнки). */
+    fun videoAspect(id: Int): Float {
+        val m = media.firstOrNull { it.id == id && it.kind == MediaKind.VIDEO } ?: return 16f / 9f
+        return if (m.srcWidth > 0 && m.srcHeight > 0) (m.srcWidth.toFloat() / m.srcHeight).coerceIn(0.3f, 4f) else 16f / 9f
+    }
+
+    /** Видимые плитки плёнки видео-слоя [id] при клипе [clip] (пиксели таймлайна). */
+    fun filmstripTiles(id: Int, clip: Clip, frameW: Float, tileW: Float, vis0: Float, vis1: Float): List<com.vibetoon.domain.project.Filmstrip.Tile> {
+        val m = media.firstOrNull { it.id == id && it.kind == MediaKind.VIDEO } ?: return emptyList()
+        return com.vibetoon.domain.project.Filmstrip.tiles(clip, _animation.value.settings.fps, frameW, tileW, vis0, vis1, m.durationMs)
+    }
+
+    /** Кадр плёнки (или null - он декодируется в фоне, придёт перерисовка). */
+    fun filmstripFrame(id: Int, ms: Long): androidx.compose.ui.graphics.ImageBitmap? {
+        val pid = projectId ?: return null
+        val m = media.firstOrNull { it.id == id && it.kind == MediaKind.VIDEO } ?: return null
+        return videoThumbs.get(projects.fileOf(pid, m.file), ms, m.srcWidth, m.srcHeight)
     }
 
     /** При смене кадра подставляет в текстуры видео-слоёв нужный кадр источника. */
@@ -9716,6 +9956,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         pause()
         audioEngine.release()
+        videoThumbs.release()
         executor.shutdown()
     }
 }

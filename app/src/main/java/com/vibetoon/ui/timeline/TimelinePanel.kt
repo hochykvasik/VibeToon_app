@@ -80,6 +80,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -146,6 +148,9 @@ fun TimelinePanel(
     val cellMap by vm.cellMap.collectAsStateWithLifecycle()
     val symMarkers by vm.symMarkers.collectAsStateWithLifecycle()
     val waves by vm.waveforms.collectAsStateWithLifecycle()
+    // пакет 11: плёнка кадров и волна звука на полосах видео-клипов
+    val stripVer by vm.filmstripVersion.collectAsStateWithLifecycle()
+    val videoIds = remember(rows) { vm.videoIds() }
     val timeKeyMap by vm.timeKeys.collectAsStateWithLifecycle()
     val multi by vm.multiSelect.collectAsStateWithLifecycle()
     val keySel by vm.keySelection.collectAsStateWithLifecycle()
@@ -192,6 +197,7 @@ fun TimelinePanel(
     val activeSc = if (editingSym == null) scenes.firstOrNull { it.id == activeSceneId } else null
     var sceneMenu by remember { mutableStateOf(false) }
     var showHierarchy by remember { mutableStateOf(false) }
+    var showKeyList by remember { mutableStateOf(false) }   // пакет 11: список ключей выбранного слоя/кости
     // пакет 10: «Режим ключей» - только слои с ключами (и их группы)
     val keyMode by vm.keyMode.collectAsStateWithLifecycle()
     val keyedIds = remember(rows, animation, timeKeyMap, keyMode) {
@@ -395,6 +401,7 @@ fun TimelinePanel(
             TlIcon(Icons.Default.Adjust, "Магнит", active = magnet) { vm.toggleMagnet() }
             TlIcon(Icons.Default.AccountTree, "Иерархия трансформаций") { showHierarchy = true }
             TlIcon(Icons.Default.Timeline, "Режим ключей", active = keyMode) { vm.toggleKeyMode() }
+            TlIcon(Icons.Default.FormatListBulleted, "Список ключей", enabled = selected != null) { showKeyList = true }
             // f(x): плавность сегмента от ключа выделенного слоя на текущем кадре
             Box {
                 TlIcon(Icons.Default.ShowChart, "Кривые (Easing)", enabled = !playing) { vm.openCurveEditor(true) }
@@ -948,6 +955,33 @@ fun TimelinePanel(
                                 size = androidx.compose.ui.geometry.Size((bx1 - bx0).coerceAtLeast(2f), size.height * 0.76f),
                                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
                             )
+                            // пакет 11: видео - плёнка кадров источника (декодируются в фоне) и волна его звука внизу полосы
+                            if (l.id in videoIds) {
+                                val top = size.height * 0.12f
+                                val bh = size.height * 0.76f
+                                val v0 = hScroll.value.toFloat()
+                                val v1 = v0 + viewportPx
+                                if (stripVer >= 0) clipRect(bx0, top, bx1, top + bh) {
+                                    val tileW = (bh * vm.videoAspect(l.id)).coerceIn(12.dp.toPx(), 140.dp.toPx())
+                                    for (t in vm.filmstripTiles(l.id, clip, frameWPx, tileW, v0, v1)) {
+                                        val img = vm.filmstripFrame(l.id, t.sourceMs) ?: continue
+                                        drawImage(img, dstOffset = IntOffset(t.x.toInt(), top.toInt()),
+                                            dstSize = IntSize(kotlin.math.ceil(tileW).toInt().coerceAtLeast(1), bh.toInt().coerceAtLeast(1)), alpha = if (isSel) 0.95f else 0.75f)
+                                    }
+                                    waves[l.id]?.let { pk ->
+                                        val step = 2.dp.toPx()
+                                        val base = top + bh
+                                        val hMax = bh * 0.35f
+                                        var x = max(bx0, v0)
+                                        val xe = kotlin.math.min(bx1, v1)
+                                        while (x < xe) {
+                                            val amp = com.vibetoon.domain.project.WaveformMath.amplitude(pk, clip, fps, x / frameWPx, (x + step) / frameWPx)
+                                            if (amp > 0f) drawLine(Color(0xFF26C6DA), Offset(x, base), Offset(x, base - max(1f, amp * hMax)), strokeWidth = step * 0.75f)
+                                            x += step
+                                        }
+                                    }
+                                }
+                            }
                             val hw = 5.dp.toPx()
                             drawRoundRect(accent, Offset(bx0, size.height * 0.12f), androidx.compose.ui.geometry.Size(hw, size.height * 0.76f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
                             drawRoundRect(accent, Offset(bx1 - hw, size.height * 0.12f), androidx.compose.ui.geometry.Size(hw, size.height * 0.76f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
@@ -1145,6 +1179,7 @@ fun TimelinePanel(
     if (showSettings) TimelineSettingsDialog(duration, fps, vm::setTimeline) { showSettings = false }
     if (showScenes) ScenesDialog(vm, scenes, activeSc ?: sceneNow, activeSc != null, fps, scenePlayOnly) { showScenes = false }
     if (showHierarchy) TransformHierarchyDialog(vm, selected) { showHierarchy = false }
+    selected?.let { sid -> if (showKeyList) KeyListDialog(vm, sid) { showKeyList = false } }
 }
 
 /**

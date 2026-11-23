@@ -1034,4 +1034,33 @@ Play только в текущей сцене|Play only the current scene
 Это не файл настроек VibeToon|This is not a VibeToon settings file
 Настройки отображения сброшены|Display settings reset
 «+ Изображение» сразу создаёт символ: картинка - определение, на холсте - экземпляр|“+ Image” creates a symbol right away: the picture is the definition, the canvas gets an instance
+Секвенция обрезана до {} кадров (больше за раз не импортируется)|Sequence trimmed to {} frames (more cannot be imported at once)
+Секвенция ({} кадров) импортирована как символ «Символ {}»|Sequence ({} frames) imported as symbol “Symbol {}”
+Секвенция импортирована: {} кадров. Проект продлён до конца секвенции|Sequence imported: {} frames. Project extended to the end of the sequence
+Секвенция импортирована: {} кадров|Sequence imported: {} frames
+Не удалось импортировать секвенцию|Could not import the sequence
+Секвенция картинок|Image sequence
+Секвенция картинок (покадровый слой)|Image sequence (frame-by-frame layer)
+Секвенция картинок как символ|Image sequence as symbol
+PSD проекта уже разложен на слои; вставка другого PSD из библиотеки - в разработке|The project PSD is already split into layers; inserting another PSD from the library is coming soon
+Не удалось вставить ассет|Could not insert the asset
+Файл ассета не найден|Asset file not found
+Пока пусто: импортированные картинки, видео, аудио и рисунки слоёв появятся здесь|Empty for now: imported images, videos, audio and layer drawings will appear here
+Картинки|Images
+Без звука|Mute
+В этом видео нет звуковой дорожки|This video has no audio track
+Звук слоя выключен|Layer sound off
+Звук слоя включён|Layer sound on
+Ключей: {}. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки и в WAV (у видео - его звуковая дорожка). В MP4 звука пока нет.|Keys: {}. Volume changes linearly between keys; it holds before the first and after the last. Works in playback, ruler scrubbing and WAV (for video - its own audio track). MP4 has no audio yet.
+Список ключей|Key list
+Всем ключам…|All keys…
+Дорожек на кадре|Tracks on this frame
+Своя кривая|Custom curve
+Только деформации|Deformers only
+У этого слоя пока нет ключей|This layer has no keys yet
+Удалить ключ|Delete key
+Интерполяция всем ключам: {}|Interpolation applied to all keys: {}
+Интерполяция ключа действует до следующего ключа; ключ слоя задаёт её всем его дорожкам на этом кадре (трансформация и деформации). Тап по строке - перейти к ключу.|A key's interpolation lasts until the next key; a layer key sets it for all of the layer's tracks on that frame (transform and deformers). Tap a row to go to the key.
+Отражение только вида холста; экспорт не меняется|Flips the canvas view only; export is unchanged
+Ключей: {}|Keys: {}
 """

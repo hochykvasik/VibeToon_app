@@ -82,6 +82,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import com.vibetoon.ui.i18n.Text
+import com.vibetoon.ui.i18n.L
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -502,6 +503,8 @@ private fun TopBar(
                     DropdownMenuItem(text = { Text("PSD-файл") }, onClick = { actions = false; add.psd() })
                     DropdownMenuItem(text = { Text("Изображение (PNG, JPG)") }, onClick = { actions = false; add.image() })
                     DropdownMenuItem(text = { Text("Изображение как символ") }, onClick = { actions = false; add.imageAsSymbol() })
+                    DropdownMenuItem(text = { Text("Секвенция картинок (покадровый слой)") }, onClick = { actions = false; add.sequence(false) })
+                    DropdownMenuItem(text = { Text("Секвенция картинок как символ") }, onClick = { actions = false; add.sequence(true) })
                     DropdownMenuItem(text = { Text("Видео (MP4)") }, onClick = { actions = false; add.video() })
                     DropdownMenuItem(text = { Text("Аудио (MP3, WAV)") }, onClick = { actions = false; add.audio() })
                     DropdownMenuItem(text = { Text("Текст") }, onClick = { actions = false; add.text() })
@@ -1158,6 +1161,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                     DropdownMenuItem(text = { Text("Аудио") }, onClick = { addMenu = false; add.audio() })
                     DropdownMenuItem(text = { Text("Видео") }, onClick = { addMenu = false; add.video() })
                     DropdownMenuItem(text = { Text("Изображение") }, onClick = { addMenu = false; add.image() })
+                    DropdownMenuItem(text = { Text("Секвенция картинок") }, onClick = { addMenu = false; add.sequence(false) })
                     DropdownMenuItem(text = { Text("Текст") }, onClick = { addMenu = false; add.text() })
                     DropdownMenuItem(text = { Text("Камера (Pan & Zoom)") }, onClick = { addMenu = false; vm.addCameraLayer() })
                     DropdownMenuItem(text = { Text("Transform Layer (null)") }, onClick = { addMenu = false; vm.addNullLayer() })
@@ -1519,20 +1523,42 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
     }
 }
 
-/** Библиотека ассетов: картинки слоёв проекта и файлы удалённых слоёв (миниатюры); тап вставляет как новый слой. Кэш скрыт. */
+/**
+ * Библиотека ассетов: папки «Картинки», «Видео», «Аудио», «PSD» (пакет 11) - файлы слоёв проекта и файлы удалённых
+ * слоёв (миниатюры, у видео - первый кадр); тап вставляет как новый слой (видео - видео-слоем, аудио - дорожкой). Кэш скрыт.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun AssetLibraryDialog(vm: MainViewModel, onDismiss: () -> Unit) {
-    val assets = remember { vm.assetLibrary() }
+    val all = remember { vm.assetLibrary() }
     val hidden = remember { vm.assetServiceCount() }
     var showUnused by remember { mutableStateOf(false) }
+    var folder by remember { mutableStateOf<com.vibetoon.domain.project.AssetCatalog.Type?>(null) }
+    val assets = if (folder == null) all else com.vibetoon.domain.project.AssetCatalog.folder(all, folder!!)
     val inProject = assets.filter { it.kind == com.vibetoon.domain.project.AssetCatalog.Kind.IN_PROJECT }
     val unused = assets.filter { it.kind == com.vibetoon.domain.project.AssetCatalog.Kind.UNUSED }
+    val folders = listOf(
+        null to "Все",
+        com.vibetoon.domain.project.AssetCatalog.Type.IMAGE to "Картинки",
+        com.vibetoon.domain.project.AssetCatalog.Type.VIDEO to "Видео",
+        com.vibetoon.domain.project.AssetCatalog.Type.AUDIO to "Аудио",
+        com.vibetoon.domain.project.AssetCatalog.Type.PSD to "PSD"
+    )
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Библиотека ассетов") },
         text = {
             androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (assets.isEmpty()) item { Text("Пока пусто: импортированные картинки и рисунки слоёв появятся здесь") }
+                item {
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for ((t, title) in folders) {
+                            val n = if (t == null) all.size else all.count { it.type == t }
+                            androidx.compose.material3.FilterChip(selected = folder == t, onClick = { folder = t },
+                                label = { Text(L(title) + " ($n)", fontSize = 12.sp, maxLines = 1) })
+                        }
+                    }
+                }
+                if (assets.isEmpty()) item { Text("Пока пусто: импортированные картинки, видео, аудио и рисунки слоёв появятся здесь") }
                 if (inProject.isNotEmpty()) item { Text("В проекте", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
                 items(inProject.chunked(3).size) { i -> val row = inProject.chunked(3)[i]; AssetRow(vm, row) { vm.insertAsset(it); onDismiss() } }
                 if (unused.isNotEmpty()) item {
@@ -1559,7 +1585,13 @@ private fun AssetRow(vm: MainViewModel, row: List<com.vibetoon.domain.project.As
             ) {
                 Box(Modifier.size(76.dp).background(androidx.compose.ui.graphics.Color(0xFFEFEFEF), RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
                     val t = thumb
-                    if (t != null) androidx.compose.foundation.Image(t, e.title, Modifier.size(72.dp)) else Text("…", fontSize = 12.sp)
+                    if (t != null) androidx.compose.foundation.Image(t, e.title, Modifier.size(72.dp))
+                    else when (e.type) {
+                        com.vibetoon.domain.project.AssetCatalog.Type.AUDIO -> Icon(Icons.Default.MusicNote, L("Аудио"), Modifier.size(36.dp))
+                        com.vibetoon.domain.project.AssetCatalog.Type.PSD -> Text("PSD", fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        else -> Text("…", fontSize = 12.sp)
+                    }
+                    if (e.type == com.vibetoon.domain.project.AssetCatalog.Type.VIDEO) Icon(Icons.Default.PlayArrow, L("Видео"), Modifier.align(Alignment.BottomEnd).size(18.dp))
                 }
                 Text(e.title, fontSize = 11.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }

@@ -108,9 +108,13 @@ data class MediaItem(
     /** IMAGE: слой «Фон» - всегда в самом низу стопки, под слоями PSD. */
     val background: Boolean = false,
     /** AUDIO: ключи громкости (кадр проекта -> 0..1). */
-    val volKeys: List<VolKey> = emptyList()
+    val volKeys: List<VolKey> = emptyList(),
+    /** AUDIO / VIDEO (пакет 11): звук слоя выключен - не звучит при воспроизведении, на линейке и в WAV. */
+    val muted: Boolean = false
 ) {
     val isVisual get() = kind != MediaKind.AUDIO
+    /** Слой со звуком: аудио-дорожка или видео (его звуковая дорожка). Ключи громкости [volKeys] - у обоих. */
+    val hasSoundTrack get() = kind == MediaKind.AUDIO || kind == MediaKind.VIDEO
     val isText get() = kind == MediaKind.TEXT
 
     /** Название строки в списке слоёв: у текста это его первая строка. */

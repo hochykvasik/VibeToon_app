@@ -39,12 +39,20 @@ class AudioEngine {
     /** Пики громкости файла (для волновой формы на таймлайне) или null, пока файл не декодирован. */
     fun peaksFor(f: File): FloatArray? = peaks[f]
 
+    /** Пакет 11: файлы без звуковой дорожки (видео без звука) - больше не декодируются и не звучат. */
+    private val noAudio = java.util.concurrent.ConcurrentHashMap.newKeySet<File>()
+    fun hasNoAudio(f: File): Boolean = f in noAudio
+    /** Дорожки с выключенным звуком (id). */
+    @Volatile var muted: Set<Int> = emptySet()
+
+    private class NoAudioTrack : IllegalStateException("нет аудиодорожки")
+
     /** Дорожки проекта (id -> файл); новые файлы декодируются в фоне. */
     fun setSources(map: Map<Int, File>) {
         for (id in sessions.keys.toList()) if (id !in map || files[id] != map[id]) sessions.remove(id)?.halt()
         files.clear()
         files.putAll(map)
-        for (f in map.values) ensureDecoded(f)
+        for (f in map.values) if (f !in noAudio) ensureDecoded(f)
     }
 
     /** Завершается только после публикации PCM для scrub/play, а не после чтения кэша волны. */
@@ -68,6 +76,7 @@ class AudioEngine {
             onDecoded?.invoke()
             Log.i(TAG, "decoded ${f.name}: ${d.frames} frames @ ${d.sampleRate} Hz")
         } catch (t: Throwable) {
+            if (t is NoAudioTrack) noAudio += f
             Log.w(TAG, "decode failed for ${f.name}: ${t.message}")
             throw t
         }
@@ -81,6 +90,7 @@ class AudioEngine {
         cancelScrub()
         stopAll()
         for ((id, f) in files) {
+            if (id in muted || f in noAudio) continue
             val p = pcm[f]
             if (p == null) { ensureDecoded(f); Log.w(TAG, "track $id not decoded yet"); continue }
             val clip = clipOf(id)
@@ -94,6 +104,7 @@ class AudioEngine {
         stopAll()
         val src = ArrayList<ScrubSrc>()
         for ((id, f) in files) {
+            if (id in muted) continue
             val p = pcm[f] ?: continue
             val clip = clipOf(id)
             if (clip.freeze || frame < clip.start || frame >= clip.end) continue
@@ -182,7 +193,7 @@ class AudioEngine {
      * null - дорожек нет или они ещё декодируются.
      */
     fun mixdown(frames: Int, fps: Int, clipOf: (Int) -> Clip): ShortArray? {
-        val src = files.mapNotNull { (id, f) -> pcm[f]?.let { ScrubSrc(it, clipOf(id), volumes[id].orEmpty()) } }
+        val src = files.mapNotNull { (id, f) -> if (id in muted) null else pcm[f]?.let { ScrubSrc(it, clipOf(id), volumes[id].orEmpty()) } }
         if (src.isEmpty()) return null
         val n = (frames.toLong() * OUT_SR / fps).toInt()
         val out = ShortArray(n * 2)
@@ -318,7 +329,7 @@ class AudioEngine {
             for (i in 0 until ex.trackCount) {
                 if (ex.getTrackFormat(i).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) { idx = i; break }
             }
-            if (idx < 0) error("нет аудиодорожки")
+            if (idx < 0) throw NoAudioTrack()
             ex.selectTrack(idx)
             val fmt = ex.getTrackFormat(idx)
             val mime = fmt.getString(MediaFormat.KEY_MIME)!!

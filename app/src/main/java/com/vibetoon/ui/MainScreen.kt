@@ -146,6 +146,11 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
     val openImageAsSymbol = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMediaAsSymbol(uri)
     }
+    // пакет 11: секвенция картинок - покадровый слой или символ
+    var sequenceAsSymbol by remember { mutableStateOf(false) }
+    val openSequence = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.importImageSequence(uris, sequenceAsSymbol)
+    }
     val openVideo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.VIDEO, uri)
     }
@@ -158,7 +163,8 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
         video = { openVideo.launch(arrayOf("video/mp4", "video/*")) },
         audio = { openAudio.launch(arrayOf("audio/mpeg", "audio/wav", "audio/x-wav", "audio/*")) },
         text = { showTextDialog = true },
-        imageAsSymbol = { openImageAsSymbol.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) }
+        imageAsSymbol = { openImageAsSymbol.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
+        sequence = { asSymbol -> sequenceAsSymbol = asSymbol; openSequence.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) }
     )
 
     com.vibetoon.ui.shell.EditorShell(vm, onBack, addActions) { showExport = true }
@@ -204,7 +210,9 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
 class AddActions(
     val psd: () -> Unit, val image: () -> Unit, val video: () -> Unit, val audio: () -> Unit,
     val text: () -> Unit,
-    val imageAsSymbol: () -> Unit = {}
+    val imageAsSymbol: () -> Unit = {},
+    /** Пакет 11: секвенция картинок (true - как символ). */
+    val sequence: (Boolean) -> Unit = {}
 )
 
 @Composable

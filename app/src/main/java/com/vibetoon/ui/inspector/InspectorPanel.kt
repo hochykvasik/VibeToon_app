@@ -240,7 +240,7 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
     var tabName by rememberSaveable { mutableStateOf(TAB_TRANSFORM) }
 
     val isSymbol = selectedId?.let { vm.isSymbolInstance(it) } == true
-    val isAudio = selectedId?.let { vm.isAudioTrack(it) } == true
+    val isAudio = selectedId?.let { vm.hasSound(it) } == true   // пакет 11: и у видео - его звук
     val tabs = buildList {
         add(TAB_TRANSFORM)
         if (isSymbol) add(TAB_TIME)
@@ -475,13 +475,19 @@ private fun ColorSlider(title: String, value: Float, onValue: (Float) -> Unit) {
 private fun VolumeTab(vm: MainViewModel, id: Int, frame: Int) {
     val cur = vm.volumeAt(id)
     val keys = vm.volumeKeyCount(id)
+    var muted by remember(id) { mutableStateOf(vm.isMuted(id)) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Без звука", fontSize = 14.sp, modifier = Modifier.weight(1f))
+            androidx.compose.material3.Switch(checked = muted, onCheckedChange = { muted = it; vm.setMuted(id, it) })
+        }
+        if (vm.videoWithoutSound(id)) Text("В этом видео нет звуковой дорожки", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
         NumberField("Громкость", cur * 100f, "%", true, { vm.setVolumeKey(id, it / 100f) }, Modifier.fillMaxWidth(), perPx = 0.4f, min = 0f, max = 100f)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { vm.setVolumeKey(id, cur) }) { Text(if (vm.hasVolumeKeyHere(id)) "Ключ стоит" else "Поставить ключ", fontSize = 13.sp, maxLines = 1) }
             OutlinedButton(onClick = { vm.removeVolumeKey(id) }, enabled = vm.hasVolumeKeyHere(id)) { Text("Убрать ключ", fontSize = 13.sp, maxLines = 1) }
         }
-        Text("Ключей: $keys. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки и в WAV. В MP4 звука пока нет.", fontSize = 11.sp,
+        Text("Ключей: $keys. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки и в WAV (у видео - его звуковая дорожка). В MP4 звука пока нет.", fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
     }
 }

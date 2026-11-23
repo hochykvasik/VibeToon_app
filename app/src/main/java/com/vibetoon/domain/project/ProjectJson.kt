@@ -342,6 +342,7 @@ object ProjectJson {
         if (m.vector) it["vector"] = true
         if (m.volKeys.isNotEmpty()) it["vk"] = m.volKeys.map { k -> linkedMapOf<String, Any?>("f" to k.frame, "v" to k.value.toDouble()) }
         if (m.background) it["bg"] = true
+        if (m.muted) it["mu"] = true
         if (m.vectors.isNotEmpty()) it["vec"] = m.vectors.map { v ->
             linkedMapOf<String, Any?>(
                 "k" to v.kind.name, "p" to v.pts.map { f -> f.toDouble() }, "s" to colorToString(v.stroke), "w" to v.width.toDouble()
@@ -391,6 +392,7 @@ object ProjectJson {
             vector = o["vector"] as? Boolean ?: false,
             volKeys = (o["vk"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { m -> VolKey((m["f"] as? Number)?.toInt() ?: 0, ((m["v"] as? Number)?.toFloat() ?: 1f).coerceIn(0f, 1f)) } }.sortedBy { it.frame },
             background = o["bg"] as? Boolean ?: false,
+            muted = o["mu"] as? Boolean ?: false,
             vectors = (o["vec"] as? List<*>).orEmpty().mapNotNull { c ->
                 (c as? Map<*, *>)?.let { m ->
                     val kind = runCatching { com.vibetoon.domain.vector.VecKind.valueOf(m["k"] as? String ?: return@let null) }.getOrNull() ?: return@let null
