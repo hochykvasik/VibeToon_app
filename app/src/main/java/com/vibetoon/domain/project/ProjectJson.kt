@@ -44,7 +44,7 @@ object ProjectJson {
         if (d.clips.isNotEmpty()) root["clips"] = d.clips.entries.associate { (id, c) -> id.toString() to clipToMap(c) }
         if (d.links.isNotEmpty()) root["links"] = d.links.entries.associate { (c, par) -> c.toString() to par }
         if (d.bones.isNotEmpty()) root["bones"] = d.bones.map {
-            linkedMapOf<String, Any?>("id" to it.id, "name" to it.name, "hx" to it.hx.toDouble(), "hy" to it.hy.toDouble(), "tx" to it.tx.toDouble(), "ty" to it.ty.toDouble(), "indep" to it.independentRot, "str" to it.strength.toDouble())
+            linkedMapOf<String, Any?>("id" to it.id, "name" to it.name, "hx" to it.hx.toDouble(), "hy" to it.hy.toDouble(), "tx" to it.tx.toDouble(), "ty" to it.ty.toDouble(), "indep" to it.independentRot, "str" to it.strength.toDouble()).also { m -> if (it.layer != 0) m["ly"] = it.layer }   // спринт 38: слой костей
         }
         if (d.regroup.isNotEmpty()) root["regroup"] = d.regroup.map { listOf(it.first, it.second) }
         if (d.warps.isNotEmpty()) root["warps"] = d.warps.sorted()
@@ -99,6 +99,9 @@ object ProjectJson {
                 if (p.locked) m["lk"] = true
                 if (p.name != null) m["n"] = p.name
                 if (p.depth != 0f) m["dp"] = p.depth.toDouble()
+                // спринт 38: маска слоя и прикрепление к пути (поля только при использовании)
+                if (p.mask >= 0) { m["mk"] = p.mask; if (p.maskInvert) m["mi"] = true; if (p.maskOff) m["mo"] = true }
+                if (p.path >= 0) { m["pa"] = p.path; if (p.pathOrient) m["po"] = true }
             }
         }
         if (d.skins.isNotEmpty()) root["skins"] = d.skins.entries.associate { (id, m) ->
@@ -180,7 +183,7 @@ object ProjectJson {
                 @Suppress("UNCHECKED_CAST")
                 (item as? Map<String, Any?>)?.let {
                     Bone(it.int("id", -1), it.str("name", "Bone"), it.dbl("hx", 0.0).toFloat(), it.dbl("hy", 0.0).toFloat(),
-                        it.dbl("tx", 0.0).toFloat(), it.dbl("ty", 0.0).toFloat(), it["indep"] == true, it.dbl("str", 1.0).toFloat().coerceIn(0f, 1f))
+                        it.dbl("tx", 0.0).toFloat(), it.dbl("ty", 0.0).toFloat(), it["indep"] == true, it.dbl("str", 1.0).toFloat().coerceIn(0f, 1f), it.int("ly", 0).coerceAtLeast(0))
                 }
             }.filter { it.id >= BONE_ID_BASE }
             val regroup = (root["regroup"] as? List<*>).orEmpty().mapNotNull { item ->
@@ -309,7 +312,9 @@ object ProjectJson {
                     (o["ex"] as? Number)?.toFloat() ?: 0f, (o["ct"] as? Number)?.toFloat() ?: 0f,
                     (o["sa"] as? Number)?.toFloat() ?: 0f, (o["hu"] as? Number)?.toFloat() ?: 0f,
                     visible = o["vis"] != false, locked = o["lk"] == true, name = o["n"] as? String,
-                    depth = (o["dp"] as? Number)?.toFloat() ?: 0f
+                    depth = (o["dp"] as? Number)?.toFloat() ?: 0f,
+                    mask = (o["mk"] as? Number)?.toInt() ?: -1, maskInvert = o["mi"] == true, maskOff = o["mo"] == true,
+                    path = (o["pa"] as? Number)?.toInt() ?: -1, pathOrient = o["po"] == true
                 ).normalized()
             }
             val scenes = com.vibetoon.domain.anim.SceneMath.normalize((root["scenes"] as? List<*>).orEmpty().mapNotNull { item ->

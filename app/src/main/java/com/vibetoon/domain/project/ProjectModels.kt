@@ -47,13 +47,19 @@ data class Bone(
     /** Независимый поворот: кость наследует от родителя позицию и масштаб, но не угол поворота. */
     val independentRot: Boolean = false,
     /** Strength 0..1: множитель веса этой кости при скининге Mesh. */
-    val strength: Float = 1f
+    val strength: Float = 1f,
+    /** Спринт 38: слой костей (MediaKind.BONES), которому принадлежит кость; 0 - свободная кость (как раньше). */
+    val layer: Int = 0
 ) {
     val length get() = kotlin.math.hypot(tx - hx, ty - hy)
 }
 
-/** CAMERA - невидимый слой-камера: его трансформация двигает и масштабирует весь холст (Pan & Zoom). */
-enum class MediaKind { IMAGE, VIDEO, AUDIO, TEXT, CAMERA, GROUP, SYMBOL, NULLOBJ }
+/**
+ * CAMERA - невидимый слой-камера: его трансформация двигает и масштабирует весь холст (Pan & Zoom).
+ * Спринт 38: PATH - слой-путь (кривая в [MediaItem.vectors], по ней едут прикреплённые слои), BONES - слой костей
+ * (хозяин скелета: его кости в [Bone.layer], трансформация слоя двигает весь скелет). Оба не рисуются и не экспортируются.
+ */
+enum class MediaKind { IMAGE, VIDEO, AUDIO, TEXT, CAMERA, GROUP, SYMBOL, NULLOBJ, PATH, BONES }
 
 /**
  * Медиа-слой проекта. Файл лежит в папке проекта (assets/...). Для картинки и видео (первый кадр)
@@ -118,6 +124,8 @@ data class MediaItem(
     /** Слой со звуком: аудио-дорожка или видео (его звуковая дорожка). Ключи громкости [volKeys] - у обоих. */
     val hasSoundTrack get() = kind == MediaKind.AUDIO || kind == MediaKind.VIDEO
     val isText get() = kind == MediaKind.TEXT
+    /** Спринт 38: служебный слой без картинки (Transform Layer, путь, кости): не рисуется, только передаёт трансформацию. */
+    val isRig get() = kind == MediaKind.NULLOBJ || kind == MediaKind.PATH || kind == MediaKind.BONES
 
     /** Название строки в списке слоёв: у текста это его первая строка. */
     val label: String

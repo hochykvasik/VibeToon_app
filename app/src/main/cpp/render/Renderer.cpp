@@ -1958,13 +1958,15 @@ void Renderer::drawItem(const Item& it, float opacity, int blend, bool clipMode)
     else drawLayer(it, opacity, blend, clipMode);
 }
 
-// Текущая цель умножается на альфу маски: цвет и альфа (premultiplied) * maskAlpha.
-void Renderer::multiplyByMask(const Fbo& mask) {
+// Текущая цель умножается на альфу маски: цвет и альфа (premultiplied) * maskAlpha. Спринт 38: маска слоя с инверсией -
+// на (1 - maskAlpha): нарисованное на маске скрывает слой.
+void Renderer::multiplyByMask(const Fbo& mask, bool invert) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, mask.tex);
     glUseProgram(progTex_);
     glEnable(GL_BLEND);
-    glBlendFuncSeparate(GL_ZERO, GL_SRC_ALPHA, GL_ZERO, GL_SRC_ALPHA);
+    const GLenum dst = maskpolicy::dstFactor(invert ? (kFlagMasked | kFlagMaskInvert) : kFlagMasked) == 1 ? GL_ONE_MINUS_SRC_ALPHA : GL_SRC_ALPHA;
+    glBlendFuncSeparate(GL_ZERO, dst, GL_ZERO, dst);
     glUniform1i(uTexSampler_, 0);
     glUniformMatrix3fv(uTexMvp_, 1, GL_FALSE, kFullscreen);
     glUniform1f(uTexOpacity_, 1.f);
@@ -2156,7 +2158,7 @@ bool Renderer::drawFrame() {
 
         if (it.op == kBeginGroup) {
             // FBO нужен, только если у группы прозрачность < 1 или режим не Normal/Pass-through; маске и группе под маской - всегда.
-            const int mflags = it.flags & (kFlagMaskSrc | kFlagMasked);
+            const int mflags = it.flags & (kFlagMaskSrc | kFlagMasked | kFlagMaskInvert);   // спринт 38: инверсия едет в Frame до kEndGroup
             const bool isolated = maskpolicy::isolated(mflags, it.blend == kNormal || it.blend == kPass, it.opacity);
             Frame f{isolated, it.opacity, it.blend, curFbo_, {}, mflags};
             // ключ - у каждой группы, чтобы номера появлений одинаковых id не зависели от того, что взято из кэша
@@ -2211,7 +2213,7 @@ bool Renderer::drawFrame() {
                 if ((f.flags & kFlagMasked) && !masks.empty()) {
                     const Fbo m = masks.back();
                     masks.pop_back();
-                    multiplyByMask(m);   // цель сейчас - FBO этой группы
+                    multiplyByMask(m, maskpolicy::inverted(f.flags));   // цель сейчас - FBO этой группы
                     releaseFbo(m);
                 }
                 bindTarget(f.parentFbo);

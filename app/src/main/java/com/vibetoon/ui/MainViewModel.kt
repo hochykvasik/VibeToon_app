@@ -128,6 +128,9 @@ enum class MeshTool { ADD, MOVE, CUT, SMUDGE, DELETE, PIN_ADD, PIN_MOVE }
 
 class BoneOverlay(val bones: List<BoneShape> = emptyList(), val draft: FloatArray? = null, val lasso: List<Float> = emptyList())
 
+/** Спринт 38: путь слоя-пути на экране (x, y подряд), рисуемый жест и выбран ли сам слой-путь. */
+class PathOverlay(val pts: List<Float> = emptyList(), val closed: Boolean = false, val draft: List<Float> = emptyList(), val own: Boolean = false)
+
 data class InspectorState(
     val id: Int,
     val name: String,
@@ -490,7 +493,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _scenes.value = data.scenes
             _activeScene.value = null
             _links.value = data.links
-            _bones.value = data.bones
+            // спринт 38: кости удалённого (или неизвестного старой версии) слоя костей становятся свободными
+            _bones.value = com.vibetoon.domain.anim.BoneLayers.orphaned(data.bones, data.media.filter { it.kind == MediaKind.BONES }.mapTo(HashSet()) { it.id })
             regroup = data.regroup
             stackOrder = data.stackOrder
             groupDeformationAnchors = data.groupDeformationAnchors.toMap()
@@ -652,6 +656,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _keySel.value = emptySet()
         _boneMode.value = false
         _boneOverlay.value = BoneOverlay()
+        _pathDraw.value = false; pathStroke = null; activeBoneLayer = null; _pathOverlay.value = PathOverlay()   // спринт 38
         _colors.value = emptyMap()
         clearHistory()
         audioEngine.setSources(emptyMap())
@@ -1386,7 +1391,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val name = importer.displayName(uri)
         val ext = importer.extension(
             name,
-            when (kind) { MediaKind.IMAGE -> "png"; MediaKind.VIDEO -> "mp4"; MediaKind.AUDIO -> "mp3"; MediaKind.TEXT -> error("Текст добавляется через addText"); MediaKind.CAMERA -> error("Камера добавляется через addCameraLayer"); MediaKind.NULLOBJ -> error("Transform Layer создаётся через addNullLayer"); MediaKind.GROUP -> error("Группа создаётся через groupSelected"); MediaKind.SYMBOL -> error("Символ создаётся через createSymbol") }
+            when (kind) { MediaKind.IMAGE -> "png"; MediaKind.VIDEO -> "mp4"; MediaKind.AUDIO -> "mp3"; MediaKind.TEXT -> error("Текст добавляется через addText"); MediaKind.CAMERA -> error("Камера добавляется через addCameraLayer"); MediaKind.NULLOBJ -> error("Transform Layer создаётся через addNullLayer"); MediaKind.PATH, MediaKind.BONES -> error("Слой пути и слой костей создаются из меню «＋»"); MediaKind.GROUP -> error("Группа создаётся через groupSelected"); MediaKind.SYMBOL -> error("Символ создаётся через createSymbol") }
         )
         // Файл импорта всегда уникален: PCM-кэш и отложенное декодирование не должны
         // ссылаться на новый файл с повторно использованным id после Undo/отмены.
@@ -1832,6 +1837,404 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = UiState.Message("Transform Layer «Transform $n»: привяжите к нему слои через «Родитель», двигайте и вращайте его в Свойствах")
     }
 
+    // ---------------------------------------------------------------- спринт 38: слой-путь, слой костей, маски слоёв
+
+    /** Тип медиа-слоя (null - слой PSD или кость). */
+    fun mediaKindOf(id: Int): MediaKind? = media.firstOrNull { it.id == id }?.kind
+
+    private val _pathRevision = MutableStateFlow(0)
+    /** Меняется при правке пути/прикрепления: панель перечитывает «Положение на пути». */
+    val pathRevision: StateFlow<Int> = _pathRevision.asStateFlow()
+
+    /** Слой костей, в который попадают новые кости (последний выбранный слой костей). */
+    private var activeBoneLayer: Int? = null
+    private fun boneLayerIds(): List<Int> = media.filter { it.kind == MediaKind.BONES }.map { it.id }
+    private fun hiddenBoneLayers(): Set<Int> = media.filter { it.kind == MediaKind.BONES && layerProps[it.id]?.visible == false }.mapTo(HashSet()) { it.id }
+
+    /** Слой костей: хозяин скелета в списке слоёв. Его трансформация двигает все его кости и привязанные к ним слои. */
+    fun addBoneLayer() {
+        if (projectId == null || _editingSymbol.value != null || _playing.value) return
+        val id = nextMediaId()
+        val n = media.count { it.kind == MediaKind.BONES } + 1
+        val s = minOf(canvasW, canvasH) * 0.2f
+        checkpoint("add", force = true)
+        media += MediaItem(id, MediaKind.BONES, "${dn("Кости")} $n", "", 0, 0, (canvasW - s) / 2f, (canvasH - s) / 2f, s, s)
+        activeBoneLayer = id
+        // первый слой костей забирает свободные кости проекта (старые проекты получают слой-хозяина скелета)
+        val adopt = n == 1 && _bones.value.any { it.layer == 0 }
+        if (adopt) {
+            val (b, l) = com.vibetoon.domain.anim.BoneLayers.adopt(_bones.value, _links.value, id)
+            _bones.value = b
+            _links.value = l
+        }
+        rebuildLayers(); pushScene(); selectLayer(id); markDirty()
+        _state.value = UiState.Message(if (adopt) "Слой костей создан: в него перенесены кости проекта" else "Слой костей создан: режим «Кости» и «＋ Кость» рисуют кости этого слоя")
+    }
+
+    /** «Кости этого слоя»: слой становится активным, включается режим костей (Bind Pose для новых костей). */
+    fun editBoneLayer(id: Int) {
+        if (media.none { it.id == id && it.kind == MediaKind.BONES }) return
+        activeBoneLayer = id
+        if (layerProps[id]?.visible == false) updateLayerProps(id) { it.copy(visible = true) }
+        setBoneMode(true)
+    }
+
+    /** «Собрать свободные кости»: кости без слоя переходят в слой костей [id]. */
+    fun adoptFreeBones(id: Int) {
+        if (_playing.value || media.none { it.id == id && it.kind == MediaKind.BONES }) return
+        if (_bones.value.none { it.layer == 0 }) { _state.value = UiState.Message("Свободных костей нет"); return }
+        checkpoint("bone-adopt", force = true)
+        val (b, l) = com.vibetoon.domain.anim.BoneLayers.adopt(_bones.value, _links.value, id)
+        _bones.value = b
+        _links.value = l
+        pushScene(); markDirty()
+        _state.value = UiState.Message("Свободные кости перенесены в слой костей")
+    }
+
+    /** Число костей слоя костей [id] и свободных костей проекта. */
+    fun boneLayerCounts(id: Int): Pair<Int, Int> = _bones.value.count { it.layer == id } to _bones.value.count { it.layer == 0 }
+
+    /** Кость в позе привязки: точка холста -> координаты скелета (без трансформации слоя костей). */
+    private fun boneRest(b: Bone, x: Float, y: Float): Pair<Float, Float> {
+        if (b.layer == 0) return x to y
+        val inv = scene?.boneDeltas?.get(b.layer)?.inverse() ?: return x to y
+        return inv.applyX(x, y) to inv.applyY(x, y)
+    }
+
+    // ---- слой-путь
+
+    /** Слой-путь: кривая, по которой едут прикреплённые слои. Сам не рисуется и не экспортируется. */
+    fun addPathLayer() {
+        if (projectId == null || _editingSymbol.value != null || _playing.value) return
+        val id = nextMediaId()
+        val n = media.count { it.kind == MediaKind.PATH } + 1
+        checkpoint("add", force = true)
+        media += pathItem(MediaItem(id, MediaKind.PATH, "${dn("Путь")} $n", ""), com.vibetoon.domain.anim.PathLayerMath.preset("arc", canvasW.toFloat(), canvasH.toFloat()))
+        rebuildLayers(); pushScene(); selectLayer(id); markDirty()
+        _state.value = UiState.Message("Слой-путь создан: нарисуйте путь пальцем или выберите готовый; слои прикрепляются в их свойствах")
+    }
+
+    private fun pathItem(m: MediaItem, shape: com.vibetoon.domain.vector.VectorShape): MediaItem {
+        val p = com.vibetoon.domain.anim.PathLayerMath.path(shape) ?: return m.copy(vectors = listOf(shape))
+        val b = com.vibetoon.domain.anim.PathLayerMath.bounds(p, 8f)
+        return m.copy(vectors = listOf(shape), x = b[0], y = b[1], w = b[2], h = b[3])
+    }
+
+    private fun selectedPathLayer(): MediaItem? = _selected.value?.let { id -> media.firstOrNull { it.id == id && it.kind == MediaKind.PATH } }
+
+    private fun replacePath(m: MediaItem, shape: com.vibetoon.domain.vector.VectorShape, note: String) {
+        checkpoint("path-edit", force = true)
+        val i = media.indexOfFirst { it.id == m.id }
+        if (i < 0) return
+        media[i] = pathItem(media[i], shape)
+        rebuildLayers(); pushScene(); markDirty()
+        _pathRevision.value++
+        _state.value = UiState.Message(note)
+    }
+
+    /** Готовый путь выбранного слоя-пути: "line", "arc", "wave", "circle". */
+    fun setPathPreset(kind: String) {
+        if (_playing.value) return
+        val m = selectedPathLayer() ?: run { _state.value = UiState.Message("Сначала выберите слой-путь"); return }
+        replacePath(m, com.vibetoon.domain.anim.PathLayerMath.preset(kind, canvasW.toFloat(), canvasH.toFloat()), "Путь заменён")
+    }
+
+    private val _pathDraw = MutableStateFlow(false)
+    /** «Нарисовать путь»: следующий жест одним пальцем по холсту становится путём выбранного слоя-пути. */
+    val pathDraw: StateFlow<Boolean> = _pathDraw.asStateFlow()
+    private var pathStroke: ArrayList<Float>? = null
+    private val PATH_GRAB = 7
+
+    fun setPathDraw(on: Boolean) {
+        if (on && selectedPathLayer() == null) { _state.value = UiState.Message("Сначала выберите слой-путь"); return }
+        if (on && _boneMode.value) setBoneMode(false)
+        _pathDraw.value = on
+        pathStroke = null
+        refreshPathOverlay()
+        _state.value = UiState.Message(if (on) "Проведите пальцем по холсту: новый путь заменит текущий" else "Рисование пути выключено")
+    }
+
+    private fun pathDown(sx: Float, sy: Float): Boolean {
+        if (_playing.value || selectedPathLayer() == null) return false
+        val (cx, cy) = toCanvas(sx, sy)
+        pathStroke = arrayListOf(cx, cy)
+        grab = PATH_GRAB
+        refreshPathOverlay()
+        return true
+    }
+
+    private fun pathMove(sx: Float, sy: Float) {
+        val (cx, cy) = toCanvas(sx, sy)
+        pathStroke?.let { it.add(cx); it.add(cy) }
+        refreshPathOverlay()
+    }
+
+    private fun pathUp() {
+        val pts = pathStroke
+        pathStroke = null
+        grab = 0
+        val m = selectedPathLayer()
+        if (m != null && pts != null) {
+            // нарисованное - в координатах холста; путь хранится без трансформации слоя-пути
+            val w = pathWorld(m)?.inverse()
+            val local = if (w == null) pts.toList() else (0 until pts.size / 2).flatMap { k -> listOf(w.applyX(pts[k * 2], pts[k * 2 + 1]), w.applyY(pts[k * 2], pts[k * 2 + 1])) }
+            val shape = com.vibetoon.domain.anim.PathLayerMath.fromStroke(local)
+            if (shape != null) {
+                replacePath(m, shape, "Путь нарисован")
+                _pathDraw.value = false
+            } else _state.value = UiState.Message("Слишком короткий путь: проведите пальцем дальше")
+        }
+        refreshPathOverlay()
+    }
+
+    /** Мир слоя-пути: точка пути (координаты холста без трансформации) -> холст с трансформацией слоя. */
+    private fun pathWorld(m: MediaItem): Affine2D? {
+        val q = scene?.selectionQuads?.get(m.id) ?: return null
+        return com.vibetoon.domain.anim.PathLayerMath.quadMap(q, m.x.roundToInt().toFloat(), m.y.roundToInt().toFloat(),
+            m.w.roundToInt().coerceAtLeast(1).toFloat(), m.h.roundToInt().coerceAtLeast(1).toFloat())
+    }
+
+    private val _pathOverlay = MutableStateFlow(PathOverlay())
+    /** Путь на холсте (экранные координаты): у выбранного слоя-пути или у пути выбранного слоя, плюс рисуемый жест. */
+    val pathOverlay: StateFlow<PathOverlay> = _pathOverlay.asStateFlow()
+
+    private fun refreshPathOverlay() {
+        val sel = _selected.value
+        val sm = sel?.let { id -> media.firstOrNull { it.id == id } }
+        val pathId = if (sm?.kind == MediaKind.PATH) sm.id else sel?.let { layerProps[it]?.path }?.takeIf { it >= 0 }
+        val pm = pathId?.let { id -> media.firstOrNull { it.id == id && it.kind == MediaKind.PATH } }
+        val draft = pathStroke?.let { s -> (0 until s.size / 2).flatMap { k -> toScreen(s[k * 2], s[k * 2 + 1]).toList() } }.orEmpty()
+        val p = if (_boneMode.value) null else pm?.let { com.vibetoon.domain.anim.PathLayerMath.pathOf(it.vectors) }
+        if (p == null || pm == null) {
+            val cur = _pathOverlay.value
+            if (draft.isEmpty() && cur.pts.isEmpty() && cur.draft.isEmpty()) return
+            _pathOverlay.value = PathOverlay(draft = draft)
+            return
+        }
+        val w = pathWorld(pm) ?: Affine2D.IDENTITY
+        val pts = ArrayList<Float>(p.pts.size)
+        for (k in 0 until p.count) {
+            val s = toScreen(w.applyX(p.pts[k * 2], p.pts[k * 2 + 1]), w.applyY(p.pts[k * 2], p.pts[k * 2 + 1]))
+            pts += s.first; pts += s.second
+        }
+        _pathOverlay.value = PathOverlay(pts, p.closed, draft, pm.id == sel)
+    }
+
+    /** Слои-пути проекта: id и имя (для меню «Прикрепить к пути»). */
+    fun pathLayers(): List<Pair<Int, String>> = media.filter { it.kind == MediaKind.PATH }.map { it.id to layerName(it.id) }
+
+    /** Положение слоя на пути (0..100 %) на текущем кадре. */
+    fun pathProgressOf(id: Int): Float = effective(com.vibetoon.domain.anim.PathLayerMath.progressId(id)).dx
+
+    fun pathKeyAt(id: Int): Boolean = _animation.value.hasKey(com.vibetoon.domain.anim.PathLayerMath.progressId(id), _frame.value)
+
+    /** Прикрепляет слой [id] к слою-пути [pathId]: привязка к пути (едет с его трансформацией) и опорная точка - на путь. */
+    fun attachToPath(id: Int, pathId: Int) {
+        if (_playing.value) return
+        val pm = media.firstOrNull { it.id == pathId && it.kind == MediaKind.PATH } ?: return
+        val item = media.firstOrNull { it.id == id }
+        if (id == pathId || id >= BONE_ID_BASE || (item != null && (item.kind == MediaKind.PATH || item.kind == MediaKind.BONES || item.kind == MediaKind.CAMERA || !item.isVisual))) {
+            _state.value = UiState.Message("Этот слой нельзя прикрепить к пути"); return
+        }
+        if (pathId in linkDescendants(id)) { _state.value = UiState.Message("Нельзя: слой-путь привязан к этому слою"); return }
+        checkpoint("path-attach", force = true)
+        setProps(layerProps + (id to layerPropsOf(id).copy(path = pathId)))
+        _links.value = _links.value + (id to pathId)
+        val pid = com.vibetoon.domain.anim.PathLayerMath.progressId(id)
+        if (base[pid] == null && !_animation.value.hasTrack(pid)) base[pid] = LayerTransform(dx = 0f)
+        // собственный сдвиг становится смещением от точки пути: без ключей трансформации он сбрасывается - слой встаёт на путь
+        if (!_animation.value.hasTrack(id)) base[id]?.let { base[id] = it.copy(dx = 0f, dy = 0f) }
+        override.remove(id)
+        rebuildLayers(); pushScene(); markDirty()
+        _pathRevision.value++
+        _state.value = UiState.Message("Слой прикреплён к пути «${layerName(pm.id)}»: двигайте «Положение на пути» и ставьте ключи")
+    }
+
+    /** Отцепляет слой от пути: привязка к пути и анимация положения снимаются (Undo вернёт). */
+    fun detachFromPath(id: Int) {
+        val path = layerProps[id]?.path ?: return
+        if (path < 0 || _playing.value) return
+        checkpoint("path-detach", force = true)
+        setProps(layerProps + (id to layerPropsOf(id).copy(path = -1, pathOrient = false)))
+        if (_links.value[id] == path) _links.value = _links.value - id
+        val pid = com.vibetoon.domain.anim.PathLayerMath.progressId(id)
+        base.remove(pid); override.remove(pid)
+        _animation.value = _animation.value.copy(tracks = _animation.value.tracks - pid)
+        rebuildLayers(); pushScene(); markDirty()
+        _pathRevision.value++
+        _state.value = UiState.Message("Слой отцеплен от пути")
+    }
+
+    fun setPathOrient(id: Int, on: Boolean) {
+        val p = layerProps[id] ?: return
+        if (p.path < 0 || p.pathOrient == on || _playing.value) return
+        checkpoint("path-orient", force = true)
+        setProps(layerProps + (id to p.copy(pathOrient = on)))
+        pushScene(); markDirty()
+    }
+
+    /** «Положение на пути» 0..100 %: правка ключа на кадре, автоключ или общее значение (как у трансформации). */
+    fun setPathProgress(id: Int, value: Float) {
+        if (_playing.value || (layerProps[id]?.path ?: -1) < 0 || !value.isFinite()) return
+        val pid = com.vibetoon.domain.anim.PathLayerMath.progressId(id)
+        val f = _frame.value
+        checkpoint("pathpos$id:$f")
+        val t = effective(pid).copy(dx = value.coerceIn(0f, 100f))
+        val anim = _animation.value
+        when {
+            anim.hasKey(pid, f) || autoKeyEnabled() -> { _animation.value = anim.withKey(pid, f, t); override.remove(pid) }
+            anim.hasTrack(pid) -> override[pid] = t
+            else -> base[pid] = t
+        }
+        pushScene(); markDirty()
+        _pathRevision.value++
+    }
+
+    fun addPathKey(id: Int) {
+        if (_playing.value || (layerProps[id]?.path ?: -1) < 0) return
+        val pid = com.vibetoon.domain.anim.PathLayerMath.progressId(id)
+        val f = _frame.value
+        if (_animation.value.hasKey(pid, f)) return
+        checkpoint("pathkey", force = true)
+        val t = effective(pid)
+        override.remove(pid)
+        _animation.value = _animation.value.withKey(pid, f, t)
+        pushScene(); markDirty()
+        _pathRevision.value++
+    }
+
+    fun deletePathKey(id: Int) {
+        if (_playing.value) return
+        val pid = com.vibetoon.domain.anim.PathLayerMath.progressId(id)
+        val f = _frame.value
+        if (!_animation.value.hasKey(pid, f)) return
+        checkpoint("pathkeydel", force = true)
+        val (next, last) = _animation.value.withoutKey(pid, f)
+        _animation.value = next
+        if (last != null) base[pid] = last   // последний ключ: слой остаётся на месте
+        override.remove(pid)
+        pushScene(); markDirty()
+        _pathRevision.value++
+    }
+
+    // ---- маски слоёв
+
+    /** Слой-маска слоя [id] или null. */
+    fun maskOf(id: Int): Int? = layerProps[id]?.mask?.takeIf { it >= 0 }
+
+    /** Цель слоя-маски [id] (null - слой не маска). */
+    fun maskTargetOf(id: Int): Int? = com.vibetoon.domain.model.LayerMasks.targetOf(id, layerProps)
+
+    private fun maskError(e: com.vibetoon.domain.model.LayerMasks.Error): String = when (e) {
+        com.vibetoon.domain.model.LayerMasks.Error.SELF -> "Слой не может быть маской самого себя"
+        com.vibetoon.domain.model.LayerMasks.Error.SOURCE_IS_TARGET -> "У этого слоя своя маска: он не может быть маской"
+        com.vibetoon.domain.model.LayerMasks.Error.TARGET_IS_SOURCE -> "Слой-маска не может получить свою маску"
+        com.vibetoon.domain.model.LayerMasks.Error.SOURCE_TAKEN -> "Этот слой уже маска другого слоя"
+        com.vibetoon.domain.model.LayerMasks.Error.MISSING -> "Слой не найден"
+    }
+
+    private fun maskable(target: Int): Boolean {
+        val item = media.firstOrNull { it.id == target }
+        return target < BONE_ID_BASE && layers.any { it.id == target } && (item == null || (item.isVisual && !item.isRig && item.kind != MediaKind.CAMERA))
+    }
+
+    /**
+     * «Добавить маску»: белый пиксельный слой «Маска: …» на весь холст становится маской слоя [target] и привязан к нему
+     * (едет вместе со слоем). Ластик по маске скрывает слой, кисть возвращает; «Инверсия» - наоборот.
+     */
+    fun addLayerMask(target: Int) {
+        val pid = projectId ?: return
+        if (_playing.value || _editingSymbol.value != null) return
+        if (!maskable(target)) { _state.value = UiState.Message("Маска недоступна для этого слоя"); return }
+        if (maskOf(target) != null) { _state.value = UiState.Message("У слоя уже есть маска"); return }
+        if (maskTargetOf(target) != null) { _state.value = UiState.Message("Слой-маска не может получить свою маску"); return }
+        val scale = minOf(1f, 2048f / maxOf(canvasW, canvasH))
+        val bw = (canvasW * scale).toInt().coerceAtLeast(1)
+        val bh = (canvasH * scale).toInt().coerceAtLeast(1)
+        val id = nextMediaId()
+        val targetName = layerName(target)
+        val ticket = RenderNative.textureUploadTicket(id)
+        viewModelScope.launch {
+            try {
+                val item = withContext(decodeDispatcher) {
+                    val bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(0xFFFFFFFF.toInt())   // белая маска: слой виден целиком
+                    val fileName = "m${id}_${java.util.UUID.randomUUID()}.png"
+                    projects.mediaFile(pid, fileName).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    val ok = RenderNative.uploadBitmapIfCurrent(id, bmp, ticket)
+                    bmp.recycle()
+                    if (!ok) error("Не удалось создать слой в графике")
+                    MediaItem(id, MediaKind.IMAGE, "${dn("Маска")}: $targetName", "assets/$fileName", bw, bh, 0f, 0f, canvasW.toFloat(), canvasH.toFloat())
+                }
+                if (projectId != pid || closing || maskOf(target) != null || layers.none { it.id == target }) return@launch
+                checkpoint("mask-add", force = true)
+                media += item
+                setProps(layerProps + (target to layerPropsOf(target).copy(mask = id, maskInvert = false, maskOff = false)))
+                _links.value = _links.value + (id to target)
+                rebuildLayers(); pushScene(); selectLayer(id); markDirty()
+                _state.value = UiState.Message("Маска добавлена и выбрана: ластик скрывает слой, кисть возвращает")
+                delay(400)
+                requestPaintSize(id)
+            } catch (t: Throwable) {
+                Log.e("VT/Mask", "add mask failed", t)
+                _state.value = UiState.Error(t.message ?: "Не удалось создать маску")
+            }
+        }
+    }
+
+    /** «Маска из слоя выше»: слой прямо над [target] (в той же группе) становится его маской. */
+    fun maskFromLayerAbove(target: Int) {
+        if (_playing.value) return
+        if (!maskable(target)) { _state.value = UiState.Message("Маска недоступна для этого слоя"); return }
+        val me = layers.firstOrNull { it.id == target } ?: return
+        val siblings = layers.filter { it.parentId == me.parentId && it.kind != com.vibetoon.nativebridge.LayerKind.GROUP_END }
+        val above = siblings.getOrNull(siblings.indexOfFirst { it.id == target } + 1)
+        val src = above?.id
+        if (above == null || src == null || above.kind != com.vibetoon.nativebridge.LayerKind.LAYER || media.any { it.id == src && (it.isRig || it.kind == MediaKind.CAMERA) }) {
+            _state.value = UiState.Message("Над слоем нет подходящего слоя для маски"); return
+        }
+        com.vibetoon.domain.model.LayerMasks.check(target, src, layerProps)?.let { _state.value = UiState.Message(maskError(it)); return }
+        checkpoint("mask-above", force = true)
+        setProps(layerProps + (target to layerPropsOf(target).copy(mask = src, maskInvert = false, maskOff = false)))
+        if (_links.value[src] == null && target !in linkDescendants(src)) _links.value = _links.value + (src to target)
+        rebuildLayers(); pushScene(); markDirty()
+        _state.value = UiState.Message("Слой «${layerName(src)}» стал маской: видно там, где он непрозрачный")
+    }
+
+    private fun editMask(target: Int, key: String, change: (com.vibetoon.domain.model.LayerProps) -> com.vibetoon.domain.model.LayerProps) {
+        val p = layerProps[target] ?: return
+        if (p.mask < 0 || _playing.value) return
+        val next = change(p)
+        if (next == p) return
+        checkpoint(key, force = true)
+        setProps(layerProps + (target to next))
+        rebuildLayers(); pushScene(); markDirty()
+    }
+
+    fun setMaskEnabled(target: Int, on: Boolean) = editMask(target, "mask-on") { it.copy(maskOff = !on) }
+    fun setMaskInvert(target: Int, on: Boolean) = editMask(target, "mask-inv") { it.copy(maskInvert = on) }
+
+    /** «Отвязать маску»: слой снова виден целиком, слой-маска становится обычным слоем. */
+    fun unlinkMask(target: Int) {
+        val src = maskOf(target) ?: return
+        if (_playing.value) return
+        checkpoint("mask-unlink", force = true)
+        setProps(layerProps + (target to layerPropsOf(target).copy(mask = -1, maskInvert = false, maskOff = false)))
+        if (_links.value[src] == target) _links.value = _links.value - src
+        rebuildLayers(); pushScene(); markDirty()
+        _state.value = UiState.Message("Маска отвязана: теперь это обычный слой")
+    }
+
+    /** «Удалить маску»: слой-маска удаляется (Undo вернёт), слой виден целиком. */
+    fun deleteMask(target: Int) {
+        val src = maskOf(target) ?: return
+        if (_playing.value) return
+        multiMode = false
+        applySelection(setOf(src), src)
+        deleteSelected()
+        selectLayer(target)
+    }
+
     /** Глубина слоя для параллакса камеры. */
     fun setDepth(id: Int, depth: Float) = updateLayerProps(id) { it.copy(depth = depth) }
 
@@ -2038,7 +2441,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Текстура медиа-слоя из файла проекта (текст рисуется заново из его свойств). */
     /** Возвращает размер отрисованного текста (для текста) или null. */
     private fun uploadTextureFor(pid: String, m: MediaItem): Pair<Float, Float>? {
-        if (m.kind == MediaKind.CAMERA || m.kind == MediaKind.GROUP || m.kind == MediaKind.SYMBOL || m.kind == MediaKind.NULLOBJ) return null   // у камеры и группы нет картинки
+        if (m.kind == MediaKind.CAMERA || m.kind == MediaKind.GROUP || m.kind == MediaKind.SYMBOL || m.isRig) return null   // у камеры и группы нет картинки
         if (m.kind == MediaKind.IMAGE && m.cells.isNotEmpty()) cellShown[m.id] = m.file
         if (m.vector && m.vectors.isNotEmpty() && projects.fileOf(pid, m.file).let { !it.isFile || it.length() == 0L }) return null   // пакет 28: перерисуется из примитивов
         if (m.isText) {
@@ -2361,6 +2764,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_selected.value != primary || _selection.value != set) cancelPendingLasso()
         _selection.value = set
         _selected.value = primary
+        if (primary != null && media.any { it.id == primary && it.kind == MediaKind.BONES }) activeBoneLayer = primary   // спринт 38
+        if (_pathDraw.value && (primary == null || media.none { it.id == primary && it.kind == MediaKind.PATH })) { _pathDraw.value = false; pathStroke = null }
+        refreshPathOverlay()
         if (_paintTool.value != null && primary != null) paintTargetId()?.let { requestPaintSize(it) }   // размер текстуры заранее: первый мазок не ждёт
         updateSelectionFrame()
         if (_warpTool.value) ensureWarp()
@@ -2468,6 +2874,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val f = _frame.value
         val tracks = _animation.value.tracks
         for (id in _selection.value) if (tracks[id]?.keyAt(f) != null) out += id
+        for (id in _selection.value) if (id < BONE_ID_BASE) com.vibetoon.domain.anim.PathLayerMath.progressId(id).let { if (tracks[it]?.keyAt(f) != null) out += it }   // спринт 38: положение на пути
         warpTarget()?.let { t ->
             for ((id, tr) in tracks) {
                 val mine = (WarpMath.isPointId(id) && (id - WarpMath.ID_BASE) / WarpMath.POINTS == t) ||
@@ -2634,7 +3041,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!appPrefs().getBoolean("symbol_context", true)) return emptySet()
         val inside = HashSet<Int>()
         for (d in media) if (d.kind == MediaKind.GROUP && d.symDur > 0) inside += symbolMembers(d.id)
-        val skip = media.filter { it.kind == MediaKind.CAMERA || it.kind == MediaKind.NULLOBJ }.mapTo(HashSet()) { it.id }
+        val skip = media.filter { it.kind == MediaKind.CAMERA || it.isRig }.mapTo(HashSet()) { it.id }
         return layers.asSequence().filter { it.kind == LayerKind.LAYER && it.id < BONE_ID_BASE && it.id != inst && it.id !in inside && it.id !in skip }
             .map { it.id }.toHashSet()
     }
@@ -2676,7 +3083,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             independentBones(), meshesNow(), inputs.perspectives, boneTails(), effectiveSkins(), turbNow(), fxNow(), cameraIdNow(),
             options.nullIds, options.depths, groupDeformations = if (useGroups) inputs.groups else emptyMap(), denseWarps = dense, leafPivots = pivotOverrides,
             stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxLayers, _animation.value, _frame.value),
-            stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxLayers, _animation.value, _frame.value))
+            stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxLayers, _animation.value, _frame.value),
+            layerMasks = options.layerMasks, maskSources = options.maskSources,
+            pathPlaces = options.pathPlaces { lid -> effective(com.vibetoon.domain.anim.PathLayerMath.progressId(lid)).dx })
     }
 
     private fun pushScene() {
@@ -2827,7 +3236,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Пивот правится только в обычном режиме Transform (не кости/деформации/рисование). */
-    private fun pivotToolActive(): Boolean = appSettings()?.pivotEditing != false && !_boneMode.value && !_warpTool.value &&
+    private fun pivotToolActive(): Boolean = appSettings()?.pivotEditing != false && !_boneMode.value && !_warpTool.value && !_pathDraw.value &&
         !_meshMode.value && !_perspTool.value && !_liquifyTool.value && _paintTool.value == null && _rasterTool.value == null &&
         _selected.value.let { it != null && it < BONE_ID_BASE }
 
@@ -3168,6 +3577,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         fxLayers = snap.fx
         pinLayers = snap.pins
         setProps(snap.lprops)
+        _pathRevision.value++   // спринт 38: панель «Положение на пути» перечитывает значение
         refreshFxState()
         _turb.value = warpTarget()?.let { turbEffective(it) }
         textJob?.cancel()
@@ -3346,6 +3756,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_playing.value) return
         val item = media.firstOrNull { it.id == id }
         if (item == null || !item.isVisual) { _state.value = UiState.Message("Дублировать можно картинки, видео, текст и рисунки"); return }
+        if (item.kind == MediaKind.BONES) { _state.value = UiState.Message("Слой костей не дублируется: создайте новый и нарисуйте кости"); return }
         checkpoint("dup", force = true)
         val newId = nextMediaId()
         var copy = item.copy(id = newId, name = dn("${item.name} копия"))
@@ -3363,7 +3774,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             fxLayers = fxLayers + (newId to effects)
             copyEffectTracks(id, newId)
         }
-        layerProps[id]?.let { setProps(layerProps + (newId to it)) }
+        // спринт 38: маска не копируется (у слоя-маски одна цель); прикрепление к пути копируется вместе с положением на пути
+        layerProps[id]?.let { setProps(layerProps + (newId to it.copy(mask = -1, maskInvert = false, maskOff = false))) }
+        if ((layerProps[id]?.path ?: -1) >= 0) {
+            val pFrom = com.vibetoon.domain.anim.PathLayerMath.progressId(id)
+            val pTo = com.vibetoon.domain.anim.PathLayerMath.progressId(newId)
+            base[pFrom]?.let { base[pTo] = it }
+            _animation.value.tracks[pFrom]?.let { tr -> _animation.value = _animation.value.copy(tracks = _animation.value.tracks + (pTo to AnimationTrack(pTo, tr.keys))) }
+            _links.value[id]?.let { _links.value = _links.value + (newId to it) }
+        }
         rebuildLayers()
         pushScene()
         viewModelScope.launch {
@@ -3571,7 +3990,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun symbolHidden(ctx: Int?): Set<Int> {
         val defs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.map { it.id }
         if (defs.isEmpty() && ctx == null) return emptySet()
-        val cams = media.filter { it.kind == MediaKind.CAMERA || it.kind == MediaKind.NULLOBJ }.mapTo(HashSet()) { it.id }
+        val cams = media.filter { it.kind == MediaKind.CAMERA || it.isRig }.mapTo(HashSet()) { it.id }
         val key = listOf(layers, ctx, defs, cams)   // тот же список слоёв (сравнение по ссылке) - тот же результат
         if (key == hiddenCacheKey) return hiddenCache
         return symbolHiddenUncached(ctx, defs, cams).also { hiddenCache = it; hiddenCacheKey = key }
@@ -5316,7 +5735,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
         val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp.psd")
         val tmpDir = projects.fileOf(pid, "exports/.psdtmp")
-        val skip = symbolHidden(null)
+        // спринт 38: служебные слои (Transform, путь, кости) и слои-маски в PSD не пишутся - маска уже применена к своему слою
+        val skip = symbolHidden(null) + media.filter { it.isRig }.map { it.id } + com.vibetoon.domain.model.LayerMasks.sources(layerProps)
         val order = ArrayList<Pair<com.vibetoon.domain.model.Node, Int>>()   // 0 - слой, 1 - начало группы (папка), 3 - конец группы
         fun flat(nodes: List<com.vibetoon.domain.model.Node>) {
             for (n in nodes) {
@@ -10067,6 +10487,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val sel = _selection.value
         val prim = _selected.value
         if (on) savedLayerSel = if (sel.none { it >= BONE_ID_BASE }) sel to prim else null
+        if (on) { _pathDraw.value = false; pathStroke = null }   // спринт 38
         _boneMode.value = on
         val back = savedLayerSel
         if (!on && back != null) {
@@ -10093,6 +10514,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun selectedBone(): Bone? = _selected.value?.let { id -> _bones.value.firstOrNull { it.id == id } }
 
+    /** Bind Pose: трансформация слоя костей кости (свободные кости - без неё). */
+    private fun bindDelta(b: Bone): Affine2D = if (b.layer == 0) Affine2D.IDENTITY else scene?.boneDeltas?.get(b.layer) ?: Affine2D.IDENTITY
+
     // экран <-> холст (те же формулы, что у камеры, с поворотом/отражением вида)
     private fun toScreen(x: Float, y: Float) = camera.toScreen(x, y, viewW, viewH, canvasW, canvasH)
     private fun toCanvas(sx: Float, sy: Float) = camera.toCanvas(sx, sy, viewW, viewH, canvasW, canvasH)
@@ -10101,8 +10525,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun shapes(): List<BoneShape> {
         val rest = _bindPose.value
         val sel = _selected.value
-        return _bones.value.map { b ->
-            val d = if (rest) Affine2D.IDENTITY else scene?.boneDeltas?.get(b.id) ?: Affine2D.IDENTITY
+        // спринт 38: кости скрытого слоя костей не рисуются и не ловятся; в Bind Pose кости слоя едут с его трансформацией
+        return com.vibetoon.domain.anim.BoneLayers.visible(_bones.value, hiddenBoneLayers()).map { b ->
+            val d = if (rest) bindDelta(b) else scene?.boneDeltas?.get(b.id) ?: Affine2D.IDENTITY
             BoneShape(
                 b.id,
                 toScreen(d.applyX(b.hx, b.hy), d.applyY(b.hx, b.hy)).first, toScreen(d.applyX(b.hx, b.hy), d.applyY(b.hx, b.hy)).second,
@@ -10113,6 +10538,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun refreshBoneOverlay() {
+        refreshPathOverlay()
         refreshWarpOverlay()
         refreshMeshOverlay()
         refreshPerspOverlay()
@@ -10135,9 +10561,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Отвязывает выбранную кость от родителя (становится корневой), положение в позе привязки не меняется. */
     fun detachBone() {
         val b = selectedBone() ?: run { _state.value = UiState.Message("Сначала выберите кость (инструмент «Кости»)"); return }
-        if (_links.value[b.id] == null) { _state.value = UiState.Message("У кости нет родителя"); return }
+        val parent = _links.value[b.id]
+        if (parent == null || (b.layer != 0 && parent == b.layer)) { _state.value = UiState.Message("У кости нет родителя"); return }
         checkpoint("bone-detach", force = true)
-        _links.value = _links.value - b.id
+        _links.value = if (b.layer != 0) _links.value + (b.id to b.layer) else _links.value - b.id   // корень слоя костей остаётся в слое
         pushScene()
         markDirty()
         _state.value = UiState.Message("${b.name}: теперь корневая кость")
@@ -10164,6 +10591,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Палец опустился в режиме костей; true - жест забирает кость (иначе палец двигает камеру). */
     fun boneDown(sx: Float, sy: Float): Boolean {
         swallowTap = false
+        if (_pathDraw.value && !_boneMode.value) return pathDown(sx, sy)   // спринт 38: рисование пути слоя-пути
         if (_liquifyTool.value && !_boneMode.value && !_meshMode.value) return liquifyDown(sx, sy)
         if (_perspTool.value && !_boneMode.value && !_meshMode.value) return perspDown(sx, sy)
         if (_meshMode.value && !_boneMode.value) return meshDown(sx, sy)
@@ -10177,7 +10605,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 var y = lastCy
                 // начало новой кости прилипает к концу выбранной (цепочка костей)
                 selectedBone()?.let { p ->
-                    if (kotlin.math.hypot(sx - toScreen(p.tx, p.ty).first, sy - toScreen(p.tx, p.ty).second) < 40f) { x = p.tx; y = p.ty }
+                    val d = bindDelta(p)
+                    val ex = d.applyX(p.tx, p.ty); val ey = d.applyY(p.tx, p.ty)
+                    if (kotlin.math.hypot(sx - toScreen(ex, ey).first, sy - toScreen(ex, ey).second) < 40f) { x = ex; y = ey }
                 }
                 draft = floatArrayOf(x, y, x, y)
                 grab = 3
@@ -10201,6 +10631,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun boneMove(sx: Float, sy: Float) {
         if (grab == 0) return
+        if (grab == PATH_GRAB) { pathMove(sx, sy); return }
         if (grab >= PIN_GRAB) { pinMove(sx, sy); return }
         if (grab == LIQ_GRAB) { liquifyMove(sx, sy); return }
         if (grab >= PERSP_GRAB) { perspMove(sx, sy); return }
@@ -10223,6 +10654,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun boneUp() {
+        if (grab == PATH_GRAB) { pathUp(); return }
         if (grab == LIQ_GRAB) { finishLiquify(); grab = 0; return }
         if (grab >= 20) { if (grab == MESH_CUT) finishCut(); if (grab == MESH_SMUDGE) commitBrush(); perspSideDrag = null; grab = 0; return }
         if (grab == 4) { finishLasso(); grab = 0; return }
@@ -10237,6 +10669,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun boneCancel() {
+        if (grab == PATH_GRAB) { pathStroke = null; grab = 0; refreshPathOverlay(); return }
         if (grab == LIQ_GRAB) finishLiquify()
         if (grab == MESH_CUT) finishCut()
         if (grab == MESH_SMUDGE) commitBrush()
@@ -10458,10 +10891,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // родитель - выбранная кость, но только если новая начата от её конца (цепочка плечо -> предплечье);
         // отдельная кость в другом месте (вторая рука) - корневая, иначе движение одной руки тянет другую
         val sel = selectedBone()
-        val parent = sel?.takeIf { kotlin.math.hypot(x0 - it.tx, y0 - it.ty) < 3f }
+        // спринт 38: кость попадает в выбранный (активный) или единственный слой костей; её точки - в позе привязки слоя
+        val layer = sel?.layer ?: com.vibetoon.domain.anim.BoneLayers.targetLayer(activeBoneLayer, boneLayerIds())
+        val probe = Bone(0, "", 0f, 0f, 0f, 0f, layer = layer)
+        val (r0x, r0y) = boneRest(probe, x0, y0)
+        val (r1x, r1y) = boneRest(probe, x1, y1)
+        val parent = sel?.takeIf { kotlin.math.hypot(r0x - it.tx, r0y - it.ty) < 3f }
         val id = nextBoneId()
-        _bones.value = _bones.value + Bone(id, "Кость ${_bones.value.size + 1}", x0, y0, x1, y1)
+        _bones.value = _bones.value + Bone(id, "Кость ${_bones.value.size + 1}", r0x, r0y, r1x, r1y, layer = layer)
         if (parent != null) _links.value = _links.value + (id to parent.id)   // выбранная кость становится родителем
+        else if (layer != 0) _links.value = _links.value + (id to layer)      // корневая кость слоя костей едет с ним
         applySelection(setOf(id), id)
         pushScene()
         markDirty()
@@ -10469,11 +10908,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Bind Pose: сустав переносит кость целиком с потомками, конец меняет длину и направление. */
-    private fun editBindPose(b: Bone, cx: Float, cy: Float) {
+    private fun editBindPose(b: Bone, cx0: Float, cy0: Float) {
         val kids = linkDescendants(b.id)
+        val (cx, cy) = boneRest(b, cx0, cy0)   // спринт 38: слой костей мог быть сдвинут/повёрнут
+        val (lx, ly) = boneRest(b, lastCx, lastCy)
         if (grab == 1) {
-            val dx = cx - lastCx
-            val dy = cy - lastCy
+            val dx = cx - lx
+            val dy = cy - ly
             _bones.value = _bones.value.map {
                 if (it.id == b.id || it.id in kids) it.copy(hx = it.hx + dx, hy = it.hy + dy, tx = it.tx + dx, ty = it.ty + dy) else it
             }
@@ -10603,7 +11044,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun layerType(id: Int): String {
         media.firstOrNull { it.id == id }?.let {
             return when (it.kind) {
-                MediaKind.TEXT -> "Текст"; MediaKind.IMAGE -> if (it.vector) "Вектор" else "Картинка"; MediaKind.VIDEO -> "Видео"; MediaKind.AUDIO -> "Аудио"; MediaKind.CAMERA -> "Камера"; MediaKind.NULLOBJ -> "Transform Layer"; MediaKind.GROUP -> "Группа"; MediaKind.SYMBOL -> "Символ"
+                MediaKind.TEXT -> "Текст"; MediaKind.IMAGE -> if (it.vector) "Вектор" else "Картинка"; MediaKind.VIDEO -> "Видео"; MediaKind.AUDIO -> "Аудио"; MediaKind.CAMERA -> "Камера"; MediaKind.NULLOBJ -> "Transform Layer"; MediaKind.PATH -> "Путь"; MediaKind.BONES -> "Слой костей"; MediaKind.GROUP -> "Группа"; MediaKind.SYMBOL -> "Символ"
             }
         }
         val k = layers.firstOrNull { it.id == id }?.kind
@@ -10706,7 +11147,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Слои, которым пакетные эффекты группы не раздаются (камера, null-объект). Экземпляры символов - раздаются (пакет 9). */
-    private fun fxUnsupported(): Set<Int> = media.filter { it.kind == MediaKind.CAMERA || it.kind == MediaKind.NULLOBJ }.mapTo(HashSet()) { it.id }
+    private fun fxUnsupported(): Set<Int> = media.filter { it.kind == MediaKind.CAMERA || it.isRig }.mapTo(HashSet()) { it.id }
 
     /**
      * Контекст снимка форм символа [def]: общие предки определения и всех экземпляров (их трансформации экземпляр
@@ -11165,8 +11606,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             for (l in layers) if (l.parentId in all) all += l.id
         } while (all.size != before)
         deletedPsd = deletedPsd + all.filter { it < MEDIA_ID_BASE }
+        val shownCount = all.size
         val removedMedia = media.filter { it.id in all }
         media.removeAll(removedMedia)
+        // спринт 38: слой костей уносит свои кости; маски и прикрепления к удалённым слоям снимаются (цель снова видна целиком)
+        val boneLayersGone = removedMedia.filter { it.kind == MediaKind.BONES }.mapTo(HashSet()) { it.id }
+        if (boneLayersGone.isNotEmpty()) {
+            val (b, l, goneBones) = com.vibetoon.domain.anim.BoneLayers.removeLayers(_bones.value, _links.value, boneLayersGone)
+            _bones.value = b
+            _links.value = l
+            all += goneBones
+        }
+        for (id in all.toList()) if (id < BONE_ID_BASE) all += com.vibetoon.domain.anim.PathLayerMath.progressId(id)
+        if (layerProps.values.any { it.mask in all || it.path in all } || layerProps.keys.any { it in all }) setProps(com.vibetoon.domain.model.LayerMasks.cleared(layerProps, all))
         for (id in all) { base.remove(id); override.remove(id) }
         _links.value = _links.value.filter { (c, p) -> c !in all && p !in all }
         groupDeformationAnchors = groupDeformationAnchors - all
@@ -11182,8 +11634,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         rebuildLayers()
         pushScene()
         markDirty()
-        _state.value = UiState.Message("Удалено: ${all.size}")
-        Log.i("VT/Edit", "deleted ${all.size} nodes: $all")
+        _state.value = UiState.Message("Удалено: $shownCount")
+        Log.i("VT/Edit", "deleted $shownCount nodes: $all")
     }
 
     // ---------------------------------------------------------------- настройки таймлайна
@@ -11249,7 +11701,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Верхние узлы, которые можно сделать своими для сцены (без камеры и null-объектов): id и имя. */
     fun sceneLayerCandidates(): List<Pair<Int, String>> {
-        val skip = media.filter { it.kind == MediaKind.CAMERA || it.kind == MediaKind.NULLOBJ }.mapTo(HashSet()) { it.id }
+        val skip = media.filter { it.kind == MediaKind.CAMERA || it.isRig }.mapTo(HashSet()) { it.id }
         return roots.filter { it.id < BONE_ID_BASE && it.id !in skip }.reversed().map { it.id to layerName(it.id) }   // сверху вниз, как в панели слоёв
     }
 
@@ -11875,7 +12327,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 groupInputs.perspectives, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
                 sceneLookFx(fxRecords(fxl, adjCopy, anim, pf, st.fps), lookExp, leafExp), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides,
                 stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxl, anim, pf),
-                stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxl, anim, pf)).also { sc ->
+                stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxl, anim, pf),
+                layerMasks = sceneOptions.layerMasks, maskSources = sceneOptions.maskSources,
+                pathPlaces = sceneOptions.pathPlaces { lid -> com.vibetoon.domain.anim.PathLayerMath.progressId(lid).let { pidP -> anim.evaluate(pidP, pf, baseCopy[pidP]).dx } }).also { sc ->
                 sc.backgroundOverride = lookExp.background
                 if (formAliases.isNotEmpty()) sc.aliases = com.vibetoon.domain.project.ExportSymbolForms.aliases(formAliases)
                 if (batch != null && session != null) sc.beforeDraw = { session.textures.commit(batch) }

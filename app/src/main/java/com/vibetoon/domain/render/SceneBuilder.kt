@@ -139,6 +139,11 @@ object SceneBuilder {
      */
     const val FLAG_MASK_SRC = 4
     const val FLAG_MASKED = 8
+    /**
+     * Спринт 38, маска слоя: у группы под маской ([FLAG_MASKED]) - инверсия, буфер умножается на (1 - альфа маски):
+     * нарисованное на маске скрывает слой. Маска слоя - тот же механизм пары «маска - группа под маской», что и в пакете 26.
+     */
+    const val FLAG_MASK_INVERT = 16
 
     /** Вид камеры (без параллакса): тот же, что у корней сцены; null - камеры нет. */
     fun cameraView(cam: LayerTransform?, canvasWidth: Int, canvasHeight: Int): Affine2D {
@@ -223,7 +228,13 @@ object SceneBuilder {
         /** «Ось растяжения»: id -> линейная матрица в осях слоя вокруг опорной точки (дети группы растягиваются вместе с ней). */
         stretches: Map<Int, Affine2D> = emptyMap(),
         /** Пакет 26: слои и группы с включённой «Маской по слою» у «Оси растяжения» (растянутое видно только в своей форме). */
-        stretchMasks: Set<Int> = emptySet()
+        stretchMasks: Set<Int> = emptySet(),
+        /** Спринт 38: маски слоёв - цель (слой или группа) -> слой-маска и инверсия. */
+        layerMasks: Map<Int, com.vibetoon.domain.model.LayerMasks.Mask> = emptyMap(),
+        /** Спринт 38: слои-маски (и выключенных масок): сами по себе не рисуются, рамка для выбора остаётся. */
+        maskSources: Set<Int> = emptySet(),
+        /** Спринт 38: слои на пути - id -> [x, y, угол] (координаты холста): опорная точка слоя встаёт в точку пути. */
+        pathPlaces: Map<Int, FloatArray> = emptyMap()
     ): SceneData {
         require(preparedGroupMeshes.keys.none { it in meshes || it in warps || it in persp || it in skins }) {
             "Group mesh conflicts with a leaf deformer"
@@ -261,8 +272,17 @@ object SceneBuilder {
             params += listOf(m.a, m.b, m.c, m.d, m.tx, m.ty, opacity, 0f)
         }
 
+        val fitInv0 = rootWorld0.inverse() ?: Affine2D.IDENTITY
         fun local(t: LayerTransform, px: Float, py: Float, id: Int = Int.MIN_VALUE): Affine2D {
-            val m = Affine2D.translate(px + t.dx, py + t.dy) * Affine2D.rotate(t.rotation) * Affine2D.scale(t.scaleX, t.scaleY)
+            val pl = if (pathPlaces.isEmpty()) null else pathPlaces[id]
+            val m = if (pl == null) Affine2D.translate(px + t.dx, py + t.dy) * Affine2D.rotate(t.rotation) * Affine2D.scale(t.scaleX, t.scaleY)
+            else {
+                // спринт 38: слой на пути - опорная точка в точке пути (путь в координатах холста; у слоя PSD - через вписывание)
+                val media = id >= MEDIA_ID_BASE
+                val x = if (media) pl[0] else fitInv0.applyX(pl[0], pl[1])
+                val y = if (media) pl[1] else fitInv0.applyY(pl[0], pl[1])
+                Affine2D.translate(x + t.dx, y + t.dy) * Affine2D.rotate(t.rotation + pl[2]) * Affine2D.scale(t.scaleX, t.scaleY)
+            }
             val st = if (stretches.isEmpty()) null else stretches[id]
             return (if (st == null) m else m * st) * Affine2D.translate(-px, -py)
         }
@@ -306,7 +326,8 @@ object SceneBuilder {
         // Предпроход: для каждого узла локальная матрица и мир его родителя в дереве (без привязок).
         val pw0 = HashMap<Int, Affine2D>()
         val loc0 = HashMap<Int, Affine2D>()
-        if (links.isNotEmpty() || bones.isNotEmpty()) {
+        val leafNodes = HashMap<Int, LeafNode>()
+        if (links.isNotEmpty() || bones.isNotEmpty() || layerMasks.isNotEmpty()) {
             fun pre(nodes: List<Node>, parentWorld0: Affine2D, parentMedia: Boolean) {
                 for (n in nodes) {
                     val parentWorld = crossed(parentWorld0, parentMedia, n.id)
@@ -317,6 +338,7 @@ object SceneBuilder {
                     }
                     pw0[n.id] = parentWorld
                     loc0[n.id] = l
+                    if (n is LeafNode) leafNodes[n.id] = n
                     if (n is GroupNode) pre(n.children, parentWorld * l, SceneDomain.isMedia(n.id))
                 }
             }
@@ -354,6 +376,59 @@ object SceneBuilder {
             return d
         }
         fun linkDelta(id: Int): Affine2D = links[id]?.let { delta(it) } ?: Affine2D.IDENTITY
+
+        // Спринт 38: мир родителя каждого слоя-маски так же, как его посчитает обход (с привязками групп и глубиной камеры):
+        // маска рисуется перед своей целью, даже если сама лежит выше в стопке или в другой группе.
+        val maskParent = HashMap<Int, Affine2D>()
+        if (layerMasks.isNotEmpty()) {
+            val wanted = layerMasks.values.mapTo(HashSet()) { it.source }
+            fun scan(nodes: List<Node>, parentWorld0: Affine2D, parentMedia: Boolean) {
+                for (n in nodes) {
+                    val pw = crossed(parentWorld0, parentMedia, n.id)
+                    when (n) {
+                        is GroupNode -> if (n.visible) scan(n.children, linkDelta(n.id) * pw * local(transforms[n.id] ?: LayerTransform(), n.pivotX, n.pivotY, n.id), SceneDomain.isMedia(n.id))
+                        is LeafNode -> if (n.id in wanted) maskParent[n.id] = pw
+                    }
+                }
+            }
+            for (r in roots) {
+                val media = r.id >= MEDIA_ID_BASE
+                scan(listOf(r), camViewFor(depths[r.id] ?: 0f) * (if (media) Affine2D.IDENTITY else rootWorld0), media)
+            }
+        }
+
+        /** Рамка слоя в мире (для служебных и маскирующих слоёв, которые не рисуются). */
+        fun leafWorldQuad(n: LeafNode, parentWorld: Affine2D): FloatArray {
+            val t = transforms[n.id] ?: LayerTransform()
+            val skinned = n.id in skins && n.id in meshes
+            val pw = (if (skinned) Affine2D.IDENTITY else linkDelta(n.id)) * parentWorld
+            val w = pw * local(t, leafPivots[n.id]?.first ?: (n.x + n.w / 2f), leafPivots[n.id]?.second ?: (n.y + n.h / 2f), n.id)
+            return cornersOf(w * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat()))
+        }
+
+        /**
+         * Спринт 38: проход маски слоя - буфер с альфой слоя-маски (без шейдерных эффектов). Пустой слой-маска даёт пустой
+         * буфер (цель скрыта, с инверсией - видна целиком). false - слоя-маски нет в сцене: цель рисуется без маски.
+         */
+        fun emitLayerMask(mask: com.vibetoon.domain.model.LayerMasks.Mask): Boolean {
+            val src = leafNodes[mask.source] ?: return false
+            val parent = maskParent[src.id] ?: return false
+            add(OP_BEGIN_GROUP, src.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
+            if (!src.isEmpty) {
+                val t = transforms[src.id] ?: LayerTransform()
+                val skinned = src.id in skins && src.id in meshes
+                val pw = (if (skinned) Affine2D.IDENTITY else linkDelta(src.id)) * parent
+                val world = pw * local(t, leafPivots[src.id]?.first ?: (src.x + src.w / 2f), leafPivots[src.id]?.second ?: (src.y + src.h / 2f), src.id)
+                val m = world * Affine2D.translate(src.x.toFloat(), src.y.toFloat()) * Affine2D.scale(src.w.toFloat(), src.h.toFloat())
+                if (skinned) skinRest[src.id] = m
+                // прозрачность слоя-маски из панели слоёв ослабляет маску; глаз и плашка таймлайна маску не выключают
+                add(OP_LAYER, src.id, BLEND_NORMAL, FLAG_MASK_SRC, m, src.opacity)
+                textureIds += src.id
+            }
+            add(OP_END_GROUP, src.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
+            return true
+        }
+        fun maskFlags(mask: com.vibetoon.domain.model.LayerMasks.Mask) = FLAG_MASKED or (if (mask.invert) FLAG_MASK_INVERT else 0)
 
         /** Обход списка братьев; в [out] накапливаются рамки видимых слоёв (для рамки группы). */
         fun walk(nodes: List<Node>, parentWorld0: Affine2D, out: MutableList<FloatArray>, parentMedia: Boolean, clipInit: Boolean? = null): Boolean? {
@@ -401,7 +476,10 @@ object SceneBuilder {
                             add(OP_END_GROUP, n.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
                             maskPass--
                         }
-                        val gFlag = if (gMasked) FLAG_MASKED else 0
+                        // Спринт 38: маска слоя у группы (если у группы нет «Маски по слою» растяжения)
+                        val gLayerMask = if (!gMasked && previous == null && maskPass == 0) layerMasks[n.id] else null
+                        val gLm = gLayerMask != null && emitLayerMask(gLayerMask)
+                        val gFlag = if (gMasked) FLAG_MASKED else if (gLm) maskFlags(gLayerMask!!) else 0
                         add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), gFlag, Affine2D.IDENTITY, n.opacity * t.opacity)
                         val childQuads = ArrayList<FloatArray>()
                         walk(n.children, world, childQuads, SceneDomain.isMedia(n.id))
@@ -442,6 +520,12 @@ object SceneBuilder {
                             quads[n.id] = qN; out += qN
                             continue
                         }
+                        if (n.id in maskSources) {
+                            // Спринт 38: слой-маска сам не рисуется (и не рвёт цепочку обтравки); рамка - для выбора в панели
+                            val qM = leafWorldQuad(n, parentWorld)
+                            quads[n.id] = qM
+                            continue
+                        }
                         if (n.isEmpty) {
                             if (!n.clipped) clipBaseVisible = false
                             continue
@@ -478,7 +562,14 @@ object SceneBuilder {
                             generatedDenseMeshes[n.id] = requireNotNull(DenseWarpMesh.build(grid, cubic)) { "Invalid dense warp" }
                         }
                         val hitFlag = if (n.id in bboxHitIds) FLAG_HIT_BBOX else 0
-                        if (n.id in stretchMasks && stretches[n.id] != null && !clipped && activeGroup == null) {
+                        val leafMask = if (!clipped && activeGroup == null && maskPass == 0 && !(n.id in stretchMasks && stretches[n.id] != null)) layerMasks[n.id] else null
+                        if (leafMask != null && emitLayerMask(leafMask)) {
+                            // Спринт 38: маска слоя - буфер маски, затем слой в группе под маской; прозрачность и режим наложения
+                            // слоя - у этой группы, слои с обтравкой по нему остаются внутри (обтравливаются по видимой части)
+                            add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), maskFlags(leafMask), Affine2D.IDENTITY, n.opacity * t.opacity)
+                            add(OP_LAYER, n.id, BLEND_NORMAL, hitFlag, m, 1f)
+                            openMasked = true
+                        } else if (n.id in stretchMasks && stretches[n.id] != null && !clipped && activeGroup == null) {
                             // Пакет 26: «Маска по слою» - маска (слой без растяжения), затем растянутый слой под ней; прозрачность
                             // и режим наложения слоя - у группы под маской (как у основы обтравки)
                             val m0 = pw * local(t, lpx, lpy) * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
@@ -575,7 +666,8 @@ object SceneBuilder {
         }
         return SceneData(
             canvasWidth, canvasHeight, ops.toIntArray(), params.toFloatArray(), textureIds.distinct().toIntArray(),
-            quads, parentWorlds, bones.keys.associateWith { delta(it) },
+            // спринт 38: и дельты слоёв костей - родителей корневых костей (id < BONE_ID_BASE): поза в Animation считается от них
+            quads, parentWorlds, (bones.keys + bones.keys.mapNotNull { links[it] }.filter { it !in bones }).associateWith { delta(it) },
             nativeWarps.keys.toIntArray(), nativeWarps.values.flatMap { it.asList() }.toFloatArray(),
             mIds, mCounts, mVerts.toFloatArray(), mTris.toIntArray(),
             persp.keys.toIntArray(), persp.values.flatMap { it.asList() }.toFloatArray(),

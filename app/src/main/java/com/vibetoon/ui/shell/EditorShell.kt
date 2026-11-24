@@ -1335,6 +1335,8 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                     DropdownMenuItem(text = { Text("Текст") }, onClick = { addMenu = false; add.text() })
                     DropdownMenuItem(text = { Text("Камера (Pan & Zoom)") }, onClick = { addMenu = false; vm.addCameraLayer() })
                     DropdownMenuItem(text = { Text("Transform Layer (null)") }, onClick = { addMenu = false; vm.addNullLayer() })
+                    DropdownMenuItem(text = { Text("Слой-путь (Path)") }, onClick = { addMenu = false; vm.addPathLayer() })      // спринт 38
+                    DropdownMenuItem(text = { Text("Слой костей (Bones)") }, onClick = { addMenu = false; vm.addBoneLayer() })
                 }
             }
         }
@@ -1434,7 +1436,8 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                             ) else Icon(
                                 when (type) {
                                     "Текст" -> Icons.Default.TextFields; "Картинка" -> Icons.Default.Image; "Видео" -> Icons.Default.Videocam
-                                    "Группа" -> Icons.Default.Folder; else -> Icons.Default.Layers
+                                    "Группа" -> Icons.Default.Folder; "Путь" -> Icons.Default.Timeline; "Слой костей" -> Icons.Default.AccountTree
+                                    else -> Icons.Default.Layers
                                 }, com.vibetoon.ui.i18n.L(type), modifier = Modifier.size(16.dp)
                             )
                         }
@@ -1444,12 +1447,15 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                                 Text(l.name, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             val lp = lprops[l.id]
-                            val extra = if (lp == null) "" else buildString {
+                            val extra = (if (lp == null) "" else buildString {
                                 if (lp.blend != "norm") append(" · ${LayerBlend.title(lp.blend)}")
                                 if (lp.opacity < 0.995f) append(" · ${(lp.opacity * 100).toInt()}%")
                                 if (lp.alphaLock) append(" · Alpha Lock")
                                 if (lp.clip) append(" · Clip")
-                            }
+                                // спринт 38: маска слоя и прикрепление к пути видны в строке слоя
+                                if (lp.mask >= 0) append(" · " + com.vibetoon.ui.i18n.L(if (lp.maskOff) "Маска выкл." else if (lp.maskInvert) "Маска (инверсия)" else "Маска"))
+                                if (lp.path >= 0) append(" · " + com.vibetoon.ui.i18n.L("На пути"))
+                            }) + (if (vm.maskTargetOf(l.id) != null) " · " + com.vibetoon.ui.i18n.L("Слой-маска") else "")
                             Text(vm.layerType(l.id) + extra, fontSize = 9.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
                         }
                         Box(
@@ -1484,7 +1490,9 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                             "Выбрать несколько", "Переименовать", "Заблокировать / разблокировать", "Копировать", "Вставить выше",
                             "Дублировать", "Наверх группы", "Вниз группы", "Удалить", "Очистить", "Маска вкл/выкл",
                             "Растрировать", "Слить вниз", "Слить все видимые", "Создать символ"
-                        ) + (if (vm.isSymbolInstance(l.id)) listOf("Редактировать символ", "Выбрать маркер (фонему)") else emptyList())) {
+                        ) + (if (vm.isSymbolInstance(l.id)) listOf("Редактировать символ", "Выбрать маркер (фонему)") else emptyList())
+                          + (if (vm.maskOf(l.id) == null && vm.maskTargetOf(l.id) == null && vm.mediaKindOf(l.id).let { it == null || it == com.vibetoon.domain.project.MediaKind.IMAGE || it == com.vibetoon.domain.project.MediaKind.TEXT || it == com.vibetoon.domain.project.MediaKind.VIDEO || it == com.vibetoon.domain.project.MediaKind.GROUP || it == com.vibetoon.domain.project.MediaKind.SYMBOL }) listOf("Добавить маску слоя") else emptyList())
+                          + (if (vm.maskOf(l.id) != null) listOf("Удалить маску слоя") else emptyList())) {
                             DropdownMenuItem(text = { Text(title) }, onClick = {
                                 menuFor = null
                                 when (title) {
@@ -1505,6 +1513,8 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                                     "Создать символ" -> if (selection.size >= 2 && l.id in selection) symbolModeFor = l.id else vm.createSymbol(l.id)
                                     "Редактировать символ" -> vm.enterSymbol(l.id)
                                     "Выбрать маркер (фонему)" -> vm.openMarkerPanel(l.id)
+                                    "Добавить маску слоя" -> vm.addLayerMask(l.id)
+                                    "Удалить маску слоя" -> vm.deleteMask(l.id)
                                     else -> stub(title)
                                 }
                             })
@@ -1565,6 +1575,98 @@ private fun LayerPropsPanel(vm: MainViewModel, id: Int, isGroup: Boolean, all: M
                 )
             }
         }
+        Sprint38LayerExtras(vm, id, isGroup, p)
+    }
+}
+
+/**
+ * Спринт 38: свойства слоя-пути и слоя костей, маска слоя (вкл/выкл, инверсия, отвязать/удалить) и прикрепление к пути
+ * (положение 0..100 % с ключами, ориентация по касательной). Все правки - с Undo/Redo и сохраняются в проекте.
+ */
+@Composable
+private fun Sprint38LayerExtras(vm: MainViewModel, id: Int, isGroup: Boolean, p: com.vibetoon.domain.model.LayerProps) {
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val frame by vm.frame.collectAsStateWithLifecycle()
+    val pathRev by vm.pathRevision.collectAsStateWithLifecycle()
+    val pathDraw by vm.pathDraw.collectAsStateWithLifecycle()
+    val bones by vm.bones.collectAsStateWithLifecycle()
+    val kind = vm.mediaKindOf(id)
+    val pad = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+    val hint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    when (kind) {
+        com.vibetoon.domain.project.MediaKind.PATH -> {
+            Text("Слой-путь: не рисуется и не экспортируется. Прикрепите слои к пути в их свойствах; трансформация пути двигает их вместе с ним.", fontSize = 10.sp, color = hint)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(selected = pathDraw, enabled = !playing, onClick = { vm.setPathDraw(!pathDraw) }, label = { Text("Нарисовать путь", fontSize = 11.sp) },
+                    leadingIcon = { Icon(Icons.Default.Gesture, null, modifier = Modifier.size(14.dp)) }, modifier = Modifier.height(30.dp))
+                for ((key, title) in listOf("line" to "Линия", "arc" to "Дуга", "wave" to "Волна", "circle" to "Круг"))
+                    OutlinedButton(onClick = { vm.setPathPreset(key) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text(title, fontSize = 11.sp) }
+            }
+            return
+        }
+        com.vibetoon.domain.project.MediaKind.BONES -> {
+            val (own, free) = remember(bones, id) { vm.boneLayerCounts(id) }
+            Text("Слой костей: хозяин скелета. Сдвиг, поворот и масштаб слоя двигают все его кости и привязанные к ним слои; глаз скрывает кости на холсте.", fontSize = 10.sp, color = hint)
+            Text("Костей в слое: $own", fontSize = 11.sp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { vm.editBoneLayer(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Кости этого слоя", fontSize = 11.sp) }
+                if (free > 0) OutlinedButton(onClick = { vm.adoptFreeBones(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Собрать свободные кости ($free)", fontSize = 11.sp) }
+            }
+            return
+        }
+        com.vibetoon.domain.project.MediaKind.NULLOBJ, com.vibetoon.domain.project.MediaKind.CAMERA, com.vibetoon.domain.project.MediaKind.AUDIO -> return
+        else -> {}
+    }
+    // слой-маска: подсказка и переход к цели
+    val target = vm.maskTargetOf(id)
+    if (target != null) {
+        Text("Маска слоя «${vm.layerName(target)}»: сама не рисуется. Ластик скрывает слой, кисть возвращает (с инверсией - наоборот).", fontSize = 10.sp, color = hint)
+        OutlinedButton(onClick = { vm.selectLayer(target) }, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("К слою", fontSize = 11.sp) }
+        return
+    }
+    // маска слоя
+    val mask = if (p.mask >= 0) p.mask else null
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (mask == null) {
+            OutlinedButton(onClick = { vm.addLayerMask(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Добавить маску слоя", fontSize = 11.sp) }
+            OutlinedButton(onClick = { vm.maskFromLayerAbove(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Маска из слоя выше", fontSize = 11.sp) }
+        } else {
+            FilterChip(selected = !p.maskOff, enabled = !playing, onClick = { vm.setMaskEnabled(id, p.maskOff) }, label = { Text("Маска", fontSize = 11.sp) }, modifier = Modifier.height(30.dp))
+            FilterChip(selected = p.maskInvert, enabled = !playing, onClick = { vm.setMaskInvert(id, !p.maskInvert) }, label = { Text("Инверсия", fontSize = 11.sp) }, modifier = Modifier.height(30.dp))
+            OutlinedButton(onClick = { vm.selectLayer(mask) }, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Править маску", fontSize = 11.sp) }
+            OutlinedButton(onClick = { vm.unlinkMask(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Отвязать", fontSize = 11.sp) }
+            OutlinedButton(onClick = { vm.deleteMask(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Удалить маску слоя", fontSize = 11.sp) }
+        }
+    }
+    if (isGroup) return
+    // прикрепление к пути
+    val paths = remember(pathRev, id, p.path) { vm.pathLayers() }
+    if (p.path < 0) {
+        if (paths.isEmpty()) return
+        var menu by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick = { menu = true }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Прикрепить к пути…", fontSize = 11.sp) }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                for ((pid, name) in paths) DropdownMenuItem(text = { Text(com.vibetoon.ui.i18n.layerDisplayName(name, false)) }, onClick = { menu = false; vm.attachToPath(id, pid) })
+            }
+        }
+        return
+    }
+    val pos = remember(pathRev, frame, id) { vm.pathProgressOf(id) }
+    val keyed = remember(pathRev, frame, id) { vm.pathKeyAt(id) }
+    val pathName = paths.firstOrNull { it.first == p.path }?.second ?: "#${p.path}"
+    Text("На пути «${com.vibetoon.ui.i18n.layerDisplayName(pathName, false)}»", fontSize = 11.sp)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Полож.", fontSize = 11.sp, modifier = Modifier.width(44.dp))
+        androidx.compose.material3.Slider(value = pos.coerceIn(0f, 100f), onValueChange = { vm.setPathProgress(id, it) }, enabled = !playing,
+            valueRange = 0f..100f, modifier = Modifier.weight(1f).height(28.dp))
+        Text("${pos.toInt()}%", fontSize = 11.sp, modifier = Modifier.width(38.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+    }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (keyed) OutlinedButton(onClick = { vm.deletePathKey(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("◇ Удалить ключ", fontSize = 11.sp) }
+        else OutlinedButton(onClick = { vm.addPathKey(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("◆ Добавить ключ", fontSize = 11.sp) }
+        FilterChip(selected = p.pathOrient, enabled = !playing, onClick = { vm.setPathOrient(id, !p.pathOrient) }, label = { Text("По касательной", fontSize = 11.sp) }, modifier = Modifier.height(30.dp))
+        OutlinedButton(onClick = { vm.detachFromPath(id) }, enabled = !playing, contentPadding = pad, modifier = Modifier.height(30.dp)) { Text("Отцепить", fontSize = 11.sp) }
     }
 }
 

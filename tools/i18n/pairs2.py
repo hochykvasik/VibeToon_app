@@ -1527,4 +1527,59 @@ Out of Pegs: соседние рисунки стоят там, где слой 
 Глубина:|Depth:
 Цвет:|Color:
 Круг HSV|HSV wheel
+Слой-путь (Path)|Path layer
+Слой костей (Bones)|Bone layer (Bones)
+Слой костей|Bone layer
+Маска|Mask
+Маска выкл.|Mask off
+Маска (инверсия)|Mask (inverted)
+На пути|On path
+Слой-маска|Mask layer
+Добавить маску слоя|Add layer mask
+Удалить маску слоя|Delete layer mask
+Маска из слоя выше|Mask from layer above
+Править маску|Edit mask
+К слою|Go to layer
+Отцепить|Detach
+По касательной|Along tangent
+Полож.|Position
+Прикрепить к пути…|Attach to path…
+Нарисовать путь|Draw path
+Дуга|Arc
+Кости этого слоя|Bones of this layer
+Костей в слое: {}|Bones in layer: {}
+Собрать свободные кости ({})|Collect free bones ({})
+На пути «{}»|On path “{}”
+Маска слоя «{}»: сама не рисуется. Ластик скрывает слой, кисть возвращает (с инверсией - наоборот).|Mask of layer “{}”: it is never drawn itself. The eraser hides the layer, the brush brings it back (inverted - the other way round).
+Слой-путь: не рисуется и не экспортируется. Прикрепите слои к пути в их свойствах; трансформация пути двигает их вместе с ним.|Path layer: it is not drawn or exported. Attach layers to the path in their properties; transforming the path moves them along with it.
+Слой костей: хозяин скелета. Сдвиг, поворот и масштаб слоя двигают все его кости и привязанные к ним слои; глаз скрывает кости на холсте.|Bone layer: the owner of a skeleton. Moving, rotating and scaling the layer moves all its bones and the layers bound to them; the eye hides the bones on the canvas.
+Слой пути и слой костей создаются из меню «＋»|Path and bone layers are created from the “＋” menu
+Слой костей создан: в него перенесены кости проекта|Bone layer created: the project's bones were moved into it
+Слой костей создан: режим «Кости» и «＋ Кость» рисуют кости этого слоя|Bone layer created: the “Bones” mode and “＋ Bone” draw bones of this layer
+Свободных костей нет|There are no free bones
+Свободные кости перенесены в слой костей|Free bones were moved into the bone layer
+Слой-путь создан: нарисуйте путь пальцем или выберите готовый; слои прикрепляются в их свойствах|Path layer created: draw the path with a finger or pick a ready one; layers are attached in their properties
+Сначала выберите слой-путь|Select a path layer first
+Путь заменён|Path replaced
+Проведите пальцем по холсту: новый путь заменит текущий|Swipe across the canvas: the new path replaces the current one
+Рисование пути выключено|Path drawing off
+Путь нарисован|Path drawn
+Слишком короткий путь: проведите пальцем дальше|The path is too short: swipe farther
+Этот слой нельзя прикрепить к пути|This layer can't be attached to a path
+Нельзя: слой-путь привязан к этому слою|Not possible: the path layer is bound to this layer
+Слой прикреплён к пути «{}»: двигайте «Положение на пути» и ставьте ключи|Layer attached to path “{}”: move “Position on path” and set keys
+Слой отцеплен от пути|Layer detached from the path
+Слой не может быть маской самого себя|A layer can't be its own mask
+У этого слоя своя маска: он не может быть маской|This layer has its own mask: it can't be a mask
+Слой-маска не может получить свою маску|A mask layer can't get its own mask
+Этот слой уже маска другого слоя|This layer is already the mask of another layer
+Слой не найден|Layer not found
+Маска недоступна для этого слоя|A mask isn't available for this layer
+У слоя уже есть маска|The layer already has a mask
+Маска добавлена и выбрана: ластик скрывает слой, кисть возвращает|Mask added and selected: the eraser hides the layer, the brush brings it back
+Не удалось создать маску|Could not create the mask
+Над слоем нет подходящего слоя для маски|There is no suitable layer above for a mask
+Слой «{}» стал маской: видно там, где он непрозрачный|Layer “{}” became a mask: visible where it is opaque
+Маска отвязана: теперь это обычный слой|Mask unlinked: it is a regular layer now
+Слой костей не дублируется: создайте новый и нарисуйте кости|A bone layer can't be duplicated: create a new one and draw bones
 """

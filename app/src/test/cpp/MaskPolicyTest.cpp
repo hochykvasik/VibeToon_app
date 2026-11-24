@@ -40,6 +40,24 @@ int main() {
     leak.begin(kMaskSrc); leak.end();
     assert(!leak.finish() && leak.masks == 0);
 
+    // спринт 38: маска слоя с инверсией - та же пара, буфер умножается на 1 - альфа
+    static_assert(kMaskInvert == 16, "flag must match SceneBuilder.FLAG_MASK_INVERT");
+    static_assert(inverted(kMasked | kMaskInvert) && !inverted(kMasked) && !inverted(kMaskInvert), "invert only under mask");
+    static_assert(dstFactor(kMasked) == 0 && dstFactor(kMasked | kMaskInvert) == 1, "blend factor");
+    static_assert(isolated(kMasked | kMaskInvert, true, 1.f), "masked group has own buffer");
+    assert(coverage(kMasked, 1.f) == 1.f && coverage(kMasked, 0.f) == 0.f);
+    assert(coverage(kMasked | kMaskInvert, 1.f) == 0.f && coverage(kMasked | kMaskInvert, 0.f) == 1.f);
+    assert(coverage(kMasked | kMaskInvert, 0.25f) == 0.75f);
+    Sim inv;
+    inv.begin(kMaskSrc); inv.end(); inv.begin(kMasked | kMaskInvert); inv.begin(0); inv.end(); inv.end();
+    inv.begin(kMaskSrc); inv.end(); inv.begin(kMasked); inv.end();
+    assert(inv.applied == 2 && inv.invertedApplied == 1);
+    assert(inv.finish());
+    // пустая маска (слой-маска без пикселей): пустой буфер, пара по-прежнему сбалансирована
+    Sim empty;
+    empty.begin(kMaskSrc); empty.end(); empty.begin(kMasked | kMaskInvert); empty.end();
+    assert(empty.applied == 1 && empty.finish());
+
     std::printf("MaskPolicyTest OK\n");
     return 0;
 }

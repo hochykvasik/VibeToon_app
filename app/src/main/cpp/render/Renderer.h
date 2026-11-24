@@ -172,6 +172,7 @@ private:
     // kFlagMaskSrc: рисуются без шейдерных эффектов (кэш эффектов - по id слоя) и не ловятся касанием.
     static constexpr int kFlagMaskSrc = maskpolicy::kMaskSrc;
     static constexpr int kFlagMasked = maskpolicy::kMasked;
+    static constexpr int kFlagMaskInvert = maskpolicy::kMaskInvert;   // спринт 38: маска слоя с инверсией
 
     struct Tex {
         GLuint id = 0;
@@ -271,7 +272,7 @@ private:
     void drawLayerPlain(const Item& it, float opacity, int blend, bool clipMode);
     void runEffect(GLuint srcTex, const float* e);   // e[10]: тип, p0..p7, время
     void compositeFbo(const Fbo& f, float opacity, int blend);
-    void multiplyByMask(const Fbo& mask);        // текущая цель *= альфа маски (Маска по слою)
+    void multiplyByMask(const Fbo& mask, bool invert = false);   // текущая цель *= альфа маски (или 1 - альфа, спринт 38)
     void drawItem(const Item& it, float opacity, int blend, bool clipMode);   // слой маски - без эффектов
 
     int width_ = 1, height_ = 1;

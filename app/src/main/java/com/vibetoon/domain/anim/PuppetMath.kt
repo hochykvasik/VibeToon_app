@@ -20,7 +20,7 @@ object PuppetMath {
     const val MAX_PINS = 64
 
     fun pinId(layerId: Int, k: Int) = ID_BASE + layerId * MAX_PINS + k
-    fun isPinId(id: Int) = id >= ID_BASE
+    fun isPinId(id: Int) = id >= ID_BASE && id < PathLayerMath.ID_BASE   // выше - положения слоёв на путях (спринт 38)
     fun layerOf(id: Int) = (id - ID_BASE) / MAX_PINS
     fun indexOf(id: Int) = (id - ID_BASE) % MAX_PINS
 

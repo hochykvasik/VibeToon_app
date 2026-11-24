@@ -374,6 +374,7 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         if (com.vibetoon.ui.theme.LocalAppSettings.current?.showGrid == true) CanvasGridLayer(vm)
         MotionPathLayer(vm)
         BoneOverlayLayer(vm)
+        PathOverlayLayer(vm)   // спринт 38: путь слоя-пути
         WarpOverlayLayer(vm)
         MeshOverlayLayer(vm)
         PinOverlayLayer(vm)
@@ -737,6 +738,38 @@ private fun CanvasGridLayer(vm: MainViewModel) {
         val grid = com.vibetoon.domain.render.CanvasGrid.lines(view.width, view.height, view.canvasWidth, view.canvasHeight, view.camera, cells) ?: return@Canvas
         for (x in grid.vertical) drawLine(color, Offset(x, grid.top), Offset(x, grid.bottom), width)
         for (y in grid.horizontal) drawLine(color, Offset(grid.left, y), Offset(grid.right, y), width)
+    }
+}
+
+/** Спринт 38: путь слоя-пути поверх холста (сплошной - выбран слой-путь, пунктир - путь выбранного слоя) и рисуемый жест. */
+@Composable
+private fun PathOverlayLayer(vm: MainViewModel) {
+    val overlay by vm.pathOverlay.collectAsStateWithLifecycle()
+    if (overlay.pts.size < 4 && overlay.draft.size < 4) return
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        val accent = Color(0xFFAB47BC)
+        fun poly(p: List<Float>, closed: Boolean, color: Color, width: Float, dashed: Boolean) {
+            if (p.size < 4) return
+            val path = Path().apply {
+                moveTo(p[0], p[1])
+                for (i in 1 until p.size / 2) lineTo(p[i * 2], p[i * 2 + 1])
+                if (closed) close()
+            }
+            drawPath(path, Color.Black.copy(alpha = 0.5f), style = Stroke(width + 2.dp.toPx()))
+            drawPath(path, color, style = Stroke(width, pathEffect = if (dashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10.dp.toPx(), 6.dp.toPx())) else null))
+        }
+        val p = overlay.pts
+        poly(p, overlay.closed, if (overlay.own) accent else accent.copy(alpha = 0.7f), (if (overlay.own) 2.5f else 1.5f).dp.toPx(), !overlay.own)
+        if (p.size >= 4) {
+            // начало пути (0 %) - кружок, конец (100 %) - стрелка-квадрат
+            drawCircle(accent, 5.dp.toPx(), Offset(p[0], p[1]))
+            drawCircle(Color.Black.copy(alpha = 0.7f), 5.dp.toPx(), Offset(p[0], p[1]), style = Stroke(1.dp.toPx()))
+            if (!overlay.closed) {
+                val s = 4.dp.toPx()
+                drawRect(accent, Offset(p[p.size - 2] - s, p[p.size - 1] - s), androidx.compose.ui.geometry.Size(s * 2, s * 2))
+            }
+        }
+        poly(overlay.draft, false, Color.White, 2.dp.toPx(), false)
     }
 }
 

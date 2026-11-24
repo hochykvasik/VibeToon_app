@@ -17,6 +17,7 @@ object TrackGroups {
         for (k in 0 until PerspectiveMath.CORNERS) add(PerspectiveMath.pointId(layerId, k))
         for (k in 0 until TurbMath.PARAMS) add(TurbMath.paramId(layerId, k))
         for (k in 0 until PuppetMath.MAX_PINS) add(PuppetMath.pinId(layerId, k))
+        if (layerId >= 0) add(PathLayerMath.progressId(layerId))   // спринт 38: положение слоя на пути
         if (layerId in 0..EffectTracks.MAX_LAYER) for (slot in 0 until EffectTracks.SLOTS)
             for (param in 0 until EffectTracks.PARAMS) add(EffectTracks.id(layerId, slot, param))
         return out
@@ -45,6 +46,7 @@ object TrackGroups {
         val t0 = TurbMath.paramId(from, 0)
         if (id in t0 until t0 + TurbMath.PARAMS) return TurbMath.paramId(to, id - t0)
         if (PuppetMath.isPinId(id) && PuppetMath.layerOf(id) == from) return PuppetMath.pinId(to, PuppetMath.indexOf(id))
+        if (id == PathLayerMath.progressId(from) && to >= 0) return PathLayerMath.progressId(to)
         return null
     }
 }
