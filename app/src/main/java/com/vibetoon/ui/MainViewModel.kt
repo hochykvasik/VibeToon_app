@@ -5959,6 +5959,59 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         markDirty()
     }
 
+    // ---------------------------------------------------------------- Спринт 36: наклон (Skew) целого слоя/группы
+
+    /**
+     * Текущий наклон выбранного слоя/группы (X, Y в градусах) на текущем кадре; null - нет подходящей цели.
+     * Наклон хранится в углах «Перспективы», поэтому учитывает и её ключи (при включённой анимации).
+     */
+    fun layerSkewNow(): Pair<Float, Float>? {
+        val t = deformerTarget() ?: return null
+        val q = deformerQuad(t) ?: return null
+        val off = PerspectiveMath.offsets(t, _frame.value, base, _animation.value, _fx.value)
+        return com.vibetoon.domain.anim.LayerSkew.measure(off, kotlin.math.hypot(q[2] - q[0], q[3] - q[1]), kotlin.math.hypot(q[6] - q[0], q[7] - q[1]))
+    }
+
+    /**
+     * Наклон слоя/группы: [kxDeg]/[kyDeg] (null - ось не меняется). Пишется в углы перспективы: без анимации - в форму
+     * слоя, при включённой анимации - ключом на текущем кадре (первый ключ после нуля ставит ноль на кадре 0, чтобы
+     * прежние кадры не менялись). Одна операция Undo/Redo, сохраняется в проект.
+     */
+    fun skewLayer(kxDeg: Float?, kyDeg: Float?) {
+        if (_playing.value) return
+        val t = deformerTarget() ?: run { _state.value = UiState.Message("Выберите один слой (или группу с включённой перспективой)"); return }
+        if (isLockedId(t)) { lockedNotice(); return }
+        val q = deformerQuad(t) ?: return
+        val w = kotlin.math.hypot(q[2] - q[0], q[3] - q[1]); val h = kotlin.math.hypot(q[6] - q[0], q[7] - q[1])
+        val off = PerspectiveMath.offsets(t, _frame.value, base, _animation.value, _fx.value)
+        val next = com.vibetoon.domain.anim.LayerSkew.withSkew(off, w, h, kxDeg, kyDeg)
+            ?: run { _state.value = UiState.Message("Наклон вне допустимого диапазона (до ±75°) для этого слоя"); return }
+        if (next.contentEquals(off)) return
+        checkpoint("layer-skew:$t", force = true)
+        if (t !in perspLayers) perspLayers = perspLayers + t
+        writePerspOffsets(t, next)
+        pushScene(); markDirty(); refreshPerspOverlay()
+        _state.value = UiState.Message("Наклон слоя изменён (Отменить возвращает прежнюю форму)")
+    }
+
+    /** Убирает наклон слоя, сохраняя прочее искажение углов. */
+    fun straightenLayer() = skewLayer(0f, 0f)
+
+    private fun writePerspOffsets(t: Int, off: FloatArray) {
+        for (corner in 0 until PerspectiveMath.CORNERS) {
+            val id = PerspectiveMath.pointId(t, corner)
+            val ox = off[corner * 2]; val oy = off[corner * 2 + 1]
+            if (!_fx.value) base[id] = LayerTransform(dx = ox, dy = oy)
+            else {
+                val bind = base[id]
+                if (_frame.value > 0 && !_animation.value.hasTrack(id))
+                    _animation.value = _animation.value.withKey(id, 0, LayerTransform())
+                _animation.value = _animation.value.withKey(id, _frame.value,
+                    LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- Liquify (деструктивная кисть)
 
     private val _liquifyTool = MutableStateFlow(false)
@@ -7334,6 +7387,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_rasterTool.value == RasterTool.SELECT) clearSelection()
         if (_rasterTool.value == RasterTool.PATH) penCancel()
         rasterCancel()
+        cancelVectorTransform()
         _rasterTool.value = t
         if (t != null) {
             ensurePixelTarget()?.let { requestPaintSize(it) }
@@ -7418,17 +7472,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun rasterMove(sx: Float, sy: Float) {
         if (rasterMode == 5 && kotlin.math.hypot(sx - closeTapX, sy - closeTapY) > 12f * getApplication<Application>().resources.displayMetrics.density) closeTapMoved = true
-        when (rasterMode) { 1 -> selDrawMove(sx, sy); 2 -> selMoveMove(sx, sy); 3 -> pxSmudgeMove(sx, sy); 4 -> vecNodeMove(sx, sy); 6 -> penDragMove(sx, sy); 7 -> selBoxMove(sx, sy) }
+        when (rasterMode) { 1 -> selDrawMove(sx, sy); 2 -> selMoveMove(sx, sy); 3 -> pxSmudgeMove(sx, sy); 4 -> vecNodeMove(sx, sy); 6 -> penDragMove(sx, sy); 7 -> selBoxMove(sx, sy); 8 -> vecBoxMove(sx, sy) }
     }
 
     fun rasterUp() {
-        when (rasterMode) { 1 -> selDrawUp(); 2 -> selMoveUp(); 3 -> pxSmudgeUp(); 4 -> vecNodeUp(); 5 -> if (!closeTapMoved) finishPendingLasso(); 7 -> { selBoxStart = null; selBoxHandle = null } }
+        when (rasterMode) { 1 -> selDrawUp(); 2 -> selMoveUp(); 3 -> pxSmudgeUp(); 4 -> vecNodeUp(); 5 -> if (!closeTapMoved) finishPendingLasso(); 7 -> { selBoxStart = null; selBoxHandle = null }; 8 -> { vecBoxStart = null; vecBoxHandle = null } }
         rasterMode = 0
     }
 
     /** Жест прерван вторым пальцем (камера). */
     fun rasterCancel() {
-        when (rasterMode) { 1 -> { _toolDrag.value = null; selPts.clear(); selLayerPts.clear() }; 2 -> { selShiftX = 0f; selShiftY = 0f; refreshSelOverlay() }; 3 -> pxSmudgeUp(); 4 -> vecNodeCancel(); 6 -> penDragCancel(); 7 -> { selBoxStart?.let { selBox = it }; selBoxStart = null; selBoxHandle = null; refreshSelOverlay() } }
+        when (rasterMode) { 1 -> { _toolDrag.value = null; selPts.clear(); selLayerPts.clear() }; 2 -> { selShiftX = 0f; selShiftY = 0f; refreshSelOverlay() }; 3 -> pxSmudgeUp(); 4 -> vecNodeCancel(); 6 -> penDragCancel(); 7 -> { selBoxStart?.let { selBox = it }; selBoxStart = null; selBoxHandle = null; refreshSelOverlay() }; 8 -> { vecBoxStart?.let { vecBox = it }; vecBoxStart = null; vecBoxHandle = null; refreshVecBoxOverlay(); previewVecBox(force = true) } }
         rasterMode = 0
         cancelPendingLasso()
     }
@@ -8440,7 +8494,214 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refreshPenOverlay()
     }
 
+    // ---- Спринт 36: наклон / искажение / свободная трансформация векторных фигур (рамка как у выделения) ----
+
+    private var vecBox: com.vibetoon.domain.raster.TransformBox.Box? = null
+    private var vecBoxStart: com.vibetoon.domain.raster.TransformBox.Box? = null
+    private var vecBoxFrom: com.vibetoon.domain.raster.TransformBox.P? = null
+    private var vecBoxHandle: com.vibetoon.domain.raster.TransformBox.Handle? = null
+    private var vecBoxLayer = -1
+    /** Индексы фигур в рамке; пусто - весь слой. */
+    private var vecBoxIndices: Set<Int> = emptySet()
+    private var vecBoxShapes: List<com.vibetoon.domain.vector.VectorShape>? = null
+    private val _vecTransform = MutableStateFlow<FloatArray?>(null)
+    /** Рамка трансформации векторных фигур на экране: 4 угла и опора (10 чисел); null - рамки нет. */
+    val vecTransform: StateFlow<FloatArray?> = _vecTransform.asStateFlow()
+
+    /**
+     * Рамка вокруг выбранной фигуры ([wholeLayer] = false, нужен выбранный узел) или всех фигур слоя. Режимы рамки
+     * («Свободно», «Наклон», «Искажение»), «Пропорционально» и опорная точка - общие с рамкой выделения.
+     */
+    fun beginVectorTransform(wholeLayer: Boolean) {
+        if (_playing.value) return
+        val id = selectedVectorId() ?: run { _state.value = UiState.Message("Выберите векторный слой"); return }
+        if (isLockedId(id)) { lockedNotice(); return }
+        val m = media.firstOrNull { it.id == id } ?: return
+        if (m.vectors.isEmpty()) { _state.value = UiState.Message("В векторном слое нет фигур"); return }
+        penCancel()
+        val idx: Set<Int> = if (wholeLayer) emptySet() else {
+            if (!canEditSelectedVectorNode() || nodeShape !in m.vectors.indices) { _state.value = UiState.Message("Сначала коснитесь узла фигуры (или выберите «Все фигуры слоя»)"); return }
+            setOf(nodeShape)
+        }
+        val b = com.vibetoon.domain.vector.VectorWarp.bounds(m.vectors, idx) ?: return
+        val x0 = kotlin.math.floor(b[0]).toInt(); val y0 = kotlin.math.floor(b[1]).toInt()
+        val rect = com.vibetoon.domain.raster.IRect(x0, y0, (kotlin.math.ceil(b[2]).toInt() - x0).coerceAtLeast(1), (kotlin.math.ceil(b[3]).toInt() - y0).coerceAtLeast(1))
+        vecBox = com.vibetoon.domain.raster.TransformBox.initial(rect); vecBoxStart = null; vecBoxHandle = null; vecBoxFrom = null
+        vecBoxLayer = id; vecBoxIndices = idx; vecBoxShapes = m.vectors
+        _state.value = UiState.Message("Трансформ фигур: углы и стороны меняют размер, наклон или искажение; внутри рамки - перенос, снаружи - поворот; «Применить» сохраняет")
+        refreshVecBoxOverlay(); refreshPenOverlay()
+    }
+
+    fun cancelVectorTransform() {
+        val id = vecBoxLayer
+        val had = vecBox != null
+        vecBox = null; vecBoxStart = null; vecBoxFrom = null; vecBoxHandle = null; vecBoxLayer = -1; vecBoxIndices = emptySet(); vecBoxShapes = null
+        _vecTransform.value = null
+        if (rasterMode == 8) rasterMode = 0
+        if (had) media.firstOrNull { it.id == id }?.let { renderVector(it, save = false) }   // убрать предпросмотр
+    }
+
+    fun setVecTransformAnchor(ax: Int, ay: Int) {
+        val b = vecBox ?: return
+        vecBox = com.vibetoon.domain.raster.TransformBox.withAnchor(b, ax, ay); refreshVecBoxOverlay()
+    }
+
+    /** Числа (масштаб, поворот, наклон X/Y, сдвиг, отражение) поверх текущей рамки относительно опоры. */
+    fun applyVecTransformNumeric(n: com.vibetoon.domain.raster.TransformBox.Numeric) {
+        val b = vecBox ?: return
+        val r = com.vibetoon.domain.raster.TransformBox.numeric(b, n)
+        if (r == null || !com.vibetoon.domain.raster.TransformBox.valid(r)) { _state.value = UiState.Message("Недопустимые значения трансформации"); return }
+        vecBox = r; refreshVecBoxOverlay(); previewVecBox(force = true)
+    }
+
+    /** Фигуры через текущую рамку (null - рамка вырождена или фигуры не переводятся). */
+    private fun vecBoxResult(): List<com.vibetoon.domain.vector.VectorShape>? {
+        val b = vecBox ?: return null
+        val shapes = vecBoxShapes ?: return null
+        if (!com.vibetoon.domain.raster.TransformBox.valid(b)) return null
+        val f = com.vibetoon.domain.vector.VectorWarp.boxMap(b) ?: return null
+        return com.vibetoon.domain.vector.VectorWarp.apply(shapes, vecBoxIndices, f, com.vibetoon.domain.vector.VectorWarp.widthScaleFor(b))
+    }
+
+    private fun previewVecBox(force: Boolean = false) {
+        val m = media.firstOrNull { it.id == vecBoxLayer } ?: return
+        val now = SystemClock.uptimeMillis()
+        if (!force && now - vecPreviewAt < 70) return
+        vecPreviewAt = now
+        renderVector(m.copy(vectors = vecBoxResult() ?: return), save = false)
+    }
+
+    /** Сохраняет фигуры по рамке одной правкой (Undo/Redo, файл проекта); при ошибке рамка остаётся для правки. */
+    fun applyVectorTransform() {
+        val b = vecBox ?: return
+        val id = vecBoxLayer
+        val m = media.firstOrNull { it.id == id }
+        if (m == null || selectedVectorId() != id || isLockedId(id) || m.vectors != vecBoxShapes) {
+            cancelVectorTransform(); _state.value = UiState.Message("Слой изменился: трансформация отменена"); return
+        }
+        if (com.vibetoon.domain.raster.TransformBox.isIdentity(b)) { cancelVectorTransform(); return }
+        if (!com.vibetoon.domain.raster.TransformBox.valid(b)) { _state.value = UiState.Message("Рамка вырождена, перекручена или слишком мала/велика: исправьте её или отмените"); return }
+        val result = vecBoxResult() ?: run { _state.value = UiState.Message("Фигуры нельзя так исказить: уменьшите искажение"); return }
+        vecBox = null; vecBoxStart = null; vecBoxFrom = null; vecBoxHandle = null; vecBoxLayer = -1; vecBoxIndices = emptySet(); vecBoxShapes = null
+        _vecTransform.value = null
+        setVectors(id, result)
+        nodeSelectionSnapshot = result.toList()
+        nodeHandle = -1
+        refreshPenOverlay()
+        _state.value = UiState.Message("Фигуры трансформированы: прямоугольники, эллипсы и фигуры стали контурами, их узлы правятся пером")
+    }
+
+    private fun vecBoxCanvas(id: Int, sx: Float, sy: Float): com.vibetoon.domain.raster.TransformBox.P? {
+        val q = scene?.selectionQuads?.get(id) ?: return null
+        val p = unitOf(q, toCanvas(sx, sy)) ?: return null
+        return com.vibetoon.domain.raster.TransformBox.P(p.first.toDouble() * canvasW, p.second.toDouble() * canvasH)
+    }
+
+    private fun vecBoxDown(sx: Float, sy: Float): Boolean {
+        val box = vecBox ?: return false
+        swallowTap = true
+        val id = vecBoxLayer
+        if (selectedVectorId() != id) { cancelVectorTransform(); return true }
+        val from = vecBoxCanvas(id, sx, sy) ?: return true
+        val p1 = vecBoxCanvas(id, sx + 24f * getApplication<Application>().resources.displayMetrics.density, sy)
+        val radius = if (p1 == null) 12.0 else kotlin.math.hypot(p1.x - from.x, p1.y - from.y).coerceAtLeast(2.0)
+        vecBoxHandle = com.vibetoon.domain.raster.TransformBox.hit(box, from, radius); vecBoxStart = box; vecBoxFrom = from
+        rasterMode = 8
+        return true
+    }
+
+    private fun vecBoxMove(sx: Float, sy: Float) {
+        val start = vecBoxStart ?: return; val from = vecBoxFrom ?: return; val handle = vecBoxHandle ?: return
+        val to = vecBoxCanvas(vecBoxLayer, sx, sy) ?: return
+        vecBox = com.vibetoon.domain.raster.TransformBox.drag(start, handle, _selTransformMode.value, from, to, _selTransformProportional.value)
+        refreshVecBoxOverlay()
+        previewVecBox()
+    }
+
+    private fun refreshVecBoxOverlay() {
+        val box = vecBox
+        if (box == null) { if (_vecTransform.value != null) _vecTransform.value = null; return }
+        if (_rasterTool.value != RasterTool.PATH || selectedVectorId() != vecBoxLayer) { cancelVectorTransform(); return }
+        val q = scene?.selectionQuads?.get(vecBoxLayer) ?: run { cancelVectorTransform(); return }
+        _vecTransform.value = FloatArray(10).also { out ->
+            (box.corners + box.pivot).forEachIndexed { i, pt ->
+                val sc = canvasToScreen(q, pt.x.toFloat(), pt.y.toFloat()); out[i * 2] = sc.first; out[i * 2 + 1] = sc.second
+            }
+        }
+    }
+
+    // ---- Спринт 36: «Вставить SVG…» в открытый проект ----
+
+    private val _svgNotes = MutableStateFlow<List<String>>(emptyList())
+    /** Итог последней вставки SVG: что не перенесено (пусто - заметок нет / окно закрыто). */
+    val svgNotes: StateFlow<List<String>> = _svgNotes.asStateFlow()
+    fun dismissSvgNotes() { _svgNotes.value = emptyList() }
+
+    /**
+     * Фигуры файла SVG - новыми векторными слоями (группа верхнего уровня - слой): по центру холста, крупный рисунок
+     * уменьшается до холста. Одна операция Undo/Redo; что не перенесено - в окне итога.
+     */
+    fun insertSvg(uri: android.net.Uri, fileName: String = "") {
+        val pid = projectId ?: return
+        if (_playing.value) return
+        viewModelScope.launch {
+            val parsed = withContext(Dispatchers.IO) {
+                runCatching {
+                    val shown = fileName.ifBlank {
+                        runCatching {
+                            getApplication<Application>().contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                        }.getOrNull().orEmpty()
+                    }
+                    val title = shown.substringAfterLast('/').substringBeforeLast('.').trim().ifEmpty { "SVG" }
+                    val bytes = getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val k = input.read(buf); if (k < 0) break
+                            out.write(buf, 0, k)
+                            if (out.size() > 64 * 1024 * 1024) throw com.vibetoon.domain.vector.SvgImport.SvgException(com.vibetoon.domain.vector.SvgImport.MSG_TOO_BIG)
+                        }
+                        out.toByteArray()
+                    } ?: throw java.io.IOException("open")
+                    val text = bytes.toString(Charsets.UTF_8)
+                    if (!com.vibetoon.domain.vector.SvgImport.looksLike(text)) throw com.vibetoon.domain.vector.SvgImport.SvgException(com.vibetoon.domain.vector.SvgImport.MSG_NOT_SVG)
+                    val r = com.vibetoon.domain.vector.SvgImport.parse(text, title)
+                    r to com.vibetoon.domain.vector.SvgImport.fit(r, canvasW, canvasH)
+                }
+            }
+            if (projectId != pid || closing) return@launch
+            val (r, layersIn) = parsed.getOrElse { e ->
+                _state.value = UiState.Message(when (e) {
+                    is com.vibetoon.domain.vector.SvgImport.SvgException -> e.message ?: com.vibetoon.domain.vector.SvgImport.MSG_DAMAGED
+                    is OutOfMemoryError -> com.vibetoon.domain.vector.SvgImport.MSG_TOO_BIG
+                    else -> "Не удалось прочитать выбранный файл"
+                })
+                return@launch
+            }
+            if (layersIn.isEmpty()) { _state.value = UiState.Message(com.vibetoon.domain.vector.SvgImport.MSG_EMPTY); return@launch }
+            val scale = minOf(1f, 1536f / maxOf(canvasW, canvasH))
+            val bw = (canvasW * scale).toInt().coerceAtLeast(1)
+            val bh = (canvasH * scale).toInt().coerceAtLeast(1)
+            checkpoint("svg", force = true)
+            val added = ArrayList<MediaItem>()
+            for (l in layersIn) {
+                val id = nextMediaId()
+                val item = MediaItem(id, MediaKind.IMAGE, l.name, "assets/svg_${id}_${java.util.UUID.randomUUID().toString().take(8)}.png", bw, bh, 0f, 0f,
+                    canvasW.toFloat(), canvasH.toFloat(), vector = true, vectors = l.shapes)
+                media += item
+                added += item
+            }
+            rebuildLayers(); pushScene()
+            for (item in added) renderVector(item, save = true)
+            selectLayer(added.last().id); markDirty()
+            _state.value = UiState.Message("SVG вставлен: слоёв: ${added.size}, фигур: ${added.sumOf { it.vectors.size }}")
+            _svgNotes.value = r.notes
+        }
+    }
+
     private fun penDown(sx: Float, sy: Float): Boolean {
+        if (vecBox != null) return vecBoxDown(sx, sy)   // спринт 36: рамка трансформации фигур забирает касание
         if (penPts.isEmpty()) selectedVectorId()?.let { vid -> if (!isLockedId(vid) && vecNodeDown(vid, sx, sy)) return true }
         val id = selectedVectorId() ?: run {
             _state.value = UiState.Message("Перо рисует на векторном слое: «＋» → «Векторный», затем снова выберите «Путь»")
@@ -8563,7 +8824,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Обновление экранных оверлеев растровых инструментов при смене сцены и камеры. */
     private fun refreshRasterOverlays() {
         if (_rasterTool.value == null) return
-        refreshSelOverlay(); refreshPenOverlay()
+        refreshSelOverlay(); refreshPenOverlay(); refreshVecBoxOverlay()
     }
 
     // ---------------------------------------------------------------- Puppet Mesh (пины)

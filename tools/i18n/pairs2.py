@@ -1215,7 +1215,7 @@ PSD в текущий проект|PSD into current project
 Некорректный размер видео|Invalid video size
 Последовательность кадров|Frame sequence
 Проект ToonSquid (.tsproj) не читается напрямую: экспортируйте его в ToonSquid в PSD, GIF, видео или последовательность PNG (ZIP) и импортируйте этот файл|ToonSquid projects (.tsproj) can't be read directly: export the project from ToonSquid as PSD, GIF, video or a PNG sequence (ZIP) and import that file
-Формат не распознан. Поддерживаются: .tsproj/.zip VibeToon, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra) и ZIP с кадрами PNG/JPEG|Unrecognized format. Supported: VibeToon .tsproj/.zip, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra) and ZIP with PNG/JPEG frames
+Формат не распознан. Поддерживаются: .tsproj/.zip VibeToon, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra), SVG и ZIP с кадрами PNG/JPEG|Unrecognized format. Supported: VibeToon .tsproj/.zip, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra), SVG and ZIP with PNG/JPEG frames
 В файле нет слоёв с пикселями|The file has no layers with pixels
 Анимация контуров фигур не переносится (взята первая форма)|Shape path animation is not imported (the first shape is used)
 Скругление звёзд и многоугольников не переносится|Star and polygon roundness is not imported
@@ -1263,7 +1263,7 @@ Animation Assist: кадры сведены (режимы наложения в�
 Импортировано из: {}|Imported from: {}
 Не перенесено или упрощено:|Not imported or simplified:
 Файл другого приложения повреждён или в неподдерживаемой версии формата|The file from another app is damaged or uses an unsupported format version
-Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster или Krita|The file doesn't look like a project: use .tsproj, .zip with project.json, project.json, PSD, Procreate, Lottie, OpenRaster or Krita
+Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster, Krita или SVG|The file doesn't look like a project: use .tsproj, .zip with project.json, project.json, PSD, Procreate, Lottie, OpenRaster, Krita or SVG
 Проект Rough Animator не читается напрямую: экспортируйте анимацию в Rough Animator как последовательность PNG (ZIP), GIF или видео и импортируйте этот файл|Rough Animator projects can't be read directly: export the animation from Rough Animator as a PNG sequence (ZIP), GIF or video and import that file
 Не хватает памяти GPU: часть слоёв временно показана без обновления. Скройте лишние слои - показ восстановится сам|Not enough GPU memory: some layers are temporarily shown without updates. Hide unneeded layers - display will recover by itself
 Картинка слоя больше предела GPU: слой показан без обновления. Уменьшите её размер|The layer image exceeds the GPU limit: the layer is shown without updates. Reduce its size
@@ -1469,4 +1469,43 @@ HEVC: файл примерно вдвое меньше при том же ка�
 Свечение внутри контура: не выходит за альфу рисунка|Glow inside the outline: never spills past the drawing's alpha
 Полутон: точки в координатах холста, сетка не плывёт при сдвиге вида|Halftone: dots live in canvas coordinates, the grid stays put when the view moves
 Живая линия: рисунок меняется с частотой дрожания, а не с fps проекта|Line Boil: the drawing changes at the boil rate, not at the project fps
+Файл не похож на SVG: нет элемента <svg>|The file doesn't look like SVG: there is no <svg> element
+SVG повреждён: ошибка в разметке XML|The SVG is damaged: XML markup error
+В SVG нет фигур, которые можно перенести|The SVG has no shapes that can be imported
+SVG слишком большой для импорта|The SVG is too large to import
+Текст SVG не переносится: переведите текст в кривые в редакторе SVG|SVG text isn't imported: convert text to paths in your SVG editor
+Встроенные картинки SVG не переносятся|Embedded SVG images aren't imported
+Градиенты SVG заменены сплошным цветом|SVG gradients were replaced with a solid color
+Узоры (pattern) SVG заменены серым цветом|SVG patterns were replaced with gray
+Обтравочные контуры и маски SVG не применяются|SVG clipping paths and masks aren't applied
+Фильтры SVG (размытие, тени) не переносятся|SVG filters (blur, shadows) aren't imported
+Анимация SVG (SMIL) не переносится|SVG animation (SMIL) isn't imported
+Маркеры линий (стрелки на концах) не переносятся|Line markers (arrowheads) aren't imported
+Концы и углы обводки всегда скруглены|Stroke caps and joins are always round
+Сложные CSS-селекторы SVG не поддерживаются|Complex SVG CSS selectors aren't supported
+Сущности DOCTYPE в SVG не поддерживаются|DOCTYPE entities in SVG aren't supported
+SVG очень сложный: перенесены первые {} фигур|The SVG is very complex: the first {} shapes were imported
+Слишком много групп верхнего уровня: все фигуры в одном слое|Too many top-level groups: all shapes are in one layer
+Выберите один слой (или группу с включённой перспективой)|Select one layer (or a group with perspective enabled)
+Наклон вне допустимого диапазона (до ±75°) для этого слоя|Skew is out of range (up to ±75°) for this layer
+Наклон слоя изменён (Отменить возвращает прежнюю форму)|Layer skew changed (Undo restores the previous shape)
+Выберите векторный слой|Select a vector layer
+В векторном слое нет фигур|The vector layer has no shapes
+Сначала коснитесь узла фигуры (или выберите «Все фигуры слоя»)|Tap a shape node first (or choose “All layer shapes”)
+Трансформ фигур: углы и стороны меняют размер, наклон или искажение; внутри рамки - перенос, снаружи - поворот; «Применить» сохраняет|Shape transform: corners and sides change size, skew or distortion; inside the box moves, outside rotates; “Apply” saves
+Слой изменился: трансформация отменена|The layer changed: transform canceled
+Фигуры нельзя так исказить: уменьшите искажение|The shapes can't be distorted this way: reduce the distortion
+Фигуры трансформированы: прямоугольники, эллипсы и фигуры стали контурами, их узлы правятся пером|Shapes transformed: rectangles, ellipses and preset shapes became paths, edit their nodes with the Pen
+SVG вставлен: слоёв: {}, фигур: {}|SVG inserted: layers: {}, shapes: {}
+Трансформ фигур|Shape transform
+Наклон/искажение фигуры|Skew/distort shape
+Все фигуры слоя|All layer shapes
+Наклон…|Skew…
+Выпрямить|Straighten
+Наклон слоя|Layer skew
+Наклон хранится в углах перспективы: искажение углов и ключи анимации сохраняются|Skew is stored in the perspective corners: corner distortion and animation keys are kept
+Наклон от −75° до 75°|Skew from −75° to 75°
+Импорт SVG: что не перенесено|SVG import: what wasn't imported
+Понятно|Got it
+SVG в текущий проект (векторные слои)|SVG into current project (vector layers)
 """

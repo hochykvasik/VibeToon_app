@@ -159,6 +159,9 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
     val openPsdInsert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.insertPsdFromUri(uri)   // пакет 23
     }
+    val openSvgInsert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.insertSvg(uri)   // спринт 36
+    }
     val openVideoAsSymbol = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importVideoAsSymbol(uri)   // пакет 22
     }
@@ -174,11 +177,24 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
         imageAsSymbol = { openImageAsSymbol.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
         sequence = { asSymbol -> sequenceAsSymbol = asSymbol; openSequence.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
         videoAsSymbol = { openVideoAsSymbol.launch(arrayOf("video/mp4", "video/*")) },
-        psdInsert = { openPsdInsert.launch(arrayOf("*/*")) }
+        psdInsert = { openPsdInsert.launch(arrayOf("*/*")) },
+        svgInsert = { openSvgInsert.launch(arrayOf("image/svg+xml", "text/xml", "application/xml", "*/*")) }
     )
 
     com.vibetoon.ui.shell.EditorShell(vm, onBack, addActions) { showExport = true }
     com.vibetoon.ui.shell.CoachOverlay()
+    // спринт 36: итог вставки SVG - что не перенесено
+    val svgNotes by vm.svgNotes.collectAsStateWithLifecycle()
+    if (svgNotes.isNotEmpty()) AlertDialog(
+        onDismissRequest = vm::dismissSvgNotes,
+        title = { Text("Импорт SVG: что не перенесено") },
+        text = {
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (note in svgNotes) Text("• " + com.vibetoon.ui.i18n.L(note), fontSize = 13.sp)
+            }
+        },
+        confirmButton = { TextButton(vm::dismissSvgNotes) { Text("Понятно") } }
+    )
     val extracting by vm.selectionExtractBusy.collectAsStateWithLifecycle()
     if (extracting) AlertDialog(
         onDismissRequest = {},
@@ -226,7 +242,9 @@ class AddActions(
     /** Пакет 22: видео как символ (кадры - покадровый слой внутри символа). */
     val videoAsSymbol: () -> Unit = {},
     /** Пакет 23: другой PSD в текущий проект (по PSD Import Mode). */
-    val psdInsert: () -> Unit = {}
+    val psdInsert: () -> Unit = {},
+    /** Спринт 36: фигуры SVG - векторными слоями текущего проекта. */
+    val svgInsert: () -> Unit = {}
 )
 
 @Composable
@@ -907,7 +925,8 @@ private fun DrawingGuideLayer(vm: MainViewModel) {
 @Composable
 private fun SelectionTransformLayer(vm: MainViewModel) {
     val box by vm.selTransform.collectAsStateWithLifecycle()
-    val p = box ?: return
+    val vecBox by vm.vecTransform.collectAsStateWithLifecycle()   // спринт 36: та же рамка для векторных фигур
+    val p = box ?: vecBox ?: return
     if (p.size < 10) return
     Canvas(Modifier.fillMaxSize().clipToBounds()) {
         val dark = Color.Black.copy(alpha = .7f)

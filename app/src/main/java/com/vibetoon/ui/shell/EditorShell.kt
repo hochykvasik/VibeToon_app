@@ -533,6 +533,7 @@ private fun TopBar(
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("PSD-файл") }, onClick = { actions = false; add.psd() })
                     DropdownMenuItem(text = { Text("PSD в текущий проект") }, onClick = { actions = false; add.psdInsert() })
+                    DropdownMenuItem(text = { Text("SVG в текущий проект (векторные слои)") }, onClick = { actions = false; add.svgInsert() })
                     DropdownMenuItem(text = { Text("Изображение (PNG, JPG)") }, onClick = { actions = false; add.image() })
                     DropdownMenuItem(text = { Text("Изображение как символ") }, onClick = { actions = false; add.imageAsSymbol() })
                     DropdownMenuItem(text = { Text("Секвенция картинок (покадровый слой)") }, onClick = { actions = false; add.sequence(false) })
@@ -672,6 +673,10 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
     val proportional by vm.selTransformProportional.collectAsStateWithLifecycle()
     var numericOpen by remember { mutableStateOf(false) }
     if (numericOpen) SelectionTransformDialog(onDismiss = { numericOpen = false }, onApply = { n -> numericOpen = false; vm.applySelTransformNumeric(n) })
+    // спринт 36: рамка трансформации векторных фигур (наклон / искажение / свободно)
+    val vecBox by vm.vecTransform.collectAsStateWithLifecycle()
+    var vecNumericOpen by remember { mutableStateOf(false) }
+    if (vecNumericOpen) SelectionTransformDialog(onDismiss = { vecNumericOpen = false }, onApply = { n -> vecNumericOpen = false; vm.applyVecTransformNumeric(n) })
     Row(
         Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
@@ -744,7 +749,17 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
                 com.vibetoon.ui.inspector.ScrubBox("Размер", sp.size, 4f, 300f, { v -> vm.setSmudgeParams { it.copy(size = v) } }, log = true)
                 com.vibetoon.ui.inspector.ScrubBox("Сила", sp.strength * 100f, 5f, 100f, { v -> vm.setSmudgeParams { it.copy(strength = v / 100f) } }, perPx = 0.35f)
             }
-            RasterTool.PATH -> {
+            RasterTool.PATH -> if (vecBox != null) {
+                Text("Трансформ фигур", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                for ((m, t) in listOf(com.vibetoon.domain.raster.TransformBox.Mode.FREE to "Свободно", com.vibetoon.domain.raster.TransformBox.Mode.SKEW to "Наклон",
+                        com.vibetoon.domain.raster.TransformBox.Mode.DISTORT to "Искажение"))
+                    androidx.compose.material3.FilterChip(selected = transformMode == m, onClick = { vm.setSelTransformMode(m) }, label = { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) })
+                androidx.compose.material3.FilterChip(selected = proportional, onClick = vm::toggleSelTransformProportional, label = { Text("Пропорционально", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+                TransformAnchorMenu { ax, ay -> vm.setVecTransformAnchor(ax, ay) }
+                OutlinedButton(onClick = { vecNumericOpen = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Числа…", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                Button(onClick = vm::applyVectorTransform, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Применить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                OutlinedButton(onClick = vm::cancelVectorTransform, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Отмена", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            } else {
                 Text("Перо", fontSize = 12.sp, maxLines = 1, softWrap = false)
                 androidx.compose.material3.FilterChip(selected = fillOn, onClick = { vm.toggleVecFill() }, label = { Text("Заливка", fontSize = 12.sp, maxLines = 1, softWrap = false) })
                 if (pen >= 2) OutlinedButton(onClick = { vm.penFinish(false) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Готово", fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -753,6 +768,9 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
                 if (pen == 0) OutlinedButton(onClick = vm::restyleSelectedVector, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Цвет и толщина кисти", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen == 0) OutlinedButton(onClick = vm::deleteVectorNode, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Удалить узел", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (pen == 0) OutlinedButton(onClick = vm::deleteVectorShape, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Удалить примитив", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                // спринт 36: наклон / искажение выбранной фигуры или всех фигур слоя
+                if (pen == 0) OutlinedButton(onClick = { vm.beginVectorTransform(false) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Наклон/искажение фигуры", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                if (pen == 0) OutlinedButton(onClick = { vm.beginVectorTransform(true) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Все фигуры слоя", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 // пакет 19: узлы Безье контуров пера
                 if (pen == 0) for ((a, t) in listOf(0 to "Сгладить узел", 1 to "Острый угол", 3 to "Независимые ручки", 2 to "Сгладить контур"))
                     OutlinedButton(onClick = { vm.bezierVectorNode(a) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -942,10 +960,36 @@ private fun PerspToolRow(vm: MainViewModel) {
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
             Text("Удалить область", fontSize = 12.sp, maxLines = 1, softWrap = false)
         }
+        // спринт 36: наклон целого слоя/группы (углы перспективы - искажение, наклон - числами)
+        var skewOpen by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+        skewOpen?.let { cur -> LayerSkewDialog(cur, onDismiss = { skewOpen = null }, onApply = { kx, ky -> skewOpen = null; vm.skewLayer(kx, ky) }) }
+        OutlinedButton(
+            onClick = { skewOpen = vm.layerSkewNow() ?: (0f to 0f) }, enabled = overlay.isNotEmpty(),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)
+        ) { Text("Наклон…", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+        OutlinedButton(
+            onClick = vm::straightenLayer, enabled = overlay.isNotEmpty(),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)
+        ) { Text("Выпрямить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         OutlinedButton(
             onClick = vm::resetPersp, enabled = overlay.isNotEmpty(),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)
         ) { Text("Сбросить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+    }
+}
+
+/** Спринт 36: меню опорной точки рамки трансформации (сетка 3x3). */
+@Composable
+private fun TransformAnchorMenu(onPick: (Int, Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { com.vibetoon.ui.DropText("Опорная точка") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            for ((a, t) in listOf(
+                (1 to 1) to "Центр", (0 to 0) to "Левый верхний угол", (1 to 0) to "Верхний край", (2 to 0) to "Правый верхний угол",
+                (0 to 1) to "Левый край", (2 to 1) to "Правый край", (0 to 2) to "Левый нижний угол", (1 to 2) to "Нижний край", (2 to 2) to "Правый нижний угол"
+            )) DropdownMenuItem(text = { Text(t) }, onClick = { open = false; onPick(a.first, a.second) })
+        }
     }
 }
 

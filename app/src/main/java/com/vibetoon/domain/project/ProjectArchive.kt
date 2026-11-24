@@ -25,11 +25,12 @@ object ProjectArchive {
     const val MAX_ENTRIES = 50_000
     const val MAX_BYTES = 4L * 1024 * 1024 * 1024
 
-    enum class Kind { ZIP, JSON, PSD, UNKNOWN }
+    /** XML - текстовый файл с «<» в начале (спринт 36: SVG). */
+    enum class Kind { ZIP, JSON, PSD, XML, UNKNOWN }
 
     /** Причины отказа: у каждой своё понятное сообщение (RU/EN через таблицу перевода). */
     enum class Reason(val message: String) {
-        NOT_PROJECT("Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster или Krita"),
+        NOT_PROJECT("Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster, Krita или SVG"),
         /** Пакет 28: файл другого приложения распознан, но не читается (повреждён или незнакомая версия формата). */
         FOREIGN_DAMAGED("Файл другого приложения повреждён или в неподдерживаемой версии формата"),
         NEWER_VERSION("Проект создан в более новой версии VibeToon: обновите приложение и повторите импорт"),
@@ -66,6 +67,7 @@ object ProjectArchive {
         if (n >= 3 && head[0] == 0xEF.toByte() && head[1] == 0xBB.toByte() && head[2] == 0xBF.toByte()) i = 3   // BOM
         while (i < n && head[i].toInt().toChar().isWhitespace()) i++
         if (i < n && head[i] == '{'.code.toByte()) return Kind.JSON
+        if (i < n && head[i] == '<'.code.toByte()) return Kind.XML
         return Kind.UNKNOWN
     }
 

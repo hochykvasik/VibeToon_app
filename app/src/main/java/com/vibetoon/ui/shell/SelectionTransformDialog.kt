@@ -80,3 +80,32 @@ private fun TransformField(label: String, value: String, onChange: (String) -> U
         isError = parseTransformNumber(value) == null,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
 }
+
+/**
+ * Спринт 36: наклон целого слоя/группы в градусах (X - от вертикали, Y - от горизонтали). Поля заполнены текущим
+ * наклоном; «Применить» пишет углы перспективы (ключ на кадре при включённой анимации).
+ */
+@Composable
+fun LayerSkewDialog(current: Pair<Float, Float>, onDismiss: () -> Unit, onApply: (Float, Float) -> Unit) {
+    fun fmt(v: Float) = (kotlin.math.round(v * 10f) / 10f).let { if (it == kotlin.math.floor(it)) it.toInt().toString() else it.toString() }
+    var skewX by remember { mutableStateOf(fmt(current.first)) }
+    var skewY by remember { mutableStateOf(fmt(current.second)) }
+    val kx = parseTransformNumber(skewX); val ky = parseTransformNumber(skewY)
+    val valid = kx != null && ky != null && kotlin.math.abs(kx) <= 75.0 && kotlin.math.abs(ky) <= 75.0
+    com.vibetoon.ui.motion.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Наклон слоя") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Наклон хранится в углах перспективы: искажение углов и ключи анимации сохраняются", fontSize = 12.sp)
+                TransformField("Наклон по X, °", skewX) { skewX = it }
+                TransformField("Наклон по Y, °", skewY) { skewY = it }
+                if (!valid) Text("Наклон от −75° до 75°", fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = valid, onClick = { if (valid) onApply(kx!!.toFloat(), ky!!.toFloat()) }) { Text("Применить") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
+    )
+}

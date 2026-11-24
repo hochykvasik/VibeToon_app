@@ -40,12 +40,12 @@ object ForeignImport {
 
     enum class Kind(val app: String) {
         PROCREATE("Procreate"), LOTTIE("Lottie"), DOTLOTTIE("Lottie"), ORA("OpenRaster"), KRITA("Krita"),
-        SEQUENCE("Последовательность кадров"), TOONSQUID("ToonSquid"), UNKNOWN("")
+        SEQUENCE("Последовательность кадров"), TOONSQUID("ToonSquid"), SVG("SVG"), UNKNOWN("")
     }
 
     /** Сообщения отказа (RU/EN через таблицу перевода). */
     const val MSG_TOONSQUID = "Проект ToonSquid (.tsproj) не читается напрямую: экспортируйте его в ToonSquid в PSD, GIF, видео или последовательность PNG (ZIP) и импортируйте этот файл"
-    const val MSG_UNKNOWN = "Формат не распознан. Поддерживаются: .tsproj/.zip VibeToon, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra) и ZIP с кадрами PNG/JPEG"
+    const val MSG_UNKNOWN = "Формат не распознан. Поддерживаются: .tsproj/.zip VibeToon, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra), SVG и ZIP с кадрами PNG/JPEG"
     const val MSG_ROUGH = "Проект Rough Animator не читается напрямую: экспортируйте анимацию в Rough Animator как последовательность PNG (ZIP), GIF или видео и импортируйте этот файл"
     const val MSG_EMPTY = "В файле нет слоёв с пикселями"
 
@@ -53,7 +53,7 @@ object ForeignImport {
     fun unknownMessage(fileName: String): String? = when {
         fileName.lowercase().endsWith(".tsproj") -> MSG_TOONSQUID
         fileName.lowercase().substringAfterLast('.') == "roughanimator" -> MSG_ROUGH
-        fileName.lowercase().substringAfterLast('.') in setOf("procreate", "lottie", "ora", "kra") -> null
+        fileName.lowercase().substringAfterLast('.') in setOf("procreate", "lottie", "ora", "kra", "svg") -> null
         else -> MSG_UNKNOWN
     }
 
@@ -75,6 +75,9 @@ object ForeignImport {
             val t = src.read(jsons[0])?.toString(Charsets.UTF_8)
             if (t != null && LottieImport.looksLike(t)) return Kind.LOTTIE
         }
+        // спринт 36: один SVG (файл или ZIP с ним) - векторный проект
+        val svgs = names.filter { it.lowercase().endsWith(".svg") }
+        if (svgs.size == 1 && names.size <= 2 && src.read(svgs[0])?.toString(Charsets.UTF_8)?.let { com.vibetoon.domain.vector.SvgImport.looksLike(it) } == true) return Kind.SVG
         val images = names.filter { it.substringAfterLast('.').lowercase() in IMAGE_EXT }
         if (images.size >= 1 && images.size >= names.size - 3) return Kind.SEQUENCE
         // ToonSquid: тот же .tsproj, но без project.json VibeToon - узнаём по служебным именам или по расширению
@@ -95,6 +98,7 @@ object ForeignImport {
                 LottieImport.convert(src.read(json)!!.toString(Charsets.UTF_8), src, sink, title)
             }
             Kind.SEQUENCE -> SequenceImport.convert(src, sink, title)
+            Kind.SVG -> SvgProject.convert(src.read(src.names().first { it.lowercase().endsWith(".svg") })!!.toString(Charsets.UTF_8), title)
             Kind.TOONSQUID -> throw Unsupported(MSG_TOONSQUID)
             Kind.UNKNOWN -> throw Unsupported(unknownMessage(fileName) ?: MSG_UNKNOWN)
         }

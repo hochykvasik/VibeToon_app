@@ -261,7 +261,13 @@ class ProjectRepository(context: Context) {
                     val bytes = s.readBytes()
                     if (bytes.size > 64 * 1024 * 1024) throw ProjectArchive.ImportException(ProjectArchive.Reason.TOO_LARGE)
                     val text = bytes.toString(Charsets.UTF_8)
-                    if (com.vibetoon.domain.project.foreign.LottieImport.looksLike(text.trimStart('\uFEFF'))) {
+                    if (kind == ProjectArchive.Kind.XML) {
+                        // спринт 36: SVG - векторный проект; другой XML - понятный отказ
+                        if (!com.vibetoon.domain.vector.SvgImport.looksLike(text)) throw ProjectArchive.ImportException(ProjectArchive.Reason.NOT_PROJECT, null,
+                            com.vibetoon.domain.project.foreign.ForeignImport.unknownMessage(fileName))
+                        val name = fileName.ifBlank { "drawing.svg" }.substringAfterLast('/').let { if (it.lowercase().endsWith(".svg")) it else "$it.svg" }
+                        File(staging, name).writeBytes(bytes)
+                    } else if (com.vibetoon.domain.project.foreign.LottieImport.looksLike(text.trimStart('\uFEFF'))) {
                         val name = fileName.ifBlank { "animation.json" }.let { if (it.lowercase().endsWith(".json")) it else "$it.json" }
                         File(staging, name.substringAfterLast('/')).writeBytes(bytes)
                     } else File(staging, "project.json").writeBytes(bytes)
