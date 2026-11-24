@@ -1,5 +1,6 @@
 package com.vibetoon.ui.inspector
 
+import com.vibetoon.ui.motion.motionAppear
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -64,7 +65,7 @@ private val Pink = Color(0xFFE8658A)
 fun EffectLibraryDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
     var cat by remember { mutableStateOf<EffectCategory?>(null) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = Navy) {
+        Surface(Modifier.fillMaxSize().motionAppear(), color = Navy) {
             Column(Modifier.fillMaxSize()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.ArrowBack, com.vibetoon.ui.i18n.L("Назад"), tint = Color.White) }

@@ -69,6 +69,9 @@ class AppSettings(context: Context) {
     var rotateCanvas by mutableStateOf(p.getBoolean("rotate_canvas_2f", true))
     fun savePixelModes() { p.edit().putBoolean("rotate_canvas_2f", rotateCanvas).putBoolean("vector_workflow", vectorWorkflow).putBoolean("auto_pixel_edit", autoPixelEdit).putBoolean("only_erase_selected_paths", onlyEraseSelectedPaths).putBoolean("temporary_pivots", temporaryPivots).putBoolean("pivot_editing", pivotEditing).apply() }
     var checkerThumbnails by mutableStateOf(p.getBoolean("checker_thumbnails", false))
+    /** Спринт 31: плавное появление панелей и окон (вместе с системным масштабом анимаций; 0 в Android - мгновенно). */
+    var uiAnimations by mutableStateOf(p.getBoolean("ui_animations", true))
+    fun saveMotion() { p.edit().putBoolean("ui_animations", uiAnimations).apply() }
     // До появления настройки звук при скраббинге был включён всегда.
     var audioWhileScrubbing by mutableStateOf(p.getBoolean("audio_while_scrubbing", true))
     /** Пакет 23: PSD Import Mode (код PsdInsertPlan.Mode: 0 слои как в файле, 1 одним слоем, 2 слои как кадры). */
@@ -138,7 +141,8 @@ class AppSettings(context: Context) {
         leftHanded = false; showGrid = false; gridCells = com.vibetoon.domain.render.CanvasGrid.density(16)
         checkerThumbnails = false; selectionMaskVisible = true; boneColors = false
         symbolContext = true; symbolContextOpacity = com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT
-        save(); saveGrid(); savePlaybackAndDisplay(); saveSprint67(); saveSymbolContext()
+        uiAnimations = true
+        save(); saveGrid(); savePlaybackAndDisplay(); saveSprint67(); saveSymbolContext(); saveMotion()
     }
 
     /** Пакет 10: резервная копия всех настроек (JSON) для «Manual Backup». */
@@ -183,6 +187,7 @@ class AppSettings(context: Context) {
         pivotEditing = p.getBoolean("pivot_editing", true)
         rotateCanvas = p.getBoolean("rotate_canvas_2f", true)
         checkerThumbnails = p.getBoolean("checker_thumbnails", false)
+        uiAnimations = p.getBoolean("ui_animations", true)
         symbolContext = p.getBoolean("symbol_context", true)
         psdImportMode = p.getInt("psd_import_mode", 0)
         symbolContextOpacity = p.getInt("symbol_context_opacity", com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT)

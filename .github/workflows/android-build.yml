@@ -40,6 +40,8 @@ jobs:
           /tmp/vibetoon-group-cache-test
           g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/TextureBudgetPolicyTest.cpp -o /tmp/vibetoon-texture-budget-test
           /tmp/vibetoon-texture-budget-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/UploadBufferPolicyTest.cpp -o /tmp/vibetoon-upload-buffer-test
+          /tmp/vibetoon-upload-buffer-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
       - name: Check RU/EN dictionary

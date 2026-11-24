@@ -1221,7 +1221,7 @@
     <string name="ui_loop_without_keys_inner_animation_re">Цикл без ключей (внутренняя анимация по кругу)</string>
     <string name="ui_frame_1_hold">кадр 1 (Hold)</string>
     <string name="ui_looping">по кругу (цикл)</string>
-    <string name="ui_frame_ui_avg_p95_ms_gl_ms_slow_layer">Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {} · групп из кэша {}</string>
+    <string name="ui_frame_ui_avg_p95_ms_gl_ms_slow_layer">Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {} · групп из кэша {} · рисунков из кэша {}%</string>
     <string name="ui_from_frame_hold">«{}» с кадра {} (Hold)</string>
     <string name="ui_markers_not_moved_layer_already_has_">Маркеры не сдвинуты: на целевом кадре слоя «{}» уже есть другой рисунок</string>
     <string name="ui_markers_mirrored_their_forms_swapped">Маркеры отзеркалены: формы поменялись местами вместе с ними</string>
@@ -1659,4 +1659,6 @@
     <string name="ui_flow">Поток</string>
     <string name="ui_perspective_for_group_tap_enable_for">Перспектива для группы: нажмите «Включить для группы»</string>
     <string name="ui_warp_for_group_tap_enable_for_group">Warp для группы: нажмите «Включить для группы»</string>
+    <string name="ui_smooth_ui_animations">Плавные анимации интерфейса</string>
+    <string name="ui_panels_and_windows_appear_smoothly_f">Панели и окна появляются плавно; учитывается «Масштаб длительности анимации» Android (0 - без анимации)</string>
 </resources>

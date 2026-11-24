@@ -11,7 +11,7 @@ import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ScrollableTabRow
@@ -85,6 +85,7 @@ private val RU: Map<String, String> = mapOf(
     "Checker Pattern in Thumbnails" to "Шахматка в миниатюрах",
     "Selection Mask Visibility" to "Видимость маски выделения",
     "Bones Colors" to "Цвета костей",
+    "Smooth UI Animations" to "Плавные анимации интерфейса",
     "Reset" to "Сбросить",
     "Finger Drawing" to "Рисование пальцем",
     "Rotate Canvas 2 Fingers" to "Поворот холста двумя пальцами",
@@ -119,7 +120,7 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
     "Display" to listOf<Item>(
         Toggle("Left Handed"), Toggle("Show Grid"), Toggle("Show Symbol Context"),
         Toggle("Symbol Context Opacity"), Toggle("Checker Pattern in Thumbnails"), Toggle("Selection Mask Visibility"),
-        Toggle("Bones Colors"), Action("Reset")
+        Toggle("Bones Colors"), Toggle("Smooth UI Animations"), Action("Reset")
     ),
     "Gestures" to toggles(
         "Finger Drawing", "Rotate Canvas 2 Fingers", "Pinch to Refocus", "Double Tap & Drag for Multi-select",
@@ -197,7 +198,7 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         when (item) {
                             is Toggle -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 val st = com.vibetoon.ui.theme.LocalAppSettings.current
-                                val available = (vm != null && item.title.startsWith("Flip Canvas")) || st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers", "Import Images as Symbols", "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer", "Insert Images into Existing Drawing", "Show Symbol Context", "Symbol Context Opacity")
+                                val available = (vm != null && item.title.startsWith("Flip Canvas")) || st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers", "Import Images as Symbols", "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer", "Insert Images into Existing Drawing", "Show Symbol Context", "Symbol Context Opacity", "Smooth UI Animations")
                                 Column(Modifier.weight(1f)) {
                                     Text(ru(item.title), fontSize = 14.sp)
                                     if (!available) Text("В разработке", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -230,11 +231,13 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                         "Symbol Context Opacity" -> Text("Насколько видна главная сцена вокруг открытого символа (5-100%)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Import Images as Symbols" -> Text("«+ Изображение» сразу создаёт символ: картинка - определение, на холсте - экземпляр", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)" -> Text("Отражение только вида холста; экспорт не меняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Smooth UI Animations" -> Text("Панели и окна появляются плавно; учитывается «Масштаб длительности анимации» Android (0 - без анимации)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Layer Pivot Editing" -> Text("Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                                 if (item.title == "Flip Canvas (горизонтально)" && vm != null) { var fx by remember { mutableStateOf(vm.cameraFlipped().first) }; Switch(checked = fx, onCheckedChange = { fx = it; vm.setCameraFlip(true, it) }) }
                                 else if (item.title == "Flip Canvas (вертикально)" && vm != null) { var fy by remember { mutableStateOf(vm.cameraFlipped().second) }; Switch(checked = fy, onCheckedChange = { fy = it; vm.setCameraFlip(false, it) }) }
+                                else if (item.title == "Smooth UI Animations" && st != null) Switch(checked = st.uiAnimations, onCheckedChange = { st.uiAnimations = it; st.saveMotion() })
                                 else if (item.title == "Left Handed" && st != null) Switch(checked = st.leftHanded, onCheckedChange = { st.leftHanded = it; st.save() })
                                 else if (item.title == "Show Grid" && st != null) Switch(checked = st.showGrid, onCheckedChange = { st.showGrid = it; st.saveGrid() })
                                 else if (item.title == "Play Audio While Scrubbing" && st != null) Switch(checked = st.audioWhileScrubbing, onCheckedChange = { st.audioWhileScrubbing = it; st.savePlaybackAndDisplay(); if (!it) vm?.stopScrubPreview() })

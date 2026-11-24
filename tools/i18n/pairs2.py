@@ -897,7 +897,7 @@ Hold - резкая смена формы. Плавно/Линейно - кад�
 Цикл без ключей (внутренняя анимация по кругу)|Loop without keys (inner animation repeats)
 кадр 1 (Hold)|frame 1 (Hold)
 по кругу (цикл)|looping
-Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {} · групп из кэша {}|Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}, cached {} · groups cached {}
+Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {} · групп из кэша {} · рисунков из кэша {}%|Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}, cached {} · groups cached {} · drawings cached {}%
 «{}» с кадра {} (Hold)|“{}” from frame {} (Hold)
 Маркеры не сдвинуты: на целевом кадре слоя «{}» уже есть другой рисунок|Markers not moved: layer “{}” already has another drawing on the target frame
 Маркеры отзеркалены: формы поменялись местами вместе с ними|Markers mirrored: their forms swapped places with them
@@ -1335,4 +1335,6 @@ Transform Layer создаётся через addNullLayer|Transform Layer is cr
 Поток|Flow
 Перспектива для группы: нажмите «Включить для группы»|Perspective for group: tap “Enable for group”
 Warp для группы: нажмите «Включить для группы»|Warp for group: tap “Enable for group”
+Плавные анимации интерфейса|Smooth UI Animations
+Панели и окна появляются плавно; учитывается «Масштаб длительности анимации» Android (0 - без анимации)|Panels and windows appear smoothly; follows Android's “Animator duration scale” (0 turns animations off)
 """

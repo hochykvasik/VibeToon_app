@@ -374,6 +374,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Картинки, видео и аудио проекта; id начинаются с MEDIA_ID_BASE. */
     private val media = ArrayList<MediaItem>()
     private val importer = MediaImporter(app)
+    /** Спринт 31: кэш, пул декодирования и предзагрузка рисунков покадровых слоёв. */
+    private val cellCache = com.vibetoon.data.CellFrameCache(app, importer)
+    private var lastCellFrame = 0
     private val fonts = FontRegistry(app)
     private val textRenderer = TextRenderer(fonts)
     private val _fontList = MutableStateFlow(fonts.list())
@@ -639,6 +642,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pinSel = -1
         videoFrames.release()
         videoThumbs.clear()
+        cellCache.clear()
         _perspTool.value = false
         _perspOverlay.value = FloatArray(0)
         _meshOverlay.value = MeshOverlay()
@@ -4578,11 +4582,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val tickets = need.associate { it.id to RenderNative.textureUploadTicket(it.id) }
         viewModelScope.launch {
             if (need.isNotEmpty()) {
-                withContext(decodeDispatcher) {
+                // Спринт 31: призраки кальки - соседние рисунки, обычно уже в кэше предзагрузки
+                withContext(cellCache.dispatcher) {
                     for (g in need) runCatching {
-                        val d = importer.decodeImage(projects.fileOf(pid, g.file))
+                        val d = cellCache.load(projects.fileOf(pid, g.file))
                         val uploaded = RenderNative.uploadBitmapIfCurrent(g.id, d.bitmap, tickets.getValue(g.id))
-                        d.bitmap.recycle(); if (uploaded) ghostShown[g.id] = g.file
+                        if (d.owned) d.bitmap.recycle()
+                        if (uploaded) ghostShown[g.id] = g.file
                     }
                 }
             }
@@ -4622,8 +4628,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён")
                         return@launch
                     } // не подменяем рисунок, пока прежний не сохранён
-                    val d = withContext(decodeDispatcher) { importer.decodeImage(projects.fileOf(pid, act.file)) }
-                    val uploaded = RenderNative.uploadBitmapIfCurrent(m.id, d.bitmap, ticket); d.bitmap.recycle()
+                    // Спринт 31: рисунок из кэша (предзагружен) или декод на пуле потоков: слои не ждут друг друга
+                    val d = withContext(cellCache.dispatcher) { cellCache.load(projects.fileOf(pid, act.file)) }
+                    val uploaded = RenderNative.uploadBitmapIfCurrent(m.id, d.bitmap, ticket)
+                    if (d.owned) d.bitmap.recycle()   // закэшированный Bitmap не освобождается: он нужен следующему показу
                     if (!uploaded) return@launch
                     // обычный слой (без кадров) дальше рисуется в свой файл: запись о показанном кадре не нужна
                     if (plain) cellShown.remove(m.id) else cellShown[m.id] = act.file
@@ -4639,7 +4647,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (_frame.value != f) updateCells(_frame.value)
             }
         }
+        prefetchCells(pid, f)
     }
+
+    /**
+     * Спринт 31: заранее декодировать следующие рисунки покадровых слоёв по направлению воспроизведения
+     * (вперёд при Play, назад при шаге назад). Глубина зависит от бюджета кэша и числа слоёв с кадрами.
+     */
+    private fun prefetchCells(pid: String, f: Int) {
+        val dir = com.vibetoon.domain.perf.CellCachePolicy.direction(lastCellFrame, f, _playing.value)
+        lastCellFrame = f
+        if (!cellCache.prefetchEnabled) return
+        val layered = media.filter { it.kind == MediaKind.IMAGE && it.cells.size > 1 }
+        if (layered.isEmpty()) return
+        // размер рисунка для оценки памяти: самый крупный слой с кадрами (нет размера - холст)
+        val sample = layered.maxBy { it.srcWidth.toLong() * it.srcHeight }
+        val w = if (sample.srcWidth > 0) sample.srcWidth else canvasW
+        val h = if (sample.srcHeight > 0) sample.srcHeight else canvasH
+        val depth = cellCache.prefetchDepth(w.coerceAtLeast(1), h.coerceAtLeast(1), layered.size)
+        if (depth <= 0) return
+        val files = ArrayList<java.io.File>()
+        for (m in layered) {
+            for (name in com.vibetoon.domain.perf.CellCachePolicy.prefetchFiles(m.cells, f, dir, depth, _loop.value)) files += projects.fileOf(pid, name)
+        }
+        cellCache.prefetch(files)
+    }
+
+    /** Спринт 31: система просит освободить память (фон, нехватка) - кэш рисунков уменьшается или очищается. */
+    fun onTrimMemory(level: Int) { cellCache.trim(level) }
+
+    /** Спринт 31: возврат на передний план - прежний бюджет кэша рисунков. */
+    fun restoreCaches() { cellCache.restoreBudget() }
 
     private suspend fun restoreAfterExport() {
         releaseExportResources()
@@ -6544,6 +6582,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     catch (t: Exception) { Log.e("VT/Project", "PNG save failed", t); false }
                 }
                 if (!written) { paintDirty += id; ok = false; continue }
+                cellCache.invalidate(destination)   // спринт 31: в кэше рисунков не остаётся версии до правки
                 if (newPath != null) {
                     val index = media.indexOfFirst { it.id == id }
                     if (projectId != pid || index < 0 || media[index] != original) {
@@ -10875,7 +10914,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         fun f1(v: Float) = String.format(java.util.Locale.US, "%.1f", v)
         // Строка-шаблон с {}: панель переводится через L() как остальные сообщения.
         _perfHud.value = "Кадр (UI): ср ${f1(frameTimer.average())} / p95 ${f1(frameTimer.percentile(0.95f))} мс · GL: ${f1(drawTimer.average())} мс · " +
-            "медленных ${(frameTimer.overBudget(budget) * 100).toInt()}% · слоёв ${m.drawn}, вне экрана ${m.culled} · FX в рамке ${m.scissoredFx}, проходов ${m.fxPasses}, из кэша ${m.fxCached} · групп из кэша ${m.groupCached}"
+            "медленных ${(frameTimer.overBudget(budget) * 100).toInt()}% · слоёв ${m.drawn}, вне экрана ${m.culled} · FX в рамке ${m.scissoredFx}, проходов ${m.fxPasses}, из кэша ${m.fxCached} · групп из кэша ${m.groupCached} · рисунков из кэша ${cellCache.hitPercent()}%"
     }
 
     private val videoFrames = com.vibetoon.data.VideoFrames { RenderHost.view?.requestRender() }
@@ -10923,13 +10962,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pid = projectId ?: return
         val fps = _animation.value.settings.fps
         val playing = _playing.value
-        for (m in media) {
-            if (m.kind != MediaKind.VIDEO) continue
+        val visible = media.filter { it.kind == MediaKind.VIDEO && clipOf(it.id).visibleAt(f) }
+        // спринт 31: при нескольких видео сразу кадр при воспроизведении меньше - декод не отстаёт
+        val side = com.vibetoon.domain.perf.VideoDecodePolicy.maxSide(playing, visible.size)
+        for (m in visible) {
             val clip = clipOf(m.id)
-            if (!clip.visibleAt(f)) continue
             videoFrames.request(
                 m.id, projects.mediaFile(pid, m.file.removePrefix("assets/")), videoSourceMs(clip, f, fps),
-                m.srcWidth, m.srcHeight, if (playing) 640 else 1280
+                m.srcWidth, m.srcHeight, side
             )
         }
     }
@@ -11332,6 +11372,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pause()
         audioEngine.release()
         videoThumbs.release()
+        videoFrames.shutdown()
+        cellCache.shutdown()
         executor.shutdown()
     }
 }

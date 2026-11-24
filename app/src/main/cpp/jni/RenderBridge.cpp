@@ -3,9 +3,11 @@
 #include <android/bitmap.h>
 #include <jni.h>
 #include <cstring>
+#include <new>
 #include <vector>
 
 #include "render/Renderer.h"
+#include "render/UploadBufferPolicy.h"
 #include "render/UploadQueue.h"
 
 namespace {
@@ -161,15 +163,27 @@ static jboolean uploadBitmap(JNIEnv* env, jint layerId, jobject bitmap, bool che
     up.layerId = layerId;
     up.width = static_cast<int>(info.width);
     up.height = static_cast<int>(info.height);
-    up.rgba.resize(static_cast<size_t>(info.width) * info.height * 4);
+    const size_t total = static_cast<size_t>(info.width) * info.height * 4;
+    // Спринт 31: буфер из пула (без нового выделения на каждый кадр видео/рисунка); без stride-выравнивания - один memcpy.
+    try { up.rgba = vt::uploadQueue::acquireBuffer(total); }
+    catch (const std::bad_alloc&) { AndroidBitmap_unlockPixels(env, bitmap); return JNI_FALSE; }
     const auto* src = static_cast<const uint8_t*>(pixels);
-    for (uint32_t y = 0; y < info.height; ++y) {
-        std::memcpy(&up.rgba[static_cast<size_t>(y) * info.width * 4], src + static_cast<size_t>(y) * info.stride,
-                    static_cast<size_t>(info.width) * 4);
+    if (vt::uploadbuf::singleCopy(info.stride, info.width)) {
+        std::memcpy(up.rgba.data(), src, total);
+    } else {
+        for (uint32_t y = 0; y < info.height; ++y) {
+            std::memcpy(&up.rgba[static_cast<size_t>(y) * info.width * 4], src + static_cast<size_t>(y) * info.stride,
+                        static_cast<size_t>(info.width) * 4);
+        }
     }
     AndroidBitmap_unlockPixels(env, bitmap);
     if (shadow) { vt::uploadQueue::pushShadow(std::move(up)); return JNI_TRUE; }
-    if (checked) return vt::uploadQueue::pushIfCurrent(std::move(up), ticket) ? JNI_TRUE : JNI_FALSE;
+    if (checked) {
+        // pushIfCurrent при отказе буфер не забирает: устаревший кадр возвращает память в пул
+        if (vt::uploadQueue::pushIfCurrent(std::move(up), ticket)) return JNI_TRUE;
+        vt::uploadQueue::recycleBuffer(std::move(up.rgba));
+        return JNI_FALSE;
+    }
     vt::uploadQueue::push(std::move(up));
     return JNI_TRUE;
 }

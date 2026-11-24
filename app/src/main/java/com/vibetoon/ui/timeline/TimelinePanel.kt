@@ -50,7 +50,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.DropdownMenu
@@ -275,7 +275,7 @@ fun TimelinePanel(
         var selectMode by remember { mutableStateOf(false) }
         val phone = com.vibetoon.ui.shell.LocalPhone.current
         var toolsOpen by remember { mutableStateOf(false) }
-        if (onionDialog) androidx.compose.material3.AlertDialog(
+        if (onionDialog) com.vibetoon.ui.motion.AlertDialog(
             onDismissRequest = { onionDialog = false },
             title = { Text("Калька (Onion Skin)") },
             text = {

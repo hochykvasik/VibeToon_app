@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import com.vibetoon.ui.i18n.Text
 import com.vibetoon.ui.theme.AppSettings
@@ -65,9 +65,15 @@ class MainActivity : ComponentActivity() {
         com.vibetoon.render.RenderHost.view?.onPause()
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        editor.onTrimMemory(level)   // спринт 31: кэш рисунков покадровых слоёв отдаёт память
+    }
+
     override fun onResume() {
         super.onResume()
         com.vibetoon.render.RenderHost.view?.onResume()
+        editor.restoreCaches()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -103,7 +109,9 @@ class MainActivity : ComponentActivity() {
         settings = AppSettings(this)
         setContent {
             val locCtx = remember(settings.effectiveLang) { localizedContext(this@MainActivity, settings.effectiveLang) }
-            CompositionLocalProvider(LocalContext provides locCtx, LocalConfiguration provides locCtx.resources.configuration, LocalAppSettings provides settings) {
+            // Спринт 31: анимации панелей и окон - настройка приложения + системный масштаб анимаций
+            val motion = com.vibetoon.ui.motion.rememberMotion(settings.uiAnimations)
+            CompositionLocalProvider(LocalContext provides locCtx, LocalConfiguration provides locCtx.resources.configuration, LocalAppSettings provides settings, com.vibetoon.ui.motion.LocalMotion provides motion) {
             VibeTheme(settings) {
                 androidx.compose.runtime.LaunchedEffect(Unit) {
                     if (!settings.onboarded || app.needsStarterRecovery) app.ensureStarterProject()

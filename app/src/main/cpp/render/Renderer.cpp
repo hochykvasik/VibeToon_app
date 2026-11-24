@@ -1,4 +1,5 @@
 #include "render/Renderer.h"
+#include "render/UploadBufferPolicy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1270,10 +1271,40 @@ bool Renderer::makeTexture(const PendingUpload& up, size_t bytes, Tex& t) {
     return true;
 }
 
+// Спринт 31: CPU-буфер загруженного кадра возвращается в пул (следующий кадр видео/рисунка не выделяет память).
+static void recycleUpload(PendingUpload& up) {
+    uploadQueue::recycleBuffer(std::move(up.rgba));
+    up.rgba = std::vector<uint8_t>();
+}
+
+// Спринт 31: запись в существующую текстуру через GL_PIXEL_UNPACK_BUFFER. Данные копируются в буфер драйвера
+// сразу (CPU-буфер можно вернуть в пул), а перенос в текстуру идёт по очереди GPU, не блокируя поток GL.
+// Любая ошибка драйвера навсегда (до пересоздания контекста) выключает путь - дальше обычный glTexSubImage2D.
+bool Renderer::uploadViaPbo(const PendingUpload& up) {
+    const size_t bytes = static_cast<size_t>(up.width) * up.height * 4;
+    if (!uploadbuf::usePbo(uploadPboBroken_, bytes)) return false;
+    GLuint& pbo = uploadPbo_[uploadPboNext_];
+    uploadPboNext_ ^= 1;   // два буфера по очереди: новый кадр не ждёт, пока GPU дочитает предыдущий
+    if (!pbo) glGenBuffers(1, &pbo);
+    if (!pbo) { uploadPboBroken_ = true; return false; }
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(bytes), up.rgba.data(), GL_STREAM_DRAW);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    if (!checkGl("uploadPending pbo")) {
+        uploadPboBroken_ = true;
+        LOGW("PBO upload failed, falling back to direct texture upload");
+        return false;
+    }
+    return true;
+}
+
 void Renderer::uploadPending() {
     size_t uploaded = 0;
     PendingUpload up;
-    while (uploaded < kUploadBytesPerFrame && uploadQueue::pop(up)) {
+    while (uploaded < kUploadBytesPerFrame) {
+        if (up.rgba.capacity()) recycleUpload(up);
+        if (!uploadQueue::pop(up)) break;
         const size_t bytes = texbudget::textureBytes(up.width, up.height);  // с mip
         if (!droppedTex_.empty() && droppedTex_.count(up.layerId)) continue;   // форма уже удалена - загрузка опоздала
         if (up.width <= 0 || up.height <= 0 || up.rgba.size() < static_cast<size_t>(up.width) * up.height * 4) continue;
@@ -1289,7 +1320,8 @@ void Renderer::uploadPending() {
             checkGl("before uploadPending reuse");
             glBindTexture(GL_TEXTURE_2D, t.id);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE, up.rgba.data());
+            if (!uploadViaPbo(up))
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE, up.rgba.data());
             glGenerateMipmap(GL_TEXTURE_2D);
             if (checkGl("uploadPending reuse")) {
                 if (t.alpha.size() != static_cast<size_t>(up.width) * up.height) t.alpha.resize(static_cast<size_t>(up.width) * up.height);
@@ -1298,8 +1330,7 @@ void Renderer::uploadPending() {
                 dropFxEntry(up.layerId);
                 touchTex(up.layerId);
                 bumpEpoch();
-                up = PendingUpload();
-                continue;
+                continue;   // буфер вернётся в пул в начале цикла
             }
             // ошибка записи - пробуем обычный путь с новой текстурой
         }
@@ -1326,8 +1357,9 @@ void Renderer::uploadPending() {
         dropFxEntry(up.layerId);
         touchTex(up.layerId);
         bumpEpoch();
-        up = PendingUpload();  // освобождаем CPU-буфер сразу
+        recycleUpload(up);  // CPU-буфер сразу в пул (или системе, если пул полон)
     }
+    if (up.rgba.capacity()) recycleUpload(up);
     checkGl("uploadPending");
 }
 
@@ -1335,7 +1367,9 @@ void Renderer::uploadPending() {
 // редактора (кадр сцены) не трогаются - нет гонки «снимок символа подменил рот на холсте».
 void Renderer::uploadShadows() {
     PendingUpload up;
-    while (uploadQueue::popShadow(up)) {
+    while (true) {
+        if (up.rgba.capacity()) recycleUpload(up);
+        if (!uploadQueue::popShadow(up)) break;
         const size_t bytes = texbudget::textureBytes(up.width, up.height);
         if (up.width <= 0 || up.height <= 0) continue;
         if (maxTexSize_ > 0 && (up.width > maxTexSize_ || up.height > maxTexSize_)) continue;
@@ -1353,8 +1387,9 @@ void Renderer::uploadShadows() {
         }
         shadowTex_[up.layerId] = std::move(t);
         textureBytes_ += bytes;
-        up = PendingUpload();
+        recycleUpload(up);
     }
+    if (up.rgba.capacity()) recycleUpload(up);
     checkGl("uploadShadows");
 }
 
@@ -2194,6 +2229,7 @@ void Renderer::release() {
     if (progTex_) glDeleteProgram(progTex_);
     if (progBlend_) glDeleteProgram(progBlend_);
     vbo_ = vao_ = progSolid_ = progTex_ = progBlend_ = 0;
+    for (GLuint& pb : uploadPbo_) { if (pb) glDeleteBuffers(1, &pb); pb = 0; }
 }
 
 }  // namespace vt

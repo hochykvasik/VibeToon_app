@@ -236,19 +236,32 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                 val timelineH = if (userTimelineDp > 0f) userTimelineDp.dp.coerceIn(minOf(96.dp, maxHeight * 0.75f), maxOf(96.dp, maxHeight * 0.75f))
                     else (maxHeight * (if (phone) 0.34f else 0.4f)).coerceIn(tlMin, maxOf(tlMin, 340.dp))
                 Column(Modifier.fillMaxSize()) {
-                    if (!full) TopBar(
-                        vm, wide, onBack, add, onExport,
-                        rightOpen = rightOpen, onToggleRight = { rightOpen = !rightOpen },
-                        onSettings = { showSettings = true }, onFullscreen = ::toggleFullscreen,
-                        modes = !tallScreen,   // на низком экране режимы живут в верхней строке
-                        mesh = mesh, onMesh = { mesh = it }
-                    )
-                    if (tallScreen && !full) ModeBar(vm, mesh) { mesh = it }
+                    // Спринт 31: при входе/выходе из полного экрана панели уезжают и возвращаются плавно (только сдвиг и прозрачность)
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !full,
+                        enter = com.vibetoon.ui.motion.Motions.barEnter(fromTop = true),
+                        exit = com.vibetoon.ui.motion.Motions.barExit(toTop = true)
+                    ) {
+                        Column(Modifier.fillMaxWidth()) {
+                            TopBar(
+                                vm, wide, onBack, add, onExport,
+                                rightOpen = rightOpen, onToggleRight = { rightOpen = !rightOpen },
+                                onSettings = { showSettings = true }, onFullscreen = ::toggleFullscreen,
+                                modes = !tallScreen,   // на низком экране режимы живут в верхней строке
+                                mesh = mesh, onMesh = { mesh = it }
+                            )
+                            if (tallScreen) ModeBar(vm, mesh) { mesh = it }
+                        }
+                    }
                     // Режим левши: Row раскладывается справа налево (панель инструментов справа, слои слева), содержимое каждой части остаётся обычным
                     val leftHanded = com.vibetoon.ui.theme.LocalAppSettings.current?.leftHanded == true
                     CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides (if (leftHanded) androidx.compose.ui.unit.LayoutDirection.Rtl else androidx.compose.ui.unit.LayoutDirection.Ltr)) {
                     Row(Modifier.weight(1f).fillMaxWidth()) {
-                        if (!full) CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) { Box(Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start))) { LeftToolbar(
+                        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) { androidx.compose.animation.AnimatedVisibility(
+                            visible = !full,
+                            enter = com.vibetoon.ui.motion.Motions.panelEnter(fromEnd = leftHanded),
+                            exit = com.vibetoon.ui.motion.Motions.panelExit(toEnd = leftHanded)
+                        ) { Box(Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start))) { LeftToolbar(
                             tool, wide, boneMode, mesh, boneToolNow, meshToolNow, vm,
                             onPick = pick@{ t ->
                                 val again = tool == t.name && !boneMode && !mesh
@@ -271,13 +284,13 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                     }
                                 }
                             }
-                        ) } }
+                        ) } } }
                         CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             Box(Modifier.weight(1f).fillMaxWidth()) {
                                 EditorCanvas(vm, Modifier.fillMaxSize())
                                 val markerPanel by vm.markerPanel.collectAsStateWithLifecycle()
-                                androidx.compose.animation.AnimatedVisibility(visible = markerPanel != null && !full, enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.92f), exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.92f)) {
+                                androidx.compose.animation.AnimatedVisibility(visible = markerPanel != null && !full, enter = com.vibetoon.ui.motion.Motions.popEnter(), exit = com.vibetoon.ui.motion.Motions.popExit()) {
                                     val last = remember { mutableStateOf(markerPanel) }
                                     if (markerPanel != null) last.value = markerPanel
                                     last.value?.let { mid -> com.vibetoon.ui.MarkerPanel(vm, mid) { vm.closeMarkerPanel() } }
@@ -294,15 +307,15 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                 ) { Icon(Icons.Default.FullscreenExit, com.vibetoon.ui.i18n.L("Выйти из полного экрана")) }
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = warpOn && !full && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
-                                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
-                                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
+                                    enter = com.vibetoon.ui.motion.Motions.toolbarEnter(),
+                                    exit = com.vibetoon.ui.motion.Motions.toolbarExit()
                                 ) {
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { WarpToolRow(vm) }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = liqOn && !full && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
-                                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
-                                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
+                                    enter = com.vibetoon.ui.motion.Motions.toolbarEnter(),
+                                    exit = com.vibetoon.ui.motion.Motions.toolbarExit()
                                 ) {
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { LiquifyToolRow(vm) }
                                 }
@@ -318,42 +331,42 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                         val enter = remember { androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true } }
                                         androidx.compose.animation.AnimatedVisibility(
                                             visibleState = enter,
-                                            enter = androidx.compose.animation.slideInHorizontally { -it } + androidx.compose.animation.fadeIn()
+                                            enter = com.vibetoon.ui.motion.Motions.panelEnter(fromEnd = false)
                                         ) { BrushMenu(vm) }
                                     }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = paintOn != null && !full && !boneMode && !mesh && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
-                                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
-                                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
+                                    enter = com.vibetoon.ui.motion.Motions.toolbarEnter(),
+                                    exit = com.vibetoon.ui.motion.Motions.toolbarExit()
                                 ) {
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { PaintToolRow(vm) { showColor = true } }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = perspOn && !full && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
-                                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
-                                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
+                                    enter = com.vibetoon.ui.motion.Motions.toolbarEnter(),
+                                    exit = com.vibetoon.ui.motion.Motions.toolbarExit()
                                 ) {
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { PerspToolRow(vm) }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = mesh && !boneMode && !full, modifier = Modifier.align(Alignment.TopStart),
-                                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
-                                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
+                                    enter = com.vibetoon.ui.motion.Motions.toolbarEnter(),
+                                    exit = com.vibetoon.ui.motion.Motions.toolbarExit()
                                 ) {
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { MeshToolRow(vm) }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = boneMode && !full, modifier = Modifier.align(Alignment.TopStart),
-                                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
-                                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
+                                    enter = com.vibetoon.ui.motion.Motions.toolbarEnter(),
+                                    exit = com.vibetoon.ui.motion.Motions.toolbarExit()
                                 ) {
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { BoneToolRow(vm) }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = rasterOn != null && !full && !boneMode && !mesh && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
-                                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
-                                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }
+                                    enter = com.vibetoon.ui.motion.Motions.toolbarEnter(),
+                                    exit = com.vibetoon.ui.motion.Motions.toolbarExit()
                                 ) {
                                     val shown = remember { mutableStateOf(rasterOn) }
                                     if (rasterOn != null) shown.value = rasterOn
@@ -379,35 +392,42 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                 }
                             }
                             // хват на верхней границе таймлайна: тянуть вверх/вниз - меняет высоту панели
-                            if (!full && timelineOpen) {
-                                val density = androidx.compose.ui.platform.LocalDensity.current
-                                Box(
-                                    Modifier.fillMaxWidth().height(18.dp)
-                                        .background(MaterialTheme.colorScheme.surface)
-                                        .pointerInput(Unit) {
-                                            detectVerticalDragGestures { change, dy ->
-                                                change.consume()
-                                                val cur = if (userTimelineDp > 0f) userTimelineDp else timelineH.value
-                                                userTimelineDp = (cur - dy / density.density).coerceIn(minOf(96f, maxHdp * 0.75f), maxOf(96f, maxHdp * 0.75f))
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Box(Modifier.width(44.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.outline))
+                            // Спринт 31: таймлайн уезжает вниз при полном экране и возвращается плавно
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = !full,
+                                enter = com.vibetoon.ui.motion.Motions.barEnter(fromTop = false),
+                                exit = com.vibetoon.ui.motion.Motions.barExit(toTop = false)
+                            ) { Column(Modifier.fillMaxWidth()) {
+                                if (timelineOpen) {
+                                    val density = androidx.compose.ui.platform.LocalDensity.current
+                                    Box(
+                                        Modifier.fillMaxWidth().height(18.dp)
+                                            .background(MaterialTheme.colorScheme.surface)
+                                            .pointerInput(Unit) {
+                                                detectVerticalDragGestures { change, dy ->
+                                                    change.consume()
+                                                    val cur = if (userTimelineDp > 0f) userTimelineDp else timelineH.value
+                                                    userTimelineDp = (cur - dy / density.density).coerceIn(minOf(96f, maxHdp * 0.75f), maxOf(96f, maxHdp * 0.75f))
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(Modifier.width(44.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.outline))
+                                    }
                                 }
-                            }
-                            if (!full) TimelinePanel(
-                                vm,
-                                modifier = if (timelineOpen) Modifier.height(timelineH) else Modifier,
-                                fill = true, collapsed = !timelineOpen,
-                                onToggleCollapse = { timelineOpen = !timelineOpen }
-                            )
+                                TimelinePanel(
+                                    vm,
+                                    modifier = if (timelineOpen) Modifier.height(timelineH) else Modifier,
+                                    fill = true, collapsed = !timelineOpen,
+                                    onToggleCollapse = { timelineOpen = !timelineOpen }
+                                )
+                            } }
                         } }
                         CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
                         androidx.compose.animation.AnimatedVisibility(
                             visible = rightOpen && !full && !phone,
-                            enter = androidx.compose.animation.slideInHorizontally { if (leftHanded) -it else it } + androidx.compose.animation.fadeIn(),
-                            exit = androidx.compose.animation.slideOutHorizontally { if (leftHanded) -it else it } + androidx.compose.animation.fadeOut()
+                            enter = com.vibetoon.ui.motion.Motions.panelEnter(fromEnd = !leftHanded),
+                            exit = com.vibetoon.ui.motion.Motions.panelExit(toEnd = !leftHanded)
                         ) {
                             Box(Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End))) { RightPanel(
                                 vm, add, color, { showColor = true }, { rightOpen = false },
@@ -424,8 +444,8 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                 if (phone) androidx.compose.animation.AnimatedVisibility(
                     visible = rightOpen && !full,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(top = 48.dp),
-                    enter = androidx.compose.animation.slideInHorizontally { it } + androidx.compose.animation.fadeIn(),
-                    exit = androidx.compose.animation.slideOutHorizontally { it } + androidx.compose.animation.fadeOut()
+                    enter = com.vibetoon.ui.motion.Motions.panelEnter(fromEnd = true),
+                    exit = com.vibetoon.ui.motion.Motions.panelExit(toEnd = true)
                 ) {
                     Surface(shadowElevation = 12.dp, tonalElevation = 3.dp, shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)) {
                         RightPanel(
@@ -1133,7 +1153,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
     var renameFor by remember { mutableStateOf<Int?>(null) }
     var symbolModeFor by remember { mutableStateOf<Int?>(null) }
     symbolModeFor?.let { sid ->
-        androidx.compose.material3.AlertDialog(
+        com.vibetoon.ui.motion.AlertDialog(
             onDismissRequest = { symbolModeFor = null },
             title = { Text("Создать символ") },
             text = { Text("Слои как кадры: каждый слой станет отдельным кадром символа, а на кадре появится маркер с именем слоя - удобно для форм рта и анимации по рисункам.\n\nСлои стопкой: все слои остаются вместе и видны одновременно (один составной объект).") },
@@ -1161,7 +1181,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
     val maxStepPx = with(androidx.compose.ui.platform.LocalDensity.current) { 18.dp.toPx() }
     renameFor?.let { rid ->
         var nm by remember(rid) { mutableStateOf(vm.layerNameOrNull(rid) ?: "") }
-        androidx.compose.material3.AlertDialog(
+        com.vibetoon.ui.motion.AlertDialog(
             onDismissRequest = { renameFor = null },
             title = { Text("Имя слоя") },
             text = { androidx.compose.material3.OutlinedTextField(value = nm, onValueChange = { nm = it }, singleLine = true, modifier = Modifier.fillMaxWidth()) },
@@ -1496,7 +1516,7 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
         val shown = com.vibetoon.ui.i18n.boneDisplayName(bone.name)
         var nm by remember(bone.id) { mutableStateOf(shown) }
         val ok = com.vibetoon.domain.project.BoneRename.sanitize(nm, bone.name) != null && nm.trim() != shown
-        androidx.compose.material3.AlertDialog(
+        com.vibetoon.ui.motion.AlertDialog(
             onDismissRequest = { renaming = false },
             title = { Text("Имя кости") },
             text = {
@@ -1588,7 +1608,7 @@ private fun AssetLibraryDialog(vm: MainViewModel, onDismiss: () -> Unit) {
     )
     val pick: (String) -> Unit = { vm.insertAsset(it); onDismiss() }
     val move: (String, String?) -> Unit = { file, to -> save(folders.assign(file, to)) }
-    androidx.compose.material3.AlertDialog(
+    com.vibetoon.ui.motion.AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Библиотека ассетов") },
         text = {
@@ -1636,7 +1656,7 @@ private fun AssetLibraryDialog(vm: MainViewModel, onDismiss: () -> Unit) {
     )
     nameDialog?.let { old ->
         var text by remember(old) { mutableStateOf(old) }
-        androidx.compose.material3.AlertDialog(
+        com.vibetoon.ui.motion.AlertDialog(
             onDismissRequest = { nameDialog = null },
             title = { Text(if (old.isEmpty()) "Новая папка" else "Переименовать папку") },
             text = { androidx.compose.material3.OutlinedTextField(text, { text = it.take(com.vibetoon.domain.project.LibraryFolders.MAX_NAME) }, singleLine = true, label = { Text("Название") }) },

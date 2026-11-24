@@ -39,7 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu

@@ -1,9 +1,12 @@
 #include "render/GradientMath.h"
+#include "render/UploadBufferPolicy.h"
 #include "render/UploadQueue.h"
 #include "render/CanvasClipPolicy.h"
 #include "render/EffectRenderPolicy.h"
 #include "render/MeshPosition.h"
 #include <cassert>
+#include <cstdio>
+#include <vector>
 #include <cmath>
 #include <chrono>
 #include <future>
@@ -292,4 +295,60 @@ int main() {
     uploadQueue::pushShadow(std::move(sh2));
     uploadQueue::clear();                                 // смена проекта выбрасывает и теневые
     assert(!uploadQueue::popShadow(out));
+
+    // Спринт 31: пул буферов загрузки - повторное использование без нового выделения памяти.
+    uploadQueue::clearPool();
+    assert(uploadQueue::poolCount() == 0 && uploadQueue::poolBytes() == 0);
+    const size_t frame = 640u * 360u * 4u;
+    auto first = uploadQueue::acquireBuffer(frame);
+    assert(first.size() == frame);
+    const uint8_t* firstData = first.data();
+    first[0] = 7;
+    uploadQueue::recycleBuffer(std::move(first));
+    assert(uploadQueue::poolCount() == 1 && uploadQueue::poolBytes() >= frame);
+    auto again = uploadQueue::acquireBuffer(frame - 16);  // меньший кадр берёт тот же буфер
+    assert(again.data() == firstData && again.size() == frame - 16);
+    assert(uploadQueue::poolCount() == 0 && uploadQueue::poolBytes() == 0);
+    // Через очередь: буфер кадра уходит в GL-поток и возвращается в пул после загрузки.
+    PendingUpload pooled; pooled.layerId = 11; pooled.width = 640; pooled.height = 360;
+    pooled.rgba = std::move(again);
+    assert(uploadQueue::pushIfCurrent(std::move(pooled), uploadQueue::ticket(11)));
+    PendingUpload taken;
+    assert(uploadQueue::pop(taken) && taken.rgba.data() == firstData);
+    uploadQueue::recycleBuffer(std::move(taken.rgba));
+    assert(uploadQueue::poolCount() == 1);
+    // Миниатюра не занимает крупный буфер: выделяется свой.
+    auto thumb = uploadQueue::acquireBuffer(64u * 64u * 4u);
+    assert(thumb.data() != firstData && uploadQueue::poolCount() == 1);
+    // Пул не растёт сверх предела числа буферов.
+    std::vector<std::vector<uint8_t>> many;
+    for (int i = 0; i < 8; ++i) many.push_back(uploadQueue::acquireBuffer(frame));
+    for (auto& b : many) uploadQueue::recycleBuffer(std::move(b));
+    assert(uploadQueue::poolCount() <= vt::uploadbuf::kMaxBuffers);
+    assert(uploadQueue::poolBytes() <= vt::uploadbuf::kMaxPoolBytes);
+    // Огромный разовый буфер (больше предела одного буфера) пулом не удерживается.
+    uploadQueue::clearPool();
+    auto huge = uploadQueue::acquireBuffer(vt::uploadbuf::kMaxSingleBytes + 4);
+    uploadQueue::recycleBuffer(std::move(huge));
+    assert(uploadQueue::poolCount() == 0);
+    // Параллельные загрузчики (пул декодирования) берут и возвращают буферы без гонок.
+    {
+        std::vector<std::future<void>> workers;
+        for (int t = 0; t < 4; ++t) workers.push_back(std::async(std::launch::async, [frame] {
+            for (int i = 0; i < 200; ++i) {
+                auto b = uploadQueue::acquireBuffer(frame - static_cast<size_t>(i % 3) * 4);
+                b[0] = static_cast<uint8_t>(i);
+                uploadQueue::recycleBuffer(std::move(b));
+            }
+        }));
+        for (auto& w : workers) w.get();
+        assert(uploadQueue::poolCount() <= vt::uploadbuf::kMaxBuffers);
+    }
+    // Смена проекта отдаёт память пула системе.
+    auto keepOne = uploadQueue::acquireBuffer(frame);
+    uploadQueue::recycleBuffer(std::move(keepOne));
+    assert(uploadQueue::poolCount() >= 1);
+    uploadQueue::clear();
+    assert(uploadQueue::poolCount() == 0 && uploadQueue::poolBytes() == 0);
+    std::puts("UploadQueueTest pool OK");
 }

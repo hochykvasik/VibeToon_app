@@ -222,6 +222,10 @@ private:
     void uploadPending();                        // не более kUploadBytesPerFrame за кадр
     void uploadShadows();                        // все теневые загрузки (снимок символа)
     bool makeTexture(const PendingUpload& up, size_t bytes, Tex& t);
+    bool uploadViaPbo(const PendingUpload& up);  // Спринт 31: запись в привязанную текстуру через PBO
+    GLuint uploadPbo_[2] = {0, 0};
+    int uploadPboNext_ = 0;
+    bool uploadPboBroken_ = false;
     const Tex* resolveTex(int layerId, float rect[4]) const;   // + под-прямоугольник квадрата слоя (форма символа)
     const Tex* findTex(int layerId) const;       // теневая текстура (в снимке символа) или текстура слоя
     struct TexAlias { int primary = -1, fallback = -1; float pr[4] = {0.f, 0.f, 1.f, 1.f}; float fr[4] = {0.f, 0.f, 1.f, 1.f}; };
