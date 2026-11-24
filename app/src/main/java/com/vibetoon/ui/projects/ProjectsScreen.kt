@@ -147,7 +147,7 @@ fun ProjectsScreen(app: AppViewModel) {
                     }
                     if (st.notes.isNotEmpty()) {
                         Text("Не перенесено или упрощено:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        Text(st.notes.take(12).joinToString("\n") { "• " + com.vibetoon.ui.i18n.L(it) } + if (st.notes.size > 12) "\n…" else "", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+                        Text(st.notes.take(12).map { "• " + com.vibetoon.ui.i18n.L(it) }.joinToString("\n") + if (st.notes.size > 12) "\n…" else "", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
                     }
                     if (st.fontsRestored > 0) Text(com.vibetoon.ui.i18n.L("Добавлено шрифтов: ${st.fontsRestored}"), fontSize = 13.sp)
                     if (st.fontsMissing.isNotEmpty()) Text(com.vibetoon.ui.i18n.L("Нет шрифтов: ${st.fontsMissing.joinToString()} - текст покажется шрифтом по умолчанию"), fontSize = 13.sp)
