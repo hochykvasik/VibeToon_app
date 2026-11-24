@@ -54,7 +54,7 @@ class UiMotionTest {
 
     @Test fun panelsUseSharedMotionAndRespectSystemScale() {
         val shell = src("ui/shell/EditorShell.kt")
-        assertTrue(shell.contains("Motions.panelEnter(fromEnd = !leftHanded)"))
+        assertTrue(shell.contains("Motions.sidePanelEnter(fromEnd = !leftHanded)"))   // спринт 42: правая панель - мягкий переход
         assertTrue(shell.contains("Motions.barEnter(fromTop = true)"))
         assertTrue(shell.contains("Motions.barEnter(fromTop = false)"))
         assertTrue(shell.contains("Motions.toolbarEnter()"))

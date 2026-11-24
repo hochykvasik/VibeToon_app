@@ -1680,4 +1680,16 @@ Out of Pegs: соседние рисунки стоят там, где слой 
 Наибольшая длительность при этой частоте: {}|Longest duration at this frame rate: {}
 Импорт и экспорт|Import and export
 Работа продолжается в фоне|Work continues in the background
+VibeToon: экспорт {} %|VibeToon: exporting {} %
+VibeToon: экспорт|VibeToon: exporting
+VibeToon: импорт {} %|VibeToon: importing {} %
+VibeToon: импорт|VibeToon: importing
+VibeToon: фоновая работа|VibeToon: background work
+Подготовка кадров|Preparing frames
+Подготовка медиа|Preparing media
+можно свернуть приложение|you can minimize the app
+Нажмите, чтобы вернуться в VibeToon|Tap to return to VibeToon
+Задач: {}|Tasks: {}
+Скрыть панель|Hide panel
+Показать панель|Show panel
 """

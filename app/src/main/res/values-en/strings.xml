@@ -2004,4 +2004,16 @@
     <string name="ui_longest_duration_at_this_frame_rate">Longest duration at this frame rate: {}</string>
     <string name="ui_import_and_export">Import and export</string>
     <string name="ui_work_continues_in_the_background">Work continues in the background</string>
+    <string name="ui_vibetoon_exporting">VibeToon: exporting {} %</string>
+    <string name="ui_vibetoon_exporting_2">VibeToon: exporting</string>
+    <string name="ui_vibetoon_importing">VibeToon: importing {} %</string>
+    <string name="ui_vibetoon_importing_2">VibeToon: importing</string>
+    <string name="ui_vibetoon_background_work">VibeToon: background work</string>
+    <string name="ui_preparing_frames">Preparing frames</string>
+    <string name="ui_preparing_media">Preparing media</string>
+    <string name="ui_you_can_minimize_the_app">you can minimize the app</string>
+    <string name="ui_tap_to_return_to_vibetoon">Tap to return to VibeToon</string>
+    <string name="ui_tasks">Tasks: {}</string>
+    <string name="ui_hide_panel">Hide panel</string>
+    <string name="ui_show_panel">Show panel</string>
 </resources>

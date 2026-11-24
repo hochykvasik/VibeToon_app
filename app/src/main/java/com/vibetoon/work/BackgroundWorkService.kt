@@ -62,7 +62,9 @@ class BackgroundWorkService : Service() {
 
 /** Учёт фоновых работ (импорт, экспорт) и уведомление службы. Вызовы - с главного потока. */
 object BackgroundWork {
-    private val active = LinkedHashMap<Long, Pair<String, Int?>>()   // id -> (заголовок, процент)
+    /** Спринт 42: состояние работы для уведомления - заголовок, процент, кадр из скольких, время начала. */
+    private data class Job(val title: String, val pct: Int?, val done: Int, val total: Int, val startedAt: Long)
+    private val active = LinkedHashMap<Long, Job>()
     private var nextId = 1L
     @Volatile var running: Boolean = false
         private set
@@ -76,7 +78,7 @@ object BackgroundWork {
     fun begin(ctx: Context, title: String): Long {
         if (!enabled(ctx)) return 0L
         val id = nextId++
-        active[id] = title to null
+        active[id] = Job(title, null, 0, 0, System.currentTimeMillis())
         askPermissionOnce(ctx)
         start(ctx.applicationContext)
         return id
@@ -85,8 +87,9 @@ object BackgroundWork {
     fun progress(ctx: Context, id: Long, done: Int, total: Int) {
         val cur = active[id] ?: return
         val pct = BackgroundRender.percent(done, total)
-        if (pct == cur.second) return
-        active[id] = cur.first to pct
+        // шторку обновляем при смене процента (не на каждом кадре): система ограничивает частоту обновлений
+        if (pct == cur.pct && total == cur.total) return
+        active[id] = cur.copy(pct = pct, done = done, total = total)
         if (running) runCatching {
             (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .notify(BackgroundWorkService.NOTIFICATION_ID, notification(ctx.applicationContext))
@@ -144,19 +147,36 @@ object BackgroundWork {
             tr(ctx, "Импорт и экспорт"), NotificationManager.IMPORTANCE_LOW))
     }
 
+    /**
+     * Спринт 42: уведомление с именем приложения, понятным заголовком и ходом работы:
+     * «VibeToon: экспорт 42 %» / «Кадр 120 из 288 · можно свернуть приложение», в развёрнутом виде - подсказка
+     * «Нажмите, чтобы вернуться в VibeToon», в шапке - время работы. RU/EN - как язык интерфейса.
+     */
     internal fun notification(ctx: Context): Notification {
         ensureChannel(ctx)
-        val (title, pct) = active.values.lastOrNull() ?: (tr(ctx, "Импорт и экспорт") to null)
+        val job = active.values.lastOrNull()
+        val kind = com.vibetoon.domain.export.WorkNotice.kind(job?.title ?: "")
+        val pct = job?.pct
+        val title = tr(ctx, com.vibetoon.domain.export.WorkNotice.title(kind, pct))
+        val status = tr(ctx, com.vibetoon.domain.export.WorkNotice.status(kind, job?.done ?: 0, job?.total ?: 0))
+        val short = status + " · " + tr(ctx, com.vibetoon.domain.export.WorkNotice.HINT)
+        val long = short + "\n" + tr(ctx, com.vibetoon.domain.export.WorkNotice.TAP_HINT)
+        val more = com.vibetoon.domain.export.WorkNotice.more(active.size)?.let { tr(ctx, it) }
         val open = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)?.let {
             PendingIntent.getActivity(ctx, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, BackgroundWorkService.CHANNEL_ID)
             else @Suppress("DEPRECATION") Notification.Builder(ctx)
-        b.setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(tr(ctx, title))
-            .setContentText(tr(ctx, "Работа продолжается в фоне"))
+        b.setSmallIcon(if (kind == com.vibetoon.domain.export.WorkNotice.Kind.IMPORT) android.R.drawable.stat_sys_download else android.R.drawable.stat_sys_upload)
+            .setContentTitle(title)
+            .setContentText(short)
+            .setStyle(Notification.BigTextStyle().bigText(long))
+            .setCategory(Notification.CATEGORY_PROGRESS)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+        if (more != null) b.setSubText(more)   // имя приложения система и так пишет в шапке, а заголовок начинается с него
+        if (job != null) b.setWhen(job.startedAt).setShowWhen(true).setUsesChronometer(true)   // сколько уже идёт работа
+        if (Build.VERSION.SDK_INT >= 31) b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         if (pct != null) b.setProgress(100, pct, false) else b.setProgress(0, 0, true)
         if (open != null) b.setContentIntent(open)
         return b.build()

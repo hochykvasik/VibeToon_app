@@ -358,7 +358,21 @@ private fun RasterOverlayLayer(vm: MainViewModel) {
     }
 }
 
-/** Холст OpenGL с прозрачным слоем жестов поверх него. */
+/**
+ * Спринт 42: поверхность OpenGL на всё окно редактора. Её размер не зависит от панелей (таймлайн, правая панель,
+ * полный экран) - они непрозрачно лежат поверх, а холст вписывается в видимую область (RenderHost.setViewRect).
+ * Поэтому при движении панелей буфер не растягивается и холст не сплющивается.
+ */
+@Composable
+fun EditorSurface(vm: MainViewModel, modifier: Modifier) {
+    AndroidView(
+        factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextRecreated = { vm.onGlContextRecreated() }; it.onTextureEvents = { ev -> vm.onTextureEvents(ev) }; RenderHost.view = it } },
+        onRelease = { it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
+        modifier = modifier
+    )
+}
+
+/** Прозрачный слой жестов и наложений над видимой областью холста (сама поверхность - [EditorSurface]). */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
@@ -366,11 +380,6 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
     val slop = config.touchSlop
     val longPressMillis = config.longPressTimeoutMillis
     Box(modifier) {
-        AndroidView(
-            factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextRecreated = { vm.onGlContextRecreated() }; it.onTextureEvents = { ev -> vm.onTextureEvents(ev) }; RenderHost.view = it } },
-            onRelease = { it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
-            modifier = Modifier.matchParentSize()
-        )
         if (com.vibetoon.ui.theme.LocalAppSettings.current?.showGrid == true) CanvasGridLayer(vm)
         MotionPathLayer(vm)
         BoneOverlayLayer(vm)

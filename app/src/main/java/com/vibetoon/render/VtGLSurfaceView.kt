@@ -18,7 +18,11 @@ data class FrameParams(
     val selectionQuad: FloatArray? = null,
     val background: Int = 0,
     /** Идёт жест камеры (пан/зум/поворот): нативный кэш эффектов можно рисовать с преобразованием вида. */
-    val interactive: Boolean = false
+    val interactive: Boolean = false,
+    /** Спринт 42: видимая область холста на поверхности (см. ViewRectFit) или null - вся поверхность. */
+    val viewRect: FloatArray? = null,
+    /** Спринт 42: область плавно меняется (выезд панели) - кэш эффектов рисуется с преобразованием, как при жесте. */
+    val viewRectMoving: Boolean = false
 )
 
 /** Адаптер колбэков GLSurfaceView -> C++. Работает на GL-потоке. */
@@ -67,8 +71,13 @@ class VtRenderer(
         onContextRecreated()
     }
 
+    // спринт 42: размер буфера GL - для пересчёта области холста (ViewRectFit) и координат касаний
+    private var bufW = 0
+    private var bufH = 0
+
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         if (disposed || handle == 0L) return
+        bufW = width; bufH = height
         if (exportJob != null) { deferredViewport = width to height; return }   // вид экспорта не меняем
         RenderNative.setViewport(handle, width, height)
     }
@@ -86,8 +95,11 @@ class VtRenderer(
         }
         takeScene()?.let { lastScene = it; applyScene(it) }
         val p = frameParams()
-        RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY, p.camera.rotDeg, p.camera.flipX, p.camera.flipY)
-        RenderNative.setInteractive(handle, p.interactive)
+        // спринт 42: камера пользователя задана для видимой области холста, рендерер рисует всю поверхность
+        val cam = com.vibetoon.domain.render.ViewRectFit.effective(p.camera, p.viewRect, bufW, bufH,
+            lastScene?.canvasWidth ?: 0, lastScene?.canvasHeight ?: 0)
+        RenderNative.setCamera(handle, cam.zoom, cam.panX, cam.panY, cam.rotDeg, cam.flipX, cam.flipY)
+        RenderNative.setInteractive(handle, p.interactive || p.viewRectMoving)
         RenderNative.setSelection(handle, p.selectionQuad)
         RenderNative.setBackground(handle, lastScene?.backgroundOverride ?: p.background)
         val t0 = if (RenderMetrics.enabled) System.nanoTime() else 0L
@@ -101,7 +113,11 @@ class VtRenderer(
             }
         }
         pollTextureEvents()
-        sampleReq?.let { (x, y, cb) -> sampleReq = null; cb(RenderNative.readPixel(handle, x, y)) }
+        sampleReq?.let { (x, y, cb) ->
+            sampleReq = null
+            val (bx, by) = com.vibetoon.domain.render.ViewRectFit.toBuffer(x.toFloat(), y.toFloat(), p.viewRect, bufW, bufH)
+            cb(RenderNative.readPixel(handle, bx.toInt(), by.toInt()))
+        }
         val checks = afterFrameChecks.toList(); afterFrameChecks.clear()
         checks.forEach { (id, callback) -> callback(layerSize(id)) }
         if (more) requestRender() // в очереди остались загрузки
@@ -147,7 +163,11 @@ class VtRenderer(
     }
 
     /** Только из GL-потока. */
-    fun hitTest(x: Float, y: Float): Int = if (handle == 0L) -1 else RenderNative.hitTest(handle, x, y)
+    fun hitTest(x: Float, y: Float): Int {
+        if (handle == 0L) return -1
+        val (bx, by) = com.vibetoon.domain.render.ViewRectFit.toBuffer(x, y, frameParams().viewRect, bufW, bufH)
+        return RenderNative.hitTest(handle, bx, by)
+    }
 
     fun layerThumb(layerId: Int, size: Int): ByteArray? = if (handle == 0L) null else RenderNative.layerThumb(handle, layerId, size)
 
@@ -421,6 +441,7 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
+        if (RenderHost.view === this) RenderHost.reapply(this)   // спринт 42: область холста в новых размерах вида
         removeCallbacks(applySettledSize)
         if (com.vibetoon.domain.render.ResizeSettle.applyNow(bufferW, bufferH, w, h)) {
             bufferW = w; bufferH = h
@@ -463,6 +484,17 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     fun setCamera(camera: Camera) {
         params.updateAndGet { it.copy(camera = camera) }
         requestRender()
+    }
+
+    /**
+     * Спринт 42: видимая область холста (x, y, w, h в пикселях этого вида), куда вписывается холст. Поверхность
+     * занимает всё окно редактора и при движении панелей размер не меняет - меняется только эта область.
+     */
+    fun setViewRect(x: Float, y: Float, w: Float, h: Float, moving: Boolean) {
+        val r = com.vibetoon.domain.render.ViewRectFit.rect(x, y, w, h, width.toFloat(), height.toFloat())
+        if (!com.vibetoon.domain.render.ViewRectFit.valid(r)) return
+        val prev = params.getAndUpdate { it.copy(viewRect = r, viewRectMoving = moving) }
+        if (!com.vibetoon.domain.render.ViewRectFit.same(prev.viewRect, r) || prev.viewRectMoving != moving) requestRender()
     }
 
     /** Начало/конец жеста камеры. После жеста кадр перерисовывается точно (без растянутого кэша эффектов). */
@@ -708,4 +740,20 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
 object RenderHost {
     @Volatile
     var view: VtGLSurfaceView? = null
+
+    /** Спринт 42: последняя видимая область холста (x, y, w, h) - переживает пересоздание вида. */
+    @Volatile
+    var viewRect: FloatArray? = null
+        private set
+
+    fun setViewRect(x: Float, y: Float, w: Float, h: Float, moving: Boolean) {
+        viewRect = floatArrayOf(x, y, w, h, if (moving) 1f else 0f)
+        view?.setViewRect(x, y, w, h, moving)
+    }
+
+    /** Вид получил размер (создан/повёрнут): применить последнюю область. */
+    fun reapply(v: VtGLSurfaceView) {
+        val r = viewRect ?: return
+        if (r.size >= 5) v.setViewRect(r[0], r[1], r[2], r[3], r[4] > 0f)
+    }
 }

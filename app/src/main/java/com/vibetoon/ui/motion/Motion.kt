@@ -45,6 +45,9 @@ val LocalMotion = staticCompositionLocalOf { Motion(enabled = true) }
 /** Material 3 Emphasized: быстрый старт и мягкая остановка (появление), обратная кривая для ухода. */
 private val EnterEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 private val ExitEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
+/** Спринт 42: мягкая S-кривая (Material standard) для боковой панели: плавный старт и плавная остановка. */
+private val SoftEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+private val SoftExitEasing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
 
 /** Системный масштаб анимаций; обновляется на лету при смене в настройках Android. */
 @Composable
@@ -90,6 +93,34 @@ object Motions {
     }
 
     /** Верхняя/нижняя панель: выезд по вертикали ([fromTop] - сверху). */
+    /**
+     * Спринт 42: правая панель (слои/инспектор). Мягкое появление: сдвиг с плавным торможением и проявление;
+     * уход - плавный разгон и торможение, без резкого ускорения у края. [fromEnd] - панель у правого края
+     * (в режиме левши - у левого, тогда false).
+     */
+    @Composable
+    fun sidePanelEnter(fromEnd: Boolean): EnterTransition {
+        if (!LocalMotion.current.enabled) return EnterTransition.None
+        return slideInHorizontally(tween(UiMotion.SIDE_PANEL_MS, easing = SoftEasing)) { if (fromEnd) it else -it } +
+            fadeIn(tween(UiMotion.SIDE_PANEL_MS * 2 / 3, easing = SoftEasing))
+    }
+
+    @Composable
+    fun sidePanelExit(toEnd: Boolean): ExitTransition {
+        if (!LocalMotion.current.enabled) return ExitTransition.None
+        return slideOutHorizontally(tween(UiMotion.SIDE_PANEL_EXIT_MS, easing = SoftExitEasing)) { if (toEnd) it else -it } +
+            fadeOut(tween(UiMotion.SIDE_PANEL_EXIT_MS, easing = SoftExitEasing))
+    }
+
+    /** Спринт 42: индикатор края (стрелка у закрытой панели) - только прозрачность. */
+    @Composable
+    fun hintEnter(): EnterTransition =
+        if (!LocalMotion.current.enabled) EnterTransition.None else fadeIn(tween(UiMotion.SIDE_PANEL_MS, delayMillis = UiMotion.SIDE_PANEL_EXIT_MS / 2))
+
+    @Composable
+    fun hintExit(): ExitTransition =
+        if (!LocalMotion.current.enabled) ExitTransition.None else fadeOut(tween(UiMotion.EXIT_MS / 2))
+
     @Composable
     fun barEnter(fromTop: Boolean): EnterTransition {
         if (!LocalMotion.current.enabled) return EnterTransition.None

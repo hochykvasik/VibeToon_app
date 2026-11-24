@@ -2004,4 +2004,16 @@
     <string name="ui_longest_duration_at_this_frame_rate">Наибольшая длительность при этой частоте: {}</string>
     <string name="ui_import_and_export">Импорт и экспорт</string>
     <string name="ui_work_continues_in_the_background">Работа продолжается в фоне</string>
+    <string name="ui_vibetoon_exporting">VibeToon: экспорт {} %</string>
+    <string name="ui_vibetoon_exporting_2">VibeToon: экспорт</string>
+    <string name="ui_vibetoon_importing">VibeToon: импорт {} %</string>
+    <string name="ui_vibetoon_importing_2">VibeToon: импорт</string>
+    <string name="ui_vibetoon_background_work">VibeToon: фоновая работа</string>
+    <string name="ui_preparing_frames">Подготовка кадров</string>
+    <string name="ui_preparing_media">Подготовка медиа</string>
+    <string name="ui_you_can_minimize_the_app">можно свернуть приложение</string>
+    <string name="ui_tap_to_return_to_vibetoon">Нажмите, чтобы вернуться в VibeToon</string>
+    <string name="ui_tasks">Задач: {}</string>
+    <string name="ui_hide_panel">Скрыть панель</string>
+    <string name="ui_show_panel">Показать панель</string>
 </resources>
