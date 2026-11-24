@@ -98,6 +98,18 @@ class AppSettings(context: Context) {
     var quickSelection by mutableStateOf(p.getBoolean("quick_selection", false))
     var selectLayersOnCanvas by mutableStateOf(p.getBoolean("select_layers_canvas", true))
     fun saveSprint68() { p.edit().putBoolean("shape_assist", shapeAssist).putBoolean("touch_detection", touchDetection).putBoolean("double_tap_multi_select", doubleTapMultiSelect).putBoolean("manual_selection_close", manualSelectionClose).putBoolean("show_motion_path", showMotionPath).putBoolean("refocus_button", refocusButton).putBoolean("follow_camera", followCamera).putBoolean("long_press_picker", longPressPicker).putBoolean("finger_drawing", fingerDrawing).putBoolean("cursor_enabled", cursorEnabled).putBoolean("cursor_hover_preview", cursorHoverPreview).putBoolean("select_layers_canvas", selectLayersOnCanvas).putBoolean("quick_selection", quickSelection).apply() }
+    /** Stylus sprint: кривая нажима пера (строка PressureCurve), стабилизация 1–10, ластик на обратном конце пера, индикатор нажима на холсте. */
+    var pressureCurve by mutableStateOf(com.vibetoon.domain.input.PressureCurve.decode(p.getString("pressure_curve", null)).encode())
+    var stabilization by mutableStateOf(p.getInt("stabilization", com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL).coerceIn(1, 10))
+    var stylusEraserTip by mutableStateOf(p.getBoolean("stylus_eraser_tip", true))
+    var pressureHud by mutableStateOf(p.getBoolean("pressure_hud", false))
+    fun saveStylus() { p.edit().putString("pressure_curve", pressureCurve).putInt("stabilization", stabilization.coerceIn(1, 10)).putBoolean("stylus_eraser_tip", stylusEraserTip).putBoolean("pressure_hud", pressureHud).apply() }
+    fun resetStylus() {
+        pressureCurve = com.vibetoon.domain.input.PressureCurve.DEFAULT_ENCODED; stabilization = com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL
+        stylusEraserTip = true; pressureHud = false; saveStylus()
+    }
+    // ключи пера всегда есть в настройках, чтобы «Manual Backup» сохранял их и с типами по умолчанию
+    init { if (!p.contains("pressure_curve") || !p.contains("stabilization")) saveStylus() }
     var stepFrames by mutableStateOf(p.getBoolean("step_frames", true))
     var quickDeleteDrawing by mutableStateOf(p.getBoolean("quick_delete_drawing", false))
     var selectionMaskVisible by mutableStateOf(p.getBoolean("selection_mask_visible", true))
@@ -202,6 +214,10 @@ class AppSettings(context: Context) {
         followCamera = p.getBoolean("follow_camera", false)
         longPressPicker = p.getBoolean("long_press_picker", false)
         fingerDrawing = p.getBoolean("finger_drawing", true)
+        pressureCurve = com.vibetoon.domain.input.PressureCurve.decode(p.getString("pressure_curve", null)).encode()
+        stabilization = p.getInt("stabilization", com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL).coerceIn(1, 10)
+        stylusEraserTip = p.getBoolean("stylus_eraser_tip", true)
+        pressureHud = p.getBoolean("pressure_hud", false)
         cursorEnabled = p.getBoolean("cursor_enabled", true)
         cursorHoverPreview = p.getBoolean("cursor_hover_preview", false)
         quickSelection = p.getBoolean("quick_selection", false)

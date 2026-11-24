@@ -93,6 +93,7 @@ private val RU: Map<String, String> = mapOf(
     "Double Tap & Drag for Multi-select" to "Двойное касание и перетаскивание: мультивыбор",
     "Select Layers on Canvas" to "Выбор слоёв на холсте",
     "Touch Detection" to "Определение касаний",
+    "Stylus" to "Стилус",
     "2 Finger Tap Undo" to "Касание двумя пальцами: отмена",
     "3 Finger Tap Redo" to "Касание тремя пальцами: повтор",
     "Pipette (Long Press)" to "Пипетка (долгое нажатие)",
@@ -127,6 +128,7 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
         "Select Layers on Canvas", "Touch Detection", "2 Finger Tap Undo", "3 Finger Tap Redo",
         "Pipette (Long Press)", "Shape Assist"
     ),
+    "Stylus" to emptyList(),   // Stylus sprint: кривая нажима, стабилизация 1–10, ластик на обратном конце пера
     "Keyboard" to emptyList(),
     "Backup" to listOf<Item>(Action("Import Backup"), Action("Manual Backup")),
     "Project Info" to emptyList()
@@ -178,6 +180,10 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                             OutlinedButton(onClick = { st.reset() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Сбросить внешний вид", fontSize = 13.sp) }
                             Text("Язык интерфейса меняется сразу.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), modifier = Modifier.padding(top = 4.dp))
                         }
+                        return@Column
+                    }
+                    if (TABS[tab].first == "Stylus") {
+                        appSt?.let { st -> StylusSettingsSection(st) }
                         return@Column
                     }
                     if (TABS[tab].first == "Keyboard") {

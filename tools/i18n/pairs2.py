@@ -1416,4 +1416,28 @@ HEVC: файл примерно вдвое меньше при том же ка�
 Отразить по горизонтали|Flip horizontally
 Отразить по вертикали|Flip vertically
 Ширина и высота 1–800 %, наклон меньше 85°|Width and height 1–800 %, skew below 85°
+Стилус|Stylus
+Чувствительность стилуса|Stylus sensitivity
+Кривая переводит нажим пера (по горизонтали) в нажим кисти (по вертикали): выше диагонали - мягче, ниже - жёстче. Действует на кисть и ластик|The curve maps pen pressure (horizontal) to brush pressure (vertical): above the diagonal is softer, below is firmer. Applies to the brush and the eraser
+Очень мягкая|Very soft
+Мягкая кривая|Soft curve
+Линейная|Linear
+Жёсткая кривая|Firm curve
+Очень жёсткая|Very firm
+График кривой нажима|Pressure curve graph
+Перетащите узел; коснитесь пустого места - новый узел; двойное касание узла - удалить|Drag a node; tap an empty spot to add a node; double-tap a node to delete it
+Проведите пером здесь, чтобы проверить нажим|Draw here with the pen to test pressure
+Нажим пера: {} % → кисть: {} %|Pen pressure: {} % → brush: {} %
+Палец или перо без датчика нажима рисуют с нажимом 100 %|A finger or a pen without a pressure sensor draws at 100 % pressure
+Наклон пера: {}°|Pen tilt: {}°
+Наклон пера: нет данных|Pen tilt: no data
+Наклон пера пока только показывается и не меняет кисть (в разработке)|Pen tilt is only displayed for now and does not change the brush (in development)
+Стабилизация: {}|Stabilization: {}
+Стабилизация|Stabilization
+1 - почти сырой штрих, 10 - сильное сглаживание для чистого лайнарта. При отпускании хвост линии догоняет перо, конец не теряется. Работает с кистью, ластиком, направляющими и симметрией|1 - nearly raw stroke, 10 - strong smoothing for clean lineart. On release the line tail catches up with the pen, so the ending is not lost. Works with the brush, eraser, guides and symmetry
+Ластик на обратном конце пера|Eraser on the pen's back end
+Показывать нажим при рисовании|Show pressure while drawing
+Защита от ладони: вкладка «Жесты» → «Определение касаний»|Palm rejection: “Gestures” tab → “Touch Detection”
+Сбросить настройки пера|Reset pen settings
+Стаб.|Stab.
 """

@@ -880,6 +880,13 @@ private fun PaintToolRow(vm: MainViewModel, onColor: () -> Unit) {
         com.vibetoon.ui.inspector.ScrubBox("Размер", p.size, 1f, 1500f, { v -> vm.updatePaint { it.copy(size = v) } }, log = true)
         com.vibetoon.ui.inspector.ScrubBox("Непр.", p.opacity * 100f, 1f, 100f, { v -> vm.updatePaint { it.copy(opacity = v / 100f) } }, perPx = 0.35f)
         com.vibetoon.ui.inspector.ScrubBox("Жёстк.", p.hardness * 100f, 0f, 100f, { v -> vm.updatePaint { it.copy(hardness = v / 100f) } }, perPx = 0.35f)
+        // Stylus sprint: стабилизация 1–10 общая для кисти и ластика (хранится в настройках и резервной копии)
+        com.vibetoon.ui.theme.LocalAppSettings.current?.let { stab ->
+            com.vibetoon.ui.inspector.ScrubBox("Стаб.", stab.stabilization.toFloat(), 1f, 10f, { v ->
+                val level = Math.round(v).coerceIn(1, 10)
+                if (level != stab.stabilization) { stab.stabilization = level; stab.saveStylus() }
+            }, perPx = 0.04f)
+        }
         if (!isEraser && p.mode == com.vibetoon.domain.paint.StrokeMode.ACCUMULATE)
             com.vibetoon.ui.inspector.ScrubBox("Поток", p.flow * 100f, 1f, 100f, { v -> vm.updatePaint { it.copy(flow = v / 100f) } }, perPx = 0.35f)
         if (!isEraser) Box(

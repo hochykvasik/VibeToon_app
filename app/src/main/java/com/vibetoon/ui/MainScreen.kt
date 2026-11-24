@@ -66,6 +66,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.motionEventSpy
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
@@ -365,6 +366,7 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         RulerGuideLayer(vm)
         DrawingGuideLayer(vm)
         PaintCursorLayer(vm)
+        PressureHudLayer(vm)
         PerspOverlayLayer(vm)
         RasterOverlayLayer(vm)
         SelectionTransformLayer(vm)
@@ -373,9 +375,12 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         val hoverEnabled = gs?.cursorHoverPreview == true && gs.cursorEnabled
         val longPressEnabled = gs?.longPressPicker == true
         val touchFilter = remember { com.vibetoon.domain.input.StylusTouchFilter() }
+        val stylusTracker = remember { StylusTracker() }
         LaunchedEffect(hoverEnabled) { if (!hoverEnabled) vm.clearPaintHover() }
         Box(
             modifier = Modifier.matchParentSize().onSizeChanged { vm.onViewSize(it.width.toFloat(), it.height.toFloat()) }
+            // Stylus sprint: только наблюдение MotionEvent - нажим исторических точек, наклон, TOOL_TYPE_ERASER
+            .motionEventSpy { stylusTracker.onEvent(it) }
             .pointerInput(hoverEnabled) {
                 awaitPointerEventScope {
                     while (true) {
@@ -543,22 +548,34 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                             return@awaitEachGesture
                         }
                         if (stylus) vm.paintStylus(true)
-                        val firstP = if (stylus) down.pressure.coerceIn(0.05f, 1f) else 1f
-                        if (vm.paintDown(down.position.x, down.position.y, firstP)) {
+                        // Stylus sprint: обратный конец пера - ластик; нажим 1.0 для пальца и пера без датчика;
+                        // исторические точки получают свой нажим (MotionEvent или интерполяция), фантом на отпускании отбрасывается
+                        if (stylus) vm.stylusTip(down.type == PointerType.Eraser || stylusTracker.eraserTip)
+                        var lastP = com.vibetoon.domain.input.StylusSample.pressure(down.pressure, stylus)
+                        var lastPos = down.position
+                        val screenDensity = this@pointerInput.density
+                        if (vm.paintDown(down.position.x, down.position.y, lastP)) {
                             down.consume()
                             var cancelled = false
                             while (true) {
                                 val ev = awaitPointerEvent()
                                 val c = ev.changes.firstOrNull { it.id == down.id } ?: break
                                 if (!stylus && ev.changes.any { it.id != down.id && it.pressed }) { vm.paintCancel(); cancelled = true; break }
-                                if (!c.pressed) { vm.paintMove(c.position.x, c.position.y, if (stylus) c.pressure.coerceIn(0.05f, 1f) else 1f); break }
-                                val pm = if (stylus) c.pressure.coerceIn(0.05f, 1f) else 1f
-                                for (h in c.historical) vm.paintMove(h.position.x, h.position.y, pm)
+                                if (!c.pressed) {
+                                    if (com.vibetoon.domain.input.StylusSample.keepReleasePoint(lastPos.x, lastPos.y, c.position.x, c.position.y, screenDensity))
+                                        vm.paintMove(c.position.x, c.position.y, com.vibetoon.domain.input.StylusSample.releasePressure(c.pressure, stylus, lastP))
+                                    break
+                                }
+                                val pm = com.vibetoon.domain.input.StylusSample.pressure(c.pressure, stylus, lastP)
+                                val hp = com.vibetoon.domain.input.StylusSample.historical(stylusTracker.historyFor(c.uptimeMillis), lastP, pm, c.historical.size, stylus)
+                                c.historical.forEachIndexed { i, h -> vm.paintMove(h.position.x, h.position.y, hp[i]) }
                                 vm.paintMove(c.position.x, c.position.y, pm)
+                                lastP = pm; lastPos = c.position
                                 ev.changes.forEach { it.consume() }
                             }
                             if (stylus) vm.paintStylus(false)
-                            if (!cancelled) { vm.paintUp(); return@awaitEachGesture }
+                            if (!cancelled) { vm.paintUp(); vm.stylusTipEnd(); return@awaitEachGesture }
+                            vm.stylusTipEnd()
                             multi = true
                         } else if (stylus) vm.paintStylus(false)
                     }
@@ -979,6 +996,19 @@ private fun PivotOverlay(vm: MainViewModel) {
         drawCircle(col, radius = 2.5.dp.toPx(), center = c)
         drawLine(col, c + Offset(-arm, 0f), c + Offset(arm, 0f), 1.5.dp.toPx())
         drawLine(col, c + Offset(0f, -arm), c + Offset(0f, arm), 1.5.dp.toPx())
+    }
+}
+
+/** Stylus sprint: индикатор нажима (кривая и точка текущего нажима) в углу холста, пока рисуют пером. */
+@Composable
+private fun PressureHudLayer(vm: MainViewModel) {
+    val st = com.vibetoon.ui.theme.LocalAppSettings.current ?: return
+    if (!st.pressureHud) return
+    val live by vm.livePressure.collectAsStateWithLifecycle()
+    val curve = remember(st.pressureCurve) { com.vibetoon.domain.input.PressureCurve.decode(st.pressureCurve) }
+    val v = live ?: return
+    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.TopEnd) {
+        com.vibetoon.ui.shell.PressureCurveGraph(curve, v[0], Modifier.width(88.dp).heightIn(min = 62.dp, max = 62.dp))
     }
 }
 

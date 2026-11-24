@@ -6393,6 +6393,72 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun paintStylus(down: Boolean) { stylusDown = down; stylusLast = SystemClock.uptimeMillis() }
     fun paintPalmBlocked(): Boolean = stylusDown || SystemClock.uptimeMillis() - stylusLast < 1200
 
+    // Stylus sprint: кривая нажима, стабилизация 1–10 и ластик на обратном конце пера
+    private var stabilizer: com.vibetoon.domain.input.StrokeStabilizer? = null
+    private var strokeCurve: com.vibetoon.domain.input.PressureCurve = com.vibetoon.domain.input.PressureCurve.LINEAR
+    private var strokeStylus = false
+    private var tipRestore: PaintTool? = null
+    private val _livePressure = MutableStateFlow<FloatArray?>(null)
+    /** Нажим текущего штриха пером: [сырой, после кривой]; null - пером сейчас не рисуют. */
+    val livePressure: StateFlow<FloatArray?> = _livePressure.asStateFlow()
+
+    private fun stylusPrefs() = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+
+    /** Нажим кисти: кривая чувствительности применяется только к перу; палец и мышь всегда 1.0. */
+    private fun curvedPressure(raw: Float): Float {
+        if (!strokeStylus) return 1f
+        val mapped = strokeCurve.map(raw).coerceIn(com.vibetoon.domain.input.StylusSample.MIN_PRESSURE, 1f)
+        _livePressure.value = floatArrayOf(raw, mapped)
+        return mapped
+    }
+
+    /** Обратный конец пера (TOOL_TYPE_ERASER): на время штриха кисть становится ластиком, если это включено в настройках. */
+    fun stylusTip(eraser: Boolean) {
+        if (!eraser || tipRestore != null || _paintTool.value != PaintTool.BRUSH) return
+        if (!runCatching { stylusPrefs().getBoolean("stylus_eraser_tip", true) }.getOrDefault(true)) return
+        tipRestore = PaintTool.BRUSH
+        _paintTool.value = PaintTool.ERASER
+    }
+
+    /** Конец штриха обратным концом пера: инструмент возвращается к кисти. */
+    fun stylusTipEnd() {
+        val restore = tipRestore ?: return
+        tipRestore = null
+        if (_paintTool.value == PaintTool.ERASER) _paintTool.value = restore
+    }
+
+    /** Начало штриха: нажим проходит через кривую, точка - через стабилизатор (до направляющих и симметрии). */
+    fun paintDown(sx: Float, sy: Float, pressure: Float): Boolean {
+        val prefs = runCatching { stylusPrefs() }.getOrNull()
+        strokeStylus = stylusDown
+        strokeCurve = com.vibetoon.domain.input.PressureCurve.decode(prefs?.getString("pressure_curve", null))
+        val level = prefs?.getInt("stabilization", com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL) ?: com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL
+        val density = getApplication<Application>().resources.displayMetrics.density
+        val p = curvedPressure(pressure)
+        val ok = paintDownCore(sx, sy, p)
+        // направляющие ручки, линейка и градиент работают по точным точкам - без стабилизации
+        stabilizer = if (ok && guideDrag == null && rulerQuad == null && level > com.vibetoon.domain.input.StrokeStabilizer.MIN_LEVEL)
+            com.vibetoon.domain.input.StrokeStabilizer(level, density).also { it.begin(sx, sy, p) } else null
+        if (!ok) _livePressure.value = null
+        return ok
+    }
+
+    /** Следующая (в том числе историческая) точка штриха: стабилизатор может выдать несколько точек или ни одной. */
+    fun paintMove(sx: Float, sy: Float, pressure: Float) {
+        val p = curvedPressure(pressure)
+        val st = stabilizer
+        if (st == null) { paintMoveCore(sx, sy, p); return }
+        for (s in st.add(sx, sy, p)) paintMoveCore(s.x, s.y, s.pressure)
+    }
+
+    /** Конец штриха: стабилизатор догоняет хвост до точки отпускания, затем штрих запекается. */
+    fun paintUp() {
+        stabilizer?.let { st -> for (s in st.finish()) paintMoveCore(s.x, s.y, s.pressure) }
+        stabilizer = null
+        _livePressure.value = null
+        paintUpCore()
+    }
+
     /** Слой, на котором рисуем: выбранная картинка (в том числе созданная кнопкой «Новый слой») или слой PSD; текст и видео - нет. */
     /** Снимок настроек пиксельных режимов из SharedPreferences (CompositionLocal во ViewModel недоступен). */
     private class PixelModes(val vectorWorkflow: Boolean, val autoPixelEdit: Boolean, val onlyEraseSelectedPaths: Boolean,
@@ -6468,7 +6534,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun clearPaintHover() { if (stroker == null && vecLayer < 0) _paintCursor.value = null }
 
     /** Начало штриха; false - рисовать нечем (нет подходящего слоя) и жест идёт обычным путём. */
-    fun paintDown(sx: Float, sy: Float, pressure: Float): Boolean {
+    private fun paintDownCore(sx: Float, sy: Float, pressure: Float): Boolean {
         swallowTap = false
         if (_paintTool.value == null || _playing.value) return false
         guideDrag = null
@@ -6550,8 +6616,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
-    /** Следующая (в том числе историческая) точка штриха. */
-    fun paintMove(sx: Float, sy: Float, pressure: Float) {
+    /** Следующая точка штриха после стабилизации. */
+    private fun paintMoveCore(sx: Float, sy: Float, pressure: Float) {
         guideDrag?.let { handle ->
             val c = toCanvas(sx, sy)
             _guides.value = com.vibetoon.domain.paint.DrawingGuides.moveHandle(_guides.value, handle, com.vibetoon.domain.paint.DrawingGuides.Point(c.first, c.second))
@@ -6578,7 +6644,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Конец штриха: слой запекается, "до" и "после" уходят в Undo (сжатие в фоне), слой помечается на сохранение. */
-    fun paintUp() {
+    private fun paintUpCore() {
         if (guideDrag != null) { guideDrag = null; saveGuides(); return }
         if (vecLayer >= 0) { vectorUp(); return }
         val original = stroker ?: return
@@ -6668,6 +6734,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Штрих прерван (второй палец, смена инструмента): слой возвращается к состоянию до штриха. */
     fun paintCancel() {
+        stabilizer = null; _livePressure.value = null
         if (guideDrag != null) { guideDrag = null; saveGuides(); return }
         if (vecLayer >= 0) { vectorCancel(); return }
         if (stroker == null) return
