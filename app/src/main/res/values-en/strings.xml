@@ -1988,4 +1988,20 @@
     <string name="ui_calligraphy">Calligraphy</string>
     <string name="ui_layer_dragging_is_off_while_searchin">Layer dragging is off while searching or filtering</string>
     <string name="ui_drag_layer">Drag layer</string>
+    <string name="ui_bone_keys_on_frame">Bone keys on frame: {}</string>
+    <string name="ui_key_and_auto_key_the_whole_bone_chai">Key and auto-key: the whole bone chain and other selected bones</string>
+    <string name="ui_key_selected_bones">Key: selected bones</string>
+    <string name="ui_extend_project_for_audio_and_video">Extend project for audio and video</string>
+    <string name="ui_background_import_and_export">Background import and export</string>
+    <string name="ui_keys_for_the_whole_bone_chain">Keys for the whole bone chain</string>
+    <string name="ui_layers_bones_in_animation_mode_and_e_2">Layers, bones in animation mode and effects: the first edit on a frame &gt; 0 adds the original key on frame 0. Mesh/Warp/perspective/pin deformations are always keyed when animation (FX) is on; retiming is not supported</string>
+    <string name="ui_add_key_and_bone_auto_key_lock_the_p">\"Add Key\" and bone auto-key lock the pose of the whole chain (e.g. upper arm, forearm and hand) and other selected bones</string>
+    <string name="ui_video_import_and_export_continue_whe">Video import and export continue when the app is minimized: a service runs with a progress notification</string>
+    <string name="ui_if_added_audio_or_video_is_longer_th">If added audio or video is longer than the project, the project is extended to its end (up to the duration limit); Undo also reverts the extension</string>
+    <string name="ui_duration_min_sec">Duration (min:sec)</string>
+    <string name="ui_for_example_1_30_or_0_05_12_min_sec_">For example 1:30 or 0:05:12 (min:sec:frames)</string>
+    <string name="ui_total_frames">Total frames</string>
+    <string name="ui_longest_duration_at_this_frame_rate">Longest duration at this frame rate: {}</string>
+    <string name="ui_import_and_export">Import and export</string>
+    <string name="ui_work_continues_in_the_background">Work continues in the background</string>
 </resources>

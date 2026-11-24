@@ -76,6 +76,9 @@ private val RU: Map<String, String> = mapOf(
     "Insert Images into Existing Drawing" to "Вставлять картинки в существующий рисунок",
     "PSD Import Mode" to "Режим импорта PSD",
     "Resolution Limit" to "Ограничение разрешения",
+    "Auto-Extend Project for Media" to "Продлевать проект под аудио и видео",
+    "Background Import/Export" to "Импорт и экспорт в фоне",
+    "Bone Chain Keys" to "Ключи всей цепочке костей",
     "Import Layer Locked States" to "Переносить замки слоёв при импорте",
     "Import Text as Pixel Layer" to "Импортировать текст как пиксельный слой",
     "Left Handed" to "Режим левши",
@@ -108,7 +111,8 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
     "General" to toggles(
         "Flip Canvas (горизонтально)", "Flip Canvas (вертикально)", "Show Grid", "Play Audio While Scrubbing", "Compatible Video Export", "Performance HUD",
         "Quick Layer Delete: рисунок (иначе анимация)", "Follow Camera", "Reset Frame After Pause",
-        "Forward/Backward: кадры (иначе рисунки)", "Vector Workflow", "Auto-Add Keyframes"
+        "Forward/Backward: кадры (иначе рисунки)", "Vector Workflow", "Auto-Add Keyframes", "Bone Chain Keys",
+        "Background Import/Export"
     ),
     "Tools" to toggles(
         "Layer Pivot Editing", "Temporary Pivots", "Show Motion Path", "Quick Selection", "Auto Pixel Edit Mode",
@@ -116,7 +120,7 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
     ),
     "Import" to toggles(
         "Import Images as Symbols", "Insert Images into Existing Drawing",
-        "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer"
+        "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer", "Auto-Extend Project for Media"
     ),
     "Display" to listOf<Item>(
         Toggle("Left Handed"), Toggle("Show Grid"), Toggle("Show Symbol Context"),
@@ -163,17 +167,16 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
     }
     var canvasDialog by remember { mutableStateOf(0) }
     if (vm != null && canvasDialog != 0) com.vibetoon.ui.CanvasDialog(vm, canvasDialog == 2) { canvasDialog = 0 }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(0.9f),
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-        title = { Text("Настройки") },
-        text = {
-            Column(Modifier.heightIn(max = 340.dp)) {
+    // спринт 41: адаптивное окно - по высоте экрана телефона/планшета, вкладки сверху, список прокручивается
+    com.vibetoon.ui.shell.AdaptiveDialog(
+        onDismissRequest = onDismiss, title = "Настройки", maxWidth = 600.dp, scrollable = false,
+        buttons = { TextButton(onDismiss) { Text("Готово") } }
+    ) {
+            Column(Modifier.weight(1f, fill = false)) {
                 ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                     TABS.forEachIndexed { i, (title, _) -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(ru(title), fontSize = 13.sp, maxLines = 1, softWrap = false) }) }
                 }
-                Column(Modifier.verticalScroll(rememberScrollState()).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (TABS[tab].first == APPEARANCE) {
                         com.vibetoon.ui.theme.LocalAppSettings.current?.let { st ->
                             com.vibetoon.ui.theme.AppearanceControls(st)
@@ -204,13 +207,16 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                         when (item) {
                             is Toggle -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 val st = com.vibetoon.ui.theme.LocalAppSettings.current
-                                val available = (vm != null && item.title.startsWith("Flip Canvas")) || st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers", "Import Images as Symbols", "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer", "Insert Images into Existing Drawing", "Show Symbol Context", "Symbol Context Opacity", "Smooth UI Animations")
+                                val available = (vm != null && item.title.startsWith("Flip Canvas")) || st != null && item.title in setOf("Left Handed", "Show Grid", "Reset Frame After Pause", "Checker Pattern in Thumbnails", "Play Audio While Scrubbing", "2 Finger Tap Undo", "3 Finger Tap Redo", "Forward/Backward: кадры (иначе рисунки)", "Quick Layer Delete: рисунок (иначе анимация)", "Selection Mask Visibility", "Bones Colors", "Auto-Add Keyframes", "Finger Drawing", "Cursor Enabled", "Cursor Hover Preview", "Select Layers on Canvas", "Pipette (Long Press)", "Pinch to Refocus", "Follow Camera", "Show Motion Path", "Manually Close Selections", "Double Tap & Drag for Multi-select", "Touch Detection", "Shape Assist", "Quick Selection", "Compatible Video Export", "Performance HUD", "Vector Workflow", "Auto Pixel Edit Mode", "Only Erase/Smudge Selected Path Layers", "Temporary Pivots", "Layer Pivot Editing", "Rotate Canvas 2 Fingers", "Import Images as Symbols", "Resolution Limit", "Import Layer Locked States", "Import Text as Pixel Layer", "Insert Images into Existing Drawing", "Show Symbol Context", "Symbol Context Opacity", "Smooth UI Animations", "Auto-Extend Project for Media", "Background Import/Export", "Bone Chain Keys")
                                 Column(Modifier.weight(1f)) {
                                     Text(ru(item.title), fontSize = 14.sp)
                                     if (!available) Text("В разработке", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     else when (item.title) {
                                         "Quick Selection" -> Text("Касание выбирает слой под пальцем сразу, минуя группы; выделение пикселей не меняется", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        "Auto-Add Keyframes" -> Text("Слои, кости в режиме анимации и эффекты; ретайминг и деформации не поддерживаются", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Auto-Add Keyframes" -> Text("Слои, кости в режиме анимации и эффекты: первая правка на кадре > 0 ставит исходный ключ на кадре 0. Деформации Mesh/Warp/перспективы/пинов ключуются всегда, когда включена анимация (FX); ретайминг не поддерживается", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Bone Chain Keys" -> Text("«Добавить ключ» и автоключ кости фиксируют позу всей цепочки (например, плечо, предплечье и кисть) и других выбранных костей", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Background Import/Export" -> Text("Импорт и экспорт видео продолжаются, если свернуть приложение: идёт служба с уведомлением о ходе работы", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        "Auto-Extend Project for Media" -> Text("Если добавленное аудио или видео длиннее проекта, проект продлевается до его конца (не дольше предела длительности); Undo отменяет и продление", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Shape Assist" -> Text("Частично: прямые, овалы, прямоугольники и треугольники после удержания; без предпросмотра", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Touch Detection" -> Text("Защита от ладони: касания пальцем игнорируются во время касания пера и 1,2 секунды после него; наведение не блокирует палец", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         "Double Tap & Drag for Multi-select" -> Text("Transform: двойной тап и протяжка выбирают видимые незаблокированные слои по центру рамки; без костей", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -275,6 +281,9 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                                 else if (item.title == "Temporary Pivots" && st != null) Switch(checked = st.temporaryPivots, onCheckedChange = { st.temporaryPivots = it; st.savePixelModes() })
                                 else if (item.title == "Rotate Canvas 2 Fingers" && st != null) Switch(checked = st.rotateCanvas, onCheckedChange = { st.rotateCanvas = it; st.savePixelModes() })
                                 else if (item.title == "Layer Pivot Editing" && st != null) Switch(checked = st.pivotEditing, onCheckedChange = { st.pivotEditing = it; st.savePixelModes() })
+                                else if (item.title == "Auto-Extend Project for Media" && st != null) Switch(checked = st.autoExtendMedia, onCheckedChange = { st.autoExtendMedia = it; st.saveSprint41() })
+                                else if (item.title == "Background Import/Export" && st != null) Switch(checked = st.backgroundWork, onCheckedChange = { st.backgroundWork = it; st.saveSprint41() })
+                                else if (item.title == "Bone Chain Keys" && st != null) Switch(checked = st.boneChainKeys, onCheckedChange = { st.boneChainKeys = it; st.saveSprint41() })
                                 else if (item.title == "Resolution Limit" && st != null) Switch(checked = st.resolutionLimit, onCheckedChange = { st.resolutionLimit = it; st.saveImport() })
                                 else if (item.title == "Show Symbol Context" && st != null) Switch(checked = st.symbolContext, onCheckedChange = { st.symbolContext = it; st.saveSymbolContext(); vm?.refreshSymbolContext() })
                                 else if (item.title == "Symbol Context Opacity" && st != null) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -342,7 +351,5 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
                     )
                 }
             }
-        },
-        confirmButton = { TextButton(onDismiss) { Text("Готово") } }
-    )
+    }
 }

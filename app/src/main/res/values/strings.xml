@@ -1988,4 +1988,20 @@
     <string name="ui_calligraphy">Каллиграфия</string>
     <string name="ui_layer_dragging_is_off_while_searchin">Перетаскивание слоёв выключено во время поиска и фильтра</string>
     <string name="ui_drag_layer">Перетащить слой</string>
+    <string name="ui_bone_keys_on_frame">Ключи костей на кадре: {}</string>
+    <string name="ui_key_and_auto_key_the_whole_bone_chai">Ключ и автоключ - всей цепочке кости и другим выбранным костям</string>
+    <string name="ui_key_selected_bones">Ключ - выбранным костям</string>
+    <string name="ui_extend_project_for_audio_and_video">Продлевать проект под аудио и видео</string>
+    <string name="ui_background_import_and_export">Импорт и экспорт в фоне</string>
+    <string name="ui_keys_for_the_whole_bone_chain">Ключи всей цепочке костей</string>
+    <string name="ui_layers_bones_in_animation_mode_and_e_2">Слои, кости в режиме анимации и эффекты: первая правка на кадре &gt; 0 ставит исходный ключ на кадре 0. Деформации Mesh/Warp/перспективы/пинов ключуются всегда, когда включена анимация (FX); ретайминг не поддерживается</string>
+    <string name="ui_add_key_and_bone_auto_key_lock_the_p">«Добавить ключ» и автоключ кости фиксируют позу всей цепочки (например, плечо, предплечье и кисть) и других выбранных костей</string>
+    <string name="ui_video_import_and_export_continue_whe">Импорт и экспорт видео продолжаются, если свернуть приложение: идёт служба с уведомлением о ходе работы</string>
+    <string name="ui_if_added_audio_or_video_is_longer_th">Если добавленное аудио или видео длиннее проекта, проект продлевается до его конца (не дольше предела длительности); Undo отменяет и продление</string>
+    <string name="ui_duration_min_sec">Длительность (мин:сек)</string>
+    <string name="ui_for_example_1_30_or_0_05_12_min_sec_">Например 1:30 или 0:05:12 (мин:сек:кадры)</string>
+    <string name="ui_total_frames">Всего кадров</string>
+    <string name="ui_longest_duration_at_this_frame_rate">Наибольшая длительность при этой частоте: {}</string>
+    <string name="ui_import_and_export">Импорт и экспорт</string>
+    <string name="ui_work_continues_in_the_background">Работа продолжается в фоне</string>
 </resources>

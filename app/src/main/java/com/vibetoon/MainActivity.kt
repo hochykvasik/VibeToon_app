@@ -44,6 +44,8 @@ class MainActivity : ComponentActivity() {
     private val app: AppViewModel by viewModels()
     private val editor: MainViewModel by viewModels()
     private lateinit var settings: AppSettings
+    /** Спринт 41: разрешение на уведомление о фоновом импорте/экспорте (Android 13+); без него работа всё равно идёт. */
+    private val notifPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
 
     /** Физическая клавиатура: срабатывает, только если клавишу не взял сам экран (поле ввода, кнопка). */
     override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
@@ -63,6 +65,11 @@ class MainActivity : ComponentActivity() {
         // Пакет 27: экспорт идёт по задаче GL-потока на кадр - пауза поверхности ждёт не дольше одного кадра,
         // экспорт останавливается на текущем кадре и продолжается после возврата (раньше он отменялся).
         com.vibetoon.render.RenderHost.view?.onPause()
+    }
+
+    override fun onDestroy() {
+        com.vibetoon.work.BackgroundWork.requestNotificationPermission = null   // спринт 41: без утечки Activity
+        super.onDestroy()
     }
 
     override fun onTrimMemory(level: Int) {
@@ -104,6 +111,8 @@ class MainActivity : ComponentActivity() {
             // панель показалась (свайп): через ~1.5 с прячем снова
             if (vis and android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION == 0) window.decorView.postDelayed({ hideSystemBars() }, 1500)
         }
+        if (android.os.Build.VERSION.SDK_INT >= 33)
+            com.vibetoon.work.BackgroundWork.requestNotificationPermission = { runCatching { notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) } }
         CrashReporter.install(applicationContext)
         val lastCrash = CrashReporter.take(applicationContext)
         settings = AppSettings(this)

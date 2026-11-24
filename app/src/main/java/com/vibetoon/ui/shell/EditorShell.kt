@@ -1944,11 +1944,15 @@ private fun BoneKeyControls(vm: MainViewModel, bone: com.vibetoon.domain.project
         Text("Ключи кости: ${frames.size}", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
         Text(if (active != null) "Выбран ключ: ${com.vibetoon.domain.anim.TimeFormat.format(active, animation.settings.fps)}" else "Ключ не выбран: тапните ◆ на таймлайне", fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        val chainKeys = com.vibetoon.ui.theme.LocalAppSettings.current?.boneChainKeys != false
+        Text(if (chainKeys) "Ключ и автоключ - всей цепочке кости и другим выбранным костям" else "Ключ - выбранным костям", fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(onClick = { vm.stepBoneKey(-1) }, enabled = !playing && frames.any { it < frame }, contentPadding = pad, modifier = Modifier.height(32.dp)) {
                 Text("◀ Предыдущий ключ", fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
-            OutlinedButton(onClick = vm::addBoneKey, enabled = !playing && frame !in frames, contentPadding = pad, modifier = Modifier.height(32.dp)) {
+            // спринт 41: ключ ставится и цепочке/другим выбранным костям - кнопка доступна, даже если у этой кости ключ уже есть
+            OutlinedButton(onClick = vm::addBoneKey, enabled = !playing, contentPadding = pad, modifier = Modifier.height(32.dp)) {
                 Text("◆ Добавить ключ", fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
             OutlinedButton(onClick = { vm.stepBoneKey(1) }, enabled = !playing && frames.any { it > frame }, contentPadding = pad, modifier = Modifier.height(32.dp)) {

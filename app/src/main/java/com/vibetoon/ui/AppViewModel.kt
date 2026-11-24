@@ -44,11 +44,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _projects = MutableStateFlow<List<ProjectMeta>>(emptyList())
     val projects: StateFlow<List<ProjectMeta>> = _projects.asStateFlow()
 
-    init {
-        repo.cleanStaleImports()   // пакет 13: остатки прерванного импорта
-        refresh()
-    }
-
     private val _import = MutableStateFlow<ImportUi?>(null)
     /** Пакет 13: окно импорта (идёт / готово / ошибка); null - окна нет. */
     val importState: StateFlow<ImportUi?> = _import.asStateFlow()
@@ -67,6 +62,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _note = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
     /** Короткие сообщения о результате (очистка, импорт, экспорт) для строки-уведомления экрана проектов. */
     val note: kotlinx.coroutines.flow.SharedFlow<String> = _note
+
+    // Спринт 41: init стоит ПОСЛЕ всех полей. Раньше он был выше _sizes/_folders/prefs, и refresh(), успевший
+    // завершиться до их инициализации (быстрый диск, Dispatchers.Main.immediate), падал с NPE на _sizes.value.
+    init {
+        repo.cleanStaleImports()   // пакет 13: остатки прерванного импорта
+        refresh()
+    }
 
     fun refresh() {
         viewModelScope.launch {

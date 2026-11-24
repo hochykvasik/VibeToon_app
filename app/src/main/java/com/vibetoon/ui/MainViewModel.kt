@@ -699,12 +699,77 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     meta = data.meta
                     Log.i("VT/Project", "saved ${data.meta.id}: ${data.base.size} base, ${data.tracks.size} tracks")
                 }
-            ).also { ok -> if (!ok) _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён") }
+            ).also { ok -> onPaintSaveResult(ok) }
         } catch (t: kotlinx.coroutines.CancellationException) { throw t }
         catch (t: Exception) {
             Log.e("VT/Project", "save failed", t)
             _state.value = UiState.Error("Не удалось сохранить проект; повторите сохранение")
             false
+        }
+    }
+
+    // ---------------------------------------------------------------- Спринт 41: сохранение рисунка без ложных ошибок
+    private val paintSaveError = "Не удалось сохранить рисунок; проект не сохранён"
+    private var paintSaveFailures = 0
+    /** Последний отказ записи рисунка был временным (поверхность на паузе, текстура не готова, нет GL-вида). */
+    @Volatile private var lastPaintFailureTransient = true
+    private var paintRetryJob: kotlinx.coroutines.Job? = null
+    /** Пиксели изменённых слоёв, прочитанные в GL-потоке ДО паузы поверхности (сворачивание). */
+    private val pauseCapture = java.util.concurrent.ConcurrentHashMap<Int, ByteArray>()
+
+    private fun onPaintSaveResult(ok: Boolean) {
+        if (ok) {
+            paintSaveFailures = 0
+            if ((_state.value as? UiState.Error)?.message == paintSaveError) _state.value = UiState.Idle
+            return
+        }
+        paintSaveFailures++
+        val background = appBackground || RenderHost.view?.surfacePaused == true
+        if (com.vibetoon.domain.project.PaintSaveRetry.report(paintSaveFailures, lastPaintFailureTransient, background))
+            _state.value = UiState.Error(paintSaveError)
+        if (!background && lastPaintFailureTransient) {
+            paintRetryJob?.cancel()
+            paintRetryJob = viewModelScope.launch {
+                delay(com.vibetoon.domain.project.PaintSaveRetry.delayMs(paintSaveFailures))
+                if (!appBackground) { saveJob?.cancel(); saveNow() }
+            }
+        }
+    }
+
+    /**
+     * Запись рисунка перед действием с кадрами (подмена рисунка, вставка, дублирование): временный отказ
+     * повторяется до [com.vibetoon.domain.project.PaintSaveRetry.MAX_TRANSIENT] раз, прежде чем действие отменится.
+     */
+    private suspend fun flushPaintWithRetry(): Boolean {
+        repeat(com.vibetoon.domain.project.PaintSaveRetry.MAX_TRANSIENT) { attempt ->
+            if (flushPaintSavesSafely()) return true
+            if (!lastPaintFailureTransient) return false
+            delay(com.vibetoon.domain.project.PaintSaveRetry.delayMs(attempt + 1) / 2)
+        }
+        return false
+    }
+
+    /** Сообщение об отказе записи рисунка перед действием: в фоне и при временном отказе - без баннера. */
+    private fun paintFlushFailed() {
+        val background = appBackground || RenderHost.view?.surfacePaused == true
+        if (!background) _state.value = UiState.Error(paintSaveError)
+        else if (_state.value == UiState.Loading) _state.value = UiState.Idle
+    }
+
+    /**
+     * Спринт 41: вызывается на ON_PAUSE ДО паузы поверхности (MainActivity ставит паузу GL после событий жизненного
+     * цикла). Одно событие GL-потока читает пиксели всех изменённых слоёв: GLSurfaceView выполняет очередь событий до
+     * подтверждения паузы, пока контекст ещё текущий. Сохранение после паузы берёт эти пиксели.
+     */
+    private fun capturePaintBeforePause() {
+        val view = RenderHost.view ?: return
+        val ids = synchronized(paintDirty) { paintDirty.toIntArray() }
+        if (ids.isEmpty() || view.surfacePaused) return
+        view.queueEvent {
+            for (id in ids) {
+                val b = try { view.layerPixelsNow(id) } catch (_: Throwable) { null }
+                if (b != null && b.size > 8) pauseCapture[id] = b
+            }
         }
     }
 
@@ -730,6 +795,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pause()
         // Пакет 27: экспорт не отменяется - MP4 паркуется на текущем кадре в GL-потоке, GIF/PNG ждут возврата.
         if (stroker != null || vecLayer >= 0) paintUp()
+        capturePaintBeforePause()   // спринт 41: пиксели читаются до паузы поверхности
         viewModelScope.launch {
             kotlinx.coroutines.delay(250)
             saveJob?.cancel()
@@ -741,8 +807,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onAppResumed() {
         val wasBackground = appBackground
         appBackground = false
+        pauseCapture.clear()   // спринт 41: после возврата пиксели читаются заново (могли появиться новые штрихи)
         RenderHost.view?.requestRender()
         if (!wasBackground || projectId == null) return
+        if (paintDirty.isNotEmpty()) markDirty()   // отложенная в фоне запись рисунка
         // Отложенные в фоне снимки символов: после первого кадра, без спешки (главный поток не ждёт GL).
         viewModelScope.launch {
             kotlinx.coroutines.delay(350)
@@ -1003,10 +1071,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         val id = nextMediaId()
         _state.value = UiState.Loading
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             try {
                 val item = withContext(decodeDispatcher) { importMediaBlocking(pid, id, MediaKind.IMAGE, uri) }
-                if (projectId != pid || closing) return@launch
+                if (projectId != pid || closing) return@launchImport
                 checkpoint("add", force = true)
                 // картинка -> определение символа (группа с одним слоем), экземпляр на сцену
                 val gid = nextMediaId()
@@ -1035,7 +1103,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         val id = nextMediaId()
         _state.value = UiState.Loading
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             val written = ArrayList<java.io.File>()
             var inserted = false
             val src = java.io.File(getApplication<Application>().cacheDir, "vsym_${java.util.UUID.randomUUID()}.mp4")
@@ -1088,7 +1156,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 val (item, cells, rest) = result
                 val (plan, hasAudio, dur) = rest
-                if (projectId != pid || closing) { withContext(Dispatchers.IO) { written.forEach { it.delete() } }; return@launch }
+                if (projectId != pid || closing) { withContext(Dispatchers.IO) { written.forEach { it.delete() } }; return@launchImport }
                 // звук видео: тот же файл - аудиодорожка проекта (поверх символа, один раз от кадра 0)
                 val audio = if (!hasAudio) null else withContext(Dispatchers.IO) {
                     val aid = nextMediaId()   // идентификаторы монотонны: не совпадёт со слоем кадров
@@ -1110,11 +1178,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (audio != null) media += audio
                 // проект короче видео - продлевается, чтобы символ проигрался целиком
                 val st = _animation.value.settings
-                val extend = total > st.durationFrames
-                if (extend) {
-                    val d = total.coerceAtMost(TimeFormat.MAX_DURATION_FRAMES)
-                    meta = meta?.copy(durationFrames = d)
-                    _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, d))
+                val extendPlan = com.vibetoon.domain.project.MediaAutoExtend.planFrames(st.durationFrames, total, autoExtendMediaOn())
+                val extend = extendPlan != null
+                if (extendPlan != null) {
+                    meta = meta?.copy(durationFrames = extendPlan.frames)
+                    _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, extendPlan.frames))
                 }
                 inserted = true
                 rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
@@ -1148,7 +1216,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         val id = nextMediaId()
         _state.value = UiState.Loading
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             val copied = ArrayList<java.io.File>()
             var inserted = false
             try {
@@ -1168,7 +1236,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     item to com.vibetoon.domain.project.SequenceImport.cells(files)
                 }
-                if (projectId != pid || closing) { copied.forEach { it.delete() }; return@launch }
+                if (projectId != pid || closing) { copied.forEach { it.delete() }; return@launchImport }
                 checkpoint("add", force = true)
                 val title = com.vibetoon.domain.project.SequenceImport.title(names[picked[0]])
                 val layer = first.copy(name = title, cells = cells)
@@ -1227,7 +1295,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         val id = nextMediaId()
         _state.value = UiState.Loading
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             val written = ArrayList<java.io.File>()
             var inserted = false
             val tmp = java.io.File(getApplication<Application>().cacheDir, "gif_${java.util.UUID.randomUUID()}.png")
@@ -1266,7 +1334,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 val (item, cells, rest) = result
                 val (info, total) = rest
-                if (projectId != pid || closing) { withContext(Dispatchers.IO) { written.forEach { it.delete() } }; return@launch }
+                if (projectId != pid || closing) { withContext(Dispatchers.IO) { written.forEach { it.delete() } }; return@launchImport }
                 checkpoint("add", force = true)
                 val title = name.substringBeforeLast('.').ifBlank { "GIF" }
                 val layer = item.copy(name = title, cells = if (cells.size > 1) cells else emptyList())
@@ -1323,7 +1391,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val id = nextMediaId()
         _state.value = UiState.Loading
         _audioReadiness.value = if (kind == MediaKind.AUDIO) com.vibetoon.domain.project.AudioReadiness.Preparing("Аудио") else com.vibetoon.domain.project.AudioReadiness.Idle
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             var imported: MediaItem? = null
             var inserted = false
             try {
@@ -1334,21 +1402,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val prepared = kotlinx.coroutines.withTimeoutOrNull(120_000) { audioEngine.awaitScrubReady(projects.fileOf(pid, item.file)) }
                         ?: throw IllegalStateException("Время подготовки аудио истекло")
                     prepared.getOrElse { throw IllegalStateException("Не удалось подготовить аудио", it) }
-                    if (projectId != pid || closing) return@launch
+                    if (projectId != pid || closing) return@launchImport
                 }
                 checkpoint("add", force = true)   // один снимок откатывает и слой, и продление проекта
                 // длинный звук: проект продлевается до его конца (не дольше предела хронометража)
-                var extended = 0   // 1 - проект продлён до конца звука, 2 - до максимума (конец звука не поместился)
-                if (item.kind == MediaKind.AUDIO) {
-                    val st = _animation.value.settings
-                    val need = ProjectMath.framesFor(item.durationMs, st.fps)
-                    if (need > st.durationFrames) {
-                        val d = need.coerceAtMost(TimeFormat.MAX_DURATION_FRAMES)
-                        meta = meta?.copy(durationFrames = d)
-                        _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, d))
-                        extended = if (need > d) 2 else 1
-                    }
-                }
+                // спринт 41: то же правило для видеоклипа (раньше продлевалось только под аудио)
+                val extended = extendForMedia(item)   // 1 - продлён до конца, 2 - до максимума (конец не поместился)
                 if (item.kind == MediaKind.AUDIO) {
                     check(audioEngine.peaksFor(projects.fileOf(pid, item.file))?.isNotEmpty() == true) { "Не удалось подготовить волну аудио" }
                     waveDrawWait = com.vibetoon.domain.project.WaveDrawBarrier(item.id)
@@ -1365,9 +1424,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (!drawn) throw IllegalStateException("Волна не появилась на таймлайне: откройте дорожку; импортированный файл сохранён")
                 }
                 if (item.kind == MediaKind.AUDIO) _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Ready(item.name)
-                _state.value = UiState.Message(when (extended) {
-                    2 -> "Добавлено: ${item.name}. Проект продлён до максимума, конец звука не поместился"
-                    1 -> "Добавлено: ${item.name}. Проект продлён до конца звука"
+                _state.value = UiState.Message(when {
+                    extended == 2 && item.kind == MediaKind.VIDEO -> "Добавлено: ${item.name}. Проект продлён до максимума, конец видео не поместился"
+                    extended == 1 && item.kind == MediaKind.VIDEO -> "Добавлено: ${item.name}. Проект продлён до конца видео"
+                    extended == 2 -> "Добавлено: ${item.name}. Проект продлён до максимума, конец звука не поместился"
+                    extended == 1 -> "Добавлено: ${item.name}. Проект продлён до конца звука"
                     else -> "Добавлено: ${item.name}"
                 })
             } catch (t: kotlinx.coroutines.CancellationException) {
@@ -1384,6 +1445,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (projectId == pid && !closing) _state.value = UiState.Error(t.message ?: "Не удалось добавить файл")
             }
         }
+    }
+
+    /** Спринт 41: «Продлевать проект под длину аудио и видео» (по умолчанию вкл.). */
+    private fun autoExtendMediaOn(): Boolean = getApplication<Application>()
+        .getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean(com.vibetoon.domain.project.MediaAutoExtend.PREF, true)
+
+    /**
+     * Спринт 41: проект продлевается до конца добавленного аудио ИЛИ видео (раньше - только аудио). Вызывать после
+     * checkpoint: одна отмена убирает и слой, и продление. 0 - не продлён, 1 - до конца медиа, 2 - до предела длительности.
+     */
+    private fun extendForMedia(item: MediaItem): Int {
+        if (item.kind != MediaKind.AUDIO && item.kind != MediaKind.VIDEO) return 0
+        val st = _animation.value.settings
+        val plan = com.vibetoon.domain.project.MediaAutoExtend.plan(st.durationFrames, item.durationMs, st.fps, autoExtendMediaOn()) ?: return 0
+        meta = meta?.copy(durationFrames = plan.frames)
+        _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, plan.frames))
+        return if (plan.clipped) 2 else 1
     }
 
     private fun resolutionLimitOn(): Boolean = getApplication<Application>()
@@ -1532,7 +1610,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pid = projectId ?: return
         if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         _state.value = UiState.Loading
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             val res = withContext(Dispatchers.IO) {
                 runCatching {
                     val name = importer.displayName(uri)
@@ -1546,7 +1624,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     "assets/$fileName" to name
                 }
             }
-            if (projectId != pid || closing) { res.getOrNull()?.let { (rel, _) -> withContext(Dispatchers.IO) { projects.fileOf(pid, rel).delete() } }; return@launch }
+            if (projectId != pid || closing) { res.getOrNull()?.let { (rel, _) -> withContext(Dispatchers.IO) { projects.fileOf(pid, rel).delete() } }; return@launchImport }
             res.onSuccess { (rel, name) -> insertPsdFile(pid, rel, com.vibetoon.domain.project.PsdInsertPlan.titleOf(name), deleteOnFail = true) }
                 .onFailure { _state.value = UiState.Error(it.message ?: "Не удалось вставить PSD") }
         }
@@ -1575,7 +1653,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val mode = com.vibetoon.domain.project.PsdInsertPlan.Mode.of(appPrefs().getInt("psd_import_mode", 0))
         val limit = if (resolutionLimitOn()) com.vibetoon.domain.project.ImportLimit.maxSide(canvasW, canvasH) else MAX_TEX
         val cw = canvasW; val ch = canvasH
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             val written = ArrayList<java.io.File>()
             var inserted = false
             var doc = 0L
@@ -1629,7 +1707,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             }
                             out
                         }
-                        if (projectId != pid || closing) return@launch
+                        if (projectId != pid || closing) return@launchImport
                         // группы без вставленных слоёв не создаются (дети в списке раньше своей группы)
                         val present = HashSet<Int>()
                         for (n in nodes) if ((!n.group && n.psdId in items) || (n.group && nodes.any { it.parent == n.psdId && it.psdId in present })) present += n.psdId
@@ -1667,7 +1745,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 MediaItem(id, MediaKind.IMAGE, title, path, bmp.width, bmp.height, fx, fy, dw * s, dh * s)
                             } finally { bmp.recycle() }
                         }
-                        if (projectId != pid || closing) return@launch
+                        if (projectId != pid || closing) return@launchImport
                         checkpoint("add", force = true)
                         media += item
                         select = id
@@ -1696,7 +1774,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             }
                             checkNotNull(first).copy(cells = if (cells.size > 1) cells else emptyList())
                         }
-                        if (projectId != pid || closing) return@launch
+                        if (projectId != pid || closing) return@launchImport
                         checkpoint("add", force = true)
                         media += item
                         if (item.cells.size > 1) cellsOf = item.id
@@ -1757,7 +1835,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val video = com.vibetoon.domain.project.AssetCatalog.typeOf(relPath) == com.vibetoon.domain.project.AssetCatalog.Type.VIDEO
         val ticket = RenderNative.textureUploadTicket(id)
         val title = media.firstOrNull { it.file == relPath }?.name ?: relPath.substringAfterLast('/')
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             try {
                 val item = withContext(decodeDispatcher) {
                     val f = projects.fileOf(pid, relPath)
@@ -1772,11 +1850,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         MediaItem(id, MediaKind.VIDEO, title, relPath, d.srcWidth, d.srcHeight, r[0], r[1], r[2], r[3], d.durationMs)
                     }
                 }
-                if (projectId != pid || closing) return@launch
+                if (projectId != pid || closing) return@launchImport
                 checkpoint("add", force = true)
+                val extended = extendForMedia(item)   // спринт 41: аудио и видео из библиотеки тоже продлевают проект
                 media += item
                 rebuildLayers(); pushScene(); if (item.isVisual) selectLayer(item.id); markDirty()
-                _state.value = UiState.Message("Вставлено из библиотеки: ${item.name}")
+                _state.value = UiState.Message(if (extended > 0) "Вставлено из библиотеки: ${item.name}. Проект продлён" else "Вставлено из библиотеки: ${item.name}")
             } catch (t: kotlinx.coroutines.CancellationException) { throw t }
             catch (t: Throwable) {
                 Log.e("VT/Media", "insert media asset failed", t)
@@ -4533,7 +4612,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * (раньше из-за неё пропадал рот или были видны сразу две формы).
      */
     private suspend fun symbolBitmapLocked(defId: Int, local: Int, depth: Int, strict: Boolean): android.graphics.Bitmap? {
-        if (appBackground) return null
+        if (!glUsable()) return null   // спринт 41: в фоне при идущем импорте/экспорте снимок делается во внеэкранном контексте
         val nested = nestedSymbolBitmaps(defId, local, depth, strict)
         try {
             val fps = _animation.value.settings.fps
@@ -4547,7 +4626,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var bytes = attempt(w, h)
             if (bytes != null && bytes.isEmpty()) throw SymbolNotReady()
             // OOM/лимит GPU: аккуратно уменьшаемся вдвое, прежняя текстура остаётся до успеха.
-            while (bytes == null && (w > 1 || h > 1) && !appBackground) {
+            while (bytes == null && (w > 1 || h > 1) && glUsable()) {
                 w = maxOf(1, w / 2); h = maxOf(1, h / 2)
                 bytes = attempt(w, h)
                 if (bytes != null && bytes.isEmpty()) throw SymbolNotReady()
@@ -4656,7 +4735,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun symbolToTexture(defId: Int, local: Int, texId: Int, w: Int, h: Int): Int = symbolMutex.withLock {
         val view = RenderHost.view
-        if (appBackground || view == null) return@withLock -1
+        if (!glUsable() || view == null) return@withLock -1
         val nested = nestedSymbolBitmaps(defId, local, 0, false)
         try {
             for ((id, b) in nested) RenderNative.uploadShadowBitmap(id, b)
@@ -5143,8 +5222,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val ticket = RenderNative.textureUploadTicket(m.id)
             viewModelScope.launch {
                 try {
-                    if (!flushPaintSavesSafely()) {
-                        _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён")
+                    if (!flushPaintWithRetry()) {
+                        paintFlushFailed()
+                        // временный отказ (свёрнуто, текстура грузится): рисунок кадра подменится при следующей попытке
+                        if (lastPaintFailureTransient) viewModelScope.launch { delay(1200); if (!appBackground) updateCells(_frame.value) }
                         return@launch
                     } // не подменяем рисунок, пока прежний не сохранён
                     // Спринт 31: рисунок из кэша (предзагружен) или декод на пуле потоков: слои не ждут друг друга
@@ -5269,16 +5350,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m0 = insertIntoDrawingTarget() ?: return
         if (_playing.value || importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
         _state.value = UiState.Loading
-        importJob = viewModelScope.launch {
+        importJob = launchImport {
             var out: java.io.File? = null
             var committed = false
             val tmp = java.io.File(getApplication<Application>().cacheDir, "insert_${java.util.UUID.randomUUID()}")
             try {
-                if (!flushPaintSavesSafely()) { _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён"); return@launch }
-                val m = media.firstOrNull { it.id == m0.id && it.kind == MediaKind.IMAGE } ?: run { _state.value = UiState.Idle; return@launch }
+                if (!flushPaintWithRetry()) { paintFlushFailed(); return@launchImport }
+                val m = media.firstOrNull { it.id == m0.id && it.kind == MediaKind.IMAGE } ?: run { _state.value = UiState.Idle; return@launchImport }
                 val frame = _frame.value
                 val cells0 = m.cells.ifEmpty { listOf(FrameCell(0, m.file)) }
-                val act = FrameMath.active(cells0, frame) ?: run { _state.value = UiState.Idle; return@launch }
+                val act = FrameMath.active(cells0, frame) ?: run { _state.value = UiState.Idle; return@launchImport }
                 val name = newCellName(m.copy(cells = cells0))
                 val dest = projects.mediaFile(pid, name)
                 out = dest
@@ -5301,7 +5382,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (projectId != pid || closing || media.firstOrNull { it.id == m.id } != m || _frame.value != frame) {
                     withContext(Dispatchers.IO) { dest.delete() }
                     if (projectId == pid && !closing) _state.value = UiState.Message("Слой изменился во время вставки: картинка не вставлена")
-                    return@launch
+                    return@launchImport
                 }
                 commitCells(m.id, FrameMath.replaceActive(m.cells, frame, "assets/$name", m.file), frame, "Картинка вставлена в рисунок «${layerName(m.id)}» на кадре ${frame + 1}")
                 committed = true
@@ -5342,7 +5423,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = frameLayerOrNotice() ?: return
         if (_playing.value) return
         viewModelScope.launch {
-            if (!flushPaintSavesSafely()) { _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён"); return@launch }
+            if (!flushPaintWithRetry()) { paintFlushFailed(); return@launch }
             val cells0 = m.cells.ifEmpty { listOf(FrameCell(0, m.file)) }
             val target = FrameMath.freeStart(cells0, _frame.value, duration()) ?: run { _state.value = UiState.Message("Нет свободного кадра до конца проекта"); return@launch }
             val name = newCellName(m.copy(cells = cells0))
@@ -5362,7 +5443,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = frameLayerOrNotice() ?: return
         if (_playing.value) return
         viewModelScope.launch {
-            if (!flushPaintSavesSafely()) { _state.value = UiState.Error("Не удалось сохранить рисунок; проект не сохранён"); return@launch }
+            if (!flushPaintWithRetry()) { paintFlushFailed(); return@launch }
             val cells0 = m.cells.ifEmpty { listOf(FrameCell(0, m.file)) }
             val cur = FrameMath.active(cells0, _frame.value) ?: return@launch
             val target = FrameMath.freeStart(cells0, _frame.value + 1, duration()) ?: run { _state.value = UiState.Message("Нет свободного кадра до конца проекта"); return@launch }
@@ -5391,7 +5472,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Снимок холста в GL-потоке: RGBA premultiplied, строка 0 - низ. null - не вышло. */
     private suspend fun captureNow(scene: SceneData?, transparent: Boolean, w: Int, h: Int, flags: Int = 0): ByteArray? {
         // В фоне поверхность GL снята: снимок дал бы мусор, а очередь GL-событий задержала бы onResume (ANR).
-        if (appBackground) return null
+        // Спринт 41: при работающей службе фоновой работы снимок идёт во внеэкранном контексте (VtGLSurfaceView).
+        if (!glUsable()) return null
         val view = RenderHost.view ?: return null
         val bg = meta?.background?.toInt() ?: 0
         return kotlinx.coroutines.withTimeoutOrNull(20000) {
@@ -6322,10 +6404,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             base[id] = LayerTransform(dx = ox, dy = oy)   // FX выкл: базовая форма (Bind Pose), ключи не создаются
         } else {
             val bind = base[id]
-            // FX вкл: смещение записывается ключом на текущем кадре (дельта относительно формы привязки)
-            if (t in groupDeformationAnchors && _frame.value > 0 && !_animation.value.hasTrack(id))
-                _animation.value = _animation.value.withKey(id, 0, LayerTransform())
-            _animation.value = _animation.value.withKey(id, _frame.value, LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
+            // FX вкл: смещение записывается ключом на текущем кадре (дельта относительно формы привязки).
+            // Спринт 41: автоключ деформера - исходная форма на кадре 0 и фиксация остальных точек на кадре.
+            val group = (0 until size.width * size.height).map { WarpMath.pointId(t, it) }
+            _animation.value = com.vibetoon.domain.anim.DeformAutoKey.key(_animation.value, group, _frame.value,
+                mapOf(id to LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f))))
         }
         pushScene()
         markDirty()
@@ -6470,9 +6553,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             base[id] = LayerTransform(dx = ox, dy = oy)
         } else {
             val bind = base[id]
-            if (t in groupDeformationAnchors && _frame.value > 0 && !_animation.value.hasTrack(id))
-                _animation.value = _animation.value.withKey(id, 0, LayerTransform())
-            _animation.value = _animation.value.withKey(id, _frame.value, LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
+            // спринт 41: автоключ углов перспективы - исходная форма на кадре 0, остальные углы фиксируются на кадре
+            _animation.value = com.vibetoon.domain.anim.DeformAutoKey.key(_animation.value,
+                (0 until PerspectiveMath.CORNERS).map { PerspectiveMath.pointId(t, it) }, _frame.value,
+                mapOf(id to LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f))))
         }
         pushScene()
         markDirty()
@@ -7519,24 +7603,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pid = projectId ?: return false
         val ids = synchronized(paintDirty) { val c = paintDirty.toList(); paintDirty.clear(); c }
         if (ids.isEmpty()) return true
+        lastPaintFailureTransient = true
         val view = RenderHost.view ?: run { paintDirty.addAll(ids); return false }
         var ok = true
+        var permanent = false
         try {
             for (id in ids) {
                 val file = paintFile(pid, id)
-                val bytes = if (file == null) null else kotlinx.coroutines.withTimeoutOrNull(4000) {
+                if (file == null) { paintDirty += id; ok = false; permanent = true; continue }
+                // спринт 41: при свёрнутом приложении - пиксели, прочитанные до паузы; иначе чтение без ожидания 4 с
+                val bytes = pauseCapture.remove(id) ?: if (view.surfacePaused) null else kotlinx.coroutines.withTimeoutOrNull(4000) {
                     kotlinx.coroutines.suspendCancellableCoroutine<ByteArray?> { c ->
                         view.layerPixels(id) { if (c.isActive) c.resumeWith(Result.success(it)) }
                     }
                 }
-                if (file == null || bytes == null || bytes.size <= 8) {
+                if (bytes == null || bytes.size <= 8) {
                     paintDirty += id; ok = false; continue
                 }
                 val original = media.firstOrNull { it.id == id }
                 val versioned = original != null && original.kind == MediaKind.IMAGE && original.cells.isEmpty() &&
                     (id in versionedRasterIds || com.vibetoon.domain.raster.RasterVersionPolicy.isVersionPath(original.file))
                 if (versioned && original != null && !com.vibetoon.domain.raster.RasterVersionPolicy.matchesDimensions(bytes, original.srcWidth, original.srcHeight)) {
-                    paintDirty += id; ok = false; continue
+                    paintDirty += id; ok = false; permanent = true; continue
                 }
                 val newPath = if (versioned) "assets/raster_${java.util.UUID.randomUUID()}.png" else null
                 val destination = if (newPath != null) projects.fileOf(pid, newPath) else file
@@ -7544,7 +7632,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     try { writeLayerPng(bytes, destination); true }
                     catch (t: Exception) { Log.e("VT/Project", "PNG save failed", t); false }
                 }
-                if (!written) { paintDirty += id; ok = false; continue }
+                if (!written) { paintDirty += id; ok = false; permanent = true; continue }
                 cellCache.invalidate(destination)   // спринт 31: в кэше рисунков не остаётся версии до правки
                 if (newPath != null) {
                     val index = media.indexOfFirst { it.id == id }
@@ -7560,6 +7648,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             paintDirty.addAll(ids)
             throw t
         }
+        if (!ok) lastPaintFailureTransient = !permanent
         return ok
     }
 
@@ -9593,7 +9682,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!_fx.value) base[id] = LayerTransform(dx = ox, dy = oy)
         else {
             val bind = base[id]
-            _animation.value = _animation.value.withKey(id, _frame.value, LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
+            // спринт 41: автоключ пинов - исходное положение на кадре 0, остальные пины фиксируются на кадре
+            val group = (0 until (pinLayers[t]?.size ?: (k + 1))).map { PuppetMath.pinId(t, it) }
+            _animation.value = com.vibetoon.domain.anim.DeformAutoKey.key(_animation.value, group, _frame.value,
+                mapOf(id to LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f))))
         }
     }
 
@@ -9763,7 +9855,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         checkpoint("pin-key", force = true)
         val id = PuppetMath.pinId(t, pinSel)
         val cur = _animation.value.tracks[id]?.evaluate(_frame.value) ?: LayerTransform()
-        _animation.value = _animation.value.withKey(id, _frame.value, LayerTransform(dx = cur.dx, dy = cur.dy))
+        _animation.value = com.vibetoon.domain.anim.DeformAutoKey.key(_animation.value, pins.indices.map { PuppetMath.pinId(t, it) }, _frame.value,
+            mapOf(id to LayerTransform(dx = cur.dx, dy = cur.dy)))
         pushScene(); markDirty()
         _state.value = UiState.Message("Ключ пина на кадре ${_frame.value}")
     }
@@ -10418,18 +10511,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var meshLast: Pair<Float, Float>? = null
     private val cutRemoved = HashSet<Int>()
 
-    /** Записывает итоговое смещение вершины: FX выкл - форма привязки, FX вкл - ключ на кадре (дельта к привязке). */
-    private fun setVertexOffset(t: Int, k: Int, ox0: Float, oy0: Float) {
-        // защита от NaN и от «улёта» вершины при быстром жесте: смещение держим в разумных пределах
-        val ox = if (ox0.isFinite()) ox0.coerceIn(-2f, 2f) else 0f
-        val oy = if (oy0.isFinite()) oy0.coerceIn(-2f, 2f) else 0f
-        val id = MeshMath.vertexId(t, k)
-        if (!_fx.value) {
-            base[id] = LayerTransform(dx = ox, dy = oy)
-        } else {
-            val bind = base[id]
-            _animation.value = _animation.value.withKey(id, _frame.value, LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
+    /**
+     * Записывает итоговые смещения вершин [offsets] (k -> (ox, oy)): FX выкл - форма привязки, FX вкл - ключ на кадре
+     * (дельта к привязке). Спринт 41: ключи сетки - автоключ «как в Alight Motion» ([com.vibetoon.domain.anim.DeformAutoKey]):
+     * первая правка на кадре > 0 сначала ставит исходную форму ключом на кадре 0 (раньше единственный ключ держался на всех
+     * кадрах - ресницы не возвращались при перемотке назад), у остальных анимированных вершин форма на кадре фиксируется.
+     */
+    private fun setVertexOffsets(t: Int, m: Mesh, offsets: Map<Int, Pair<Float, Float>>) {
+        if (offsets.isEmpty()) return
+        val changes = HashMap<Int, LayerTransform>(offsets.size)
+        for ((k, o) in offsets) {
+            // защита от NaN и от «улёта» вершины при быстром жесте: смещение держим в разумных пределах
+            val ox = if (o.first.isFinite()) o.first.coerceIn(-2f, 2f) else 0f
+            val oy = if (o.second.isFinite()) o.second.coerceIn(-2f, 2f) else 0f
+            val id = MeshMath.vertexId(t, k)
+            if (!_fx.value) base[id] = LayerTransform(dx = ox, dy = oy)
+            else {
+                val bind = base[id]
+                changes[id] = LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f))
+            }
         }
+        if (changes.isNotEmpty())
+            _animation.value = com.vibetoon.domain.anim.DeformAutoKey.key(_animation.value, MeshMath.ids(t, m), _frame.value, changes)
     }
 
     /** Cut: отрезок движения пальца удаляет задетые треугольники (по деформированной сетке); вершины чистятся в конце жеста. */
@@ -10562,7 +10665,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         brushLive = null; brushDirty.clear(); _brushCircle.value = null
         if (live == null || dirty.isEmpty()) { refreshMeshOverlay(); return }
         val (t, off) = live
-        for (k in dirty) setVertexOffset(t, k, off[k * 2], off[k * 2 + 1])
+        val m = meshLayers[t] ?: run { refreshMeshOverlay(); return }
+        if (off.size < m.count * 2) { refreshMeshOverlay(); return }
+        setVertexOffsets(t, m, dirty.filter { it in 0 until m.count }.associateWith { k -> off[k * 2] to off[k * 2 + 1] })
         pushScene(); markDirty()
     }
 
@@ -10660,13 +10765,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val ox = (u - m.u(k)).coerceIn(-1.5f, 1.5f)
         val oy = (v - m.v(k)).coerceIn(-1.5f, 1.5f)
         checkpoint("mesh$t-$k")
-        val id = MeshMath.vertexId(t, k)
-        if (!_fx.value) {
-            base[id] = LayerTransform(dx = ox, dy = oy)   // FX выкл: меняется Bind Pose сетки
-        } else {
-            val bind = base[id]
-            _animation.value = _animation.value.withKey(id, _frame.value, LayerTransform(dx = ox - (bind?.dx ?: 0f), dy = oy - (bind?.dy ?: 0f)))
-        }
+        // FX выкл: меняется Bind Pose сетки; FX вкл: ключ кадра с исходной формой на кадре 0 (спринт 41)
+        setVertexOffsets(t, m, mapOf(k to (ox to oy)))
         pushScene()
         markDirty()
     }
@@ -11049,19 +11149,64 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         com.vibetoon.domain.anim.BoneKeys.activeFrame(b.id, boneKeyFrames(b.id), _keySel.value, _frame.value)
 
     /** «Добавить ключ»: ключ позы выбранной кости на текущем кадре (из текущей позы - кость не прыгает). */
+    /**
+     * «Добавить ключ» кости. Спринт 41: ключ получают сразу все выбранные кости и (настройка «Ключи всей цепочке костей»,
+     * по умолчанию вкл.) вся цепочка выбранной кости - поза руки (плечо, предплечье, кисть) фиксируется на кадре целиком.
+     * Кость без ключей при первом ключе на кадре > 0 получает ключ исходной позы на кадре 0: прежние кадры не меняются
+     * (раньше единственный ключ держал позу на всём таймлайне).
+     */
     fun addBoneKey() {
         val b = selectedBone() ?: run { _state.value = UiState.Message("Сначала выберите кость (инструмент «Выбрать»)"); return }
         if (_playing.value) return
         val f = _frame.value
-        if (_animation.value.hasKey(b.id, f)) { _keySel.value = setOf(b.id to f); _state.value = UiState.Message("На этом кадре ключ кости уже есть"); return }
+        val targets = boneKeyTargets(b)
+        val need = targets.filter { !_animation.value.hasKey(it, f) }
+        if (need.isEmpty()) { _keySel.value = targets.mapTo(HashSet()) { it to f }; _state.value = UiState.Message("На этом кадре ключ кости уже есть"); return }
         checkpoint("bonekey", force = true)
-        val t = effective(b.id)
-        override.remove(b.id)
-        _animation.value = _animation.value.withKey(b.id, f, t)
-        _keySel.value = setOf(b.id to f)
+        val poses = need.associateWith { effective(it) }
+        _animation.value = com.vibetoon.domain.anim.BoneChainKeys.keyAll(_animation.value, need, f, { poses.getValue(it) }, { boneRestPose(it) })
+        need.forEach { override.remove(it) }
+        _keySel.value = targets.mapTo(HashSet()) { it to f }
         pushScene()
         refreshInspector()
         markDirty()
+        if (need.size > 1) _state.value = UiState.Message("Ключи костей на кадре: {}".replace("{}", need.size.toString()))
+    }
+
+    /** Спринт 41: настройка «Ключи всей цепочке костей» (по умолчанию вкл.). */
+    private fun boneChainKeysOn(): Boolean = getApplication<Application>()
+        .getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("bone_chain_keys", true)
+
+    /** Кости, которым ставится ключ вместе с [b]: выбранные кости и (настройка) вся цепочка [b]. */
+    private fun boneKeyTargets(b: Bone): List<Int> {
+        val ids = _bones.value.map { it.id }
+        return com.vibetoon.domain.anim.BoneChainKeys.targets(b.id, _selection.value, _links.value, ids, boneChainKeysOn())
+    }
+
+    /** Поза кости вне ключей (кадры до первого ключа): поза покоя из base, иначе без смещения. */
+    private fun boneRestPose(id: Int): LayerTransform = base[id] ?: LayerTransform()
+
+    /**
+     * Спринт 41: правка позы кости в режиме «Анимация» при включённом «Автодобавлении ключей» - автоключ как в Alight Motion. Перетаскивание кости ставит ключ на
+     * текущем кадре (первый ключ на кадре > 0 - вместе с ключом исходной позы на кадре 0), а кости цепочки и другие
+     * выбранные кости получают ключ своей текущей позы на этом кадре: иерархия не «плывёт» между ключами разных костей.
+     * Раньше без ключа на кадре правка жила только до перемотки (override), а единственный ключ держал позу везде.
+     */
+    private fun storeBoneEdit(b: Bone, t: LayerTransform) {
+        val id = b.id
+        if (t == effective(id)) return
+        // без «Автодобавления ключей» - прежний ручной режим (кнопка «Добавить ключ» ставит ключ цепочке)
+        if (!autoKeyEnabled() || !canAutoKeyTransform(id)) { storeEdit(id, t); return }
+        val f = _frame.value
+        var anim = _animation.value
+        val others = boneKeyTargets(b).filter { it != id && !anim.hasKey(it, f) }
+        if (others.isNotEmpty()) {
+            val poses = others.associateWith { effective(it) }
+            anim = com.vibetoon.domain.anim.BoneChainKeys.keyAll(anim, others, f, { poses.getValue(it) }, { boneRestPose(it) })
+            others.forEach { override.remove(it) }
+        }
+        _animation.value = com.vibetoon.domain.anim.BoneChainKeys.keyAll(anim, listOf(id), f, { t }, { boneRestPose(it) })
+        override.remove(id)
     }
 
     /** «Удалить ключ»: выделенный ключ кости (или ключ на текущем кадре); поза остаётся на месте. */
@@ -11165,14 +11310,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val py = inv.applyY(cx, cy)
         val t = effective(b.id)
         if (grab == 1) {
-            storeEdit(b.id, t.copy(dx = px - b.hx, dy = py - b.hy))
+            storeBoneEdit(b, t.copy(dx = px - b.hx, dy = py - b.hy))
         } else {
             val want = kotlin.math.atan2(py - (b.hy + t.dy), px - (b.hx + t.dx)) - kotlin.math.atan2(b.ty - b.hy, b.tx - b.hx)
             var diff = want - t.rotation
             val twoPi = (2 * Math.PI).toFloat()
             while (diff > Math.PI) diff -= twoPi
             while (diff < -Math.PI) diff += twoPi
-            storeEdit(b.id, t.copy(rotation = t.rotation + diff))
+            storeBoneEdit(b, t.copy(rotation = t.rotation + diff))
         }
     }
 
@@ -12427,6 +12572,47 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val export: StateFlow<ExportUi> = _export.asStateFlow()
     private var exportCancel = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    // ---------------------------------------------------------------- Спринт 41: импорт и экспорт в фоне
+    // Служба переднего плана (com.vibetoon.work.BackgroundWorkService) держит процесс, пока идёт экспорт или импорт:
+    // свернули приложение - работа продолжается (экспорт MP4/GIF/PNG рисуется во внеэкранном контексте GL), в шторке
+    // виден процент. init стоит ПОСЛЕ объявления _export (порядок инициализации).
+    private var exportWork = 0L
+    private var exportWorkStarted = false
+
+    init {
+        viewModelScope.launch {
+            _export.collect { st ->
+                val ctx = getApplication<Application>()
+                if (st is ExportUi.Running) {
+                    if (!exportWorkStarted) {
+                        exportWorkStarted = true
+                        exportWork = com.vibetoon.work.BackgroundWork.begin(ctx, "Экспорт")   // 0 - фон выключен в настройках
+                        RenderHost.view?.backgroundWorkChanged()
+                    }
+                    com.vibetoon.work.BackgroundWork.progress(ctx, exportWork, st.done, st.total)
+                } else if (exportWorkStarted) {
+                    exportWorkStarted = false
+                    com.vibetoon.work.BackgroundWork.end(ctx, exportWork)
+                    exportWork = 0L
+                }
+            }
+        }
+    }
+
+    /** Импорт (видео, GIF, секвенции, PSD, медиа) под службой фоновой работы: не сбрасывается при сворачивании. */
+    private fun launchImport(block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit): kotlinx.coroutines.Job {
+        val ctx = getApplication<Application>()
+        val work = com.vibetoon.work.BackgroundWork.begin(ctx, "Импорт")
+        val job = viewModelScope.launch(block = block)
+        job.invokeOnCompletion {
+            android.os.Handler(android.os.Looper.getMainLooper()).post { com.vibetoon.work.BackgroundWork.end(ctx, work) }
+        }
+        return job
+    }
+
+    /** GL можно использовать: приложение на экране или в фоне работает служба импорта/экспорта. */
+    private fun glUsable(): Boolean = !appBackground || RenderHost.view?.backgroundRenderAllowed == true
+
     /** Размер кадра MOV (спринт 32): пропорции холста, чётные стороны, без выравнивания по 16 - PNG его не требует. */
     fun exportEvenSize(shortSide: Int): Pair<Int, Int> = ExportMath.size(canvasW, canvasH, shortSide)
 
@@ -12736,13 +12922,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun captureExportFrame(scene: SceneData?, transparent: Boolean, w: Int, h: Int, cancel: java.util.concurrent.atomic.AtomicBoolean): ByteArray? {
         while (true) {
-            while (appBackground) {
+            while (!glUsable()) {
                 if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
                 kotlinx.coroutines.delay(200)
             }
             if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
             val bytes = captureNow(scene, transparent, w, h)
             if (bytes != null || !appBackground) return bytes
+            kotlinx.coroutines.delay(200)   // в фоне снимок не вышел (переход состояния): повтор без занятого цикла
         }
     }
     fun dismissExport() { if (_export.value !is ExportUi.Running) _export.value = ExportUi.Idle }

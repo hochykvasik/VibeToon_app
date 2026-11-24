@@ -20,17 +20,12 @@ import com.vibetoon.ui.i18n.Text
 /** Первый запуск: язык, тема и акцентный цвет. Выбор применяется сразу (предпросмотр прямо в окне) и сохраняется кнопкой «Начать работу». */
 @Composable
 fun WelcomeDialog(s: AppSettings) {
-    AlertDialog(
-        onDismissRequest = {},
-        modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(0.9f),
-        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false, usePlatformDefaultWidth = false),
-        title = { Text("Добро пожаловать в VibeToon") },
-        text = {
-            Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
-                Text("Настройте внешний вид. Всё можно изменить позже в «Настройках» → «Внешний вид».", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
-                AppearanceControls(s)
-            }
-        },
-        confirmButton = { Button({ s.onboarded = true; s.save() }) { Text("Начать работу") } }
-    )
+    // спринт 41: адаптивное окно (телефон в альбомной ориентации, планшет), закрывается только кнопкой
+    com.vibetoon.ui.shell.AdaptiveDialog(
+        onDismissRequest = {}, title = "Добро пожаловать в VibeToon",
+        buttons = { Button({ s.onboarded = true; s.save() }) { Text("Начать работу") } }
+    ) {
+        Text("Настройте внешний вид. Всё можно изменить позже в «Настройках» → «Внешний вид».", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
+        AppearanceControls(s)
+    }
 }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -64,9 +65,10 @@ private val Pink = Color(0xFFE8658A)
 @Composable
 fun EffectLibraryDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
     var cat by remember { mutableStateOf<EffectCategory?>(null) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = onDismiss, properties = com.vibetoon.ui.shell.fullWindowDialogProperties()) {
+        com.vibetoon.ui.shell.FullWindowDialogSetup()   // спринт 41: окно ровно по экрану, отступы - от вставок
         Surface(Modifier.fillMaxSize().motionAppear(), color = Navy) {
-            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.ArrowBack, com.vibetoon.ui.i18n.L("Назад"), tint = Color.White) }
                     Text("Библиотека эффектов", color = Color.White, fontSize = 19.sp, modifier = Modifier.padding(start = 4.dp))
@@ -76,8 +78,9 @@ fun EffectLibraryDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
                     for (c in EffectCategory.values()) FilterChip(selected = cat == c, onClick = { cat = c }, label = { Text(c.title) })
                 }
                 val items = EffectMath.DEFS.filter { cat == null || it.category == cat }
+                // спринт 41: колонки по реальной ширине окна - на телефоне 2-3 карточки, на планшете больше, без обрезки
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(118.dp),
+                    columns = GridCells.Adaptive(104.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize()

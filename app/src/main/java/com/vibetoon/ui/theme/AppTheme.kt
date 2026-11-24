@@ -134,6 +134,15 @@ class AppSettings(context: Context) {
     var importIntoDrawing by mutableStateOf(p.getBoolean("import_into_drawing", false))
     fun saveImport() { p.edit().putBoolean("import_images_as_symbols", importImagesAsSymbols).putBoolean("import_resolution_limit", resolutionLimit)
         .putBoolean("import_layer_locks", importLayerLocks).putBoolean("import_text_as_pixels", importTextAsPixels).putBoolean("import_into_drawing", importIntoDrawing).apply() }
+    /** Спринт 41: проект продлевается под длину добавленного аудио и видео (по умолчанию вкл.). */
+    var autoExtendMedia by mutableStateOf(p.getBoolean("auto_extend_media", true))
+    /** Спринт 41: импорт и экспорт видео продолжаются в фоне (служба с уведомлением; по умолчанию вкл.). */
+    var backgroundWork by mutableStateOf(p.getBoolean("background_work", true))
+    /** Спринт 41: «Добавить ключ» и автоключ кости ставят ключи всей цепочке (родители и дочерние кости). */
+    var boneChainKeys by mutableStateOf(p.getBoolean("bone_chain_keys", true))
+    fun saveSprint41() { p.edit().putBoolean("auto_extend_media", autoExtendMedia).putBoolean("background_work", backgroundWork).putBoolean("bone_chain_keys", boneChainKeys).apply() }
+    // ключи есть в Manual Backup с первого запуска (копия переносит только записанные настройки)
+    init { if (!p.contains("auto_extend_media") || !p.contains("background_work") || !p.contains("bone_chain_keys")) saveSprint41() }
     var tap2Undo by mutableStateOf(p.getBoolean("tap2", false))
     var tap3Redo by mutableStateOf(p.getBoolean("tap3", false))
     fun saveGestures() { p.edit().putBoolean("tap2", tap2Undo).putBoolean("tap3", tap3Redo).apply() }
@@ -245,6 +254,9 @@ class AppSettings(context: Context) {
         boneColors = p.getBoolean("bone_colors", false)
         importImagesAsSymbols = p.getBoolean("import_images_as_symbols", false)
         resolutionLimit = p.getBoolean("import_resolution_limit", false)
+        autoExtendMedia = p.getBoolean("auto_extend_media", true)
+        backgroundWork = p.getBoolean("background_work", true)
+        boneChainKeys = p.getBoolean("bone_chain_keys", true)
         importLayerLocks = p.getBoolean("import_layer_locks", false)
         importTextAsPixels = p.getBoolean("import_text_as_pixels", true)
         importIntoDrawing = p.getBoolean("import_into_drawing", false)

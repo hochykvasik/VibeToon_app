@@ -1664,4 +1664,20 @@ Out of Pegs: соседние рисунки стоят там, где слой 
 Каллиграфия|Calligraphy
 Перетаскивание слоёв выключено во время поиска и фильтра|Layer dragging is off while searching or filtering
 Перетащить слой|Drag layer
+Ключи костей на кадре: {}|Bone keys on frame: {}
+Ключ и автоключ - всей цепочке кости и другим выбранным костям|Key and auto-key: the whole bone chain and other selected bones
+Ключ - выбранным костям|Key: selected bones
+Продлевать проект под аудио и видео|Extend project for audio and video
+Импорт и экспорт в фоне|Background import and export
+Ключи всей цепочке костей|Keys for the whole bone chain
+Слои, кости в режиме анимации и эффекты: первая правка на кадре > 0 ставит исходный ключ на кадре 0. Деформации Mesh/Warp/перспективы/пинов ключуются всегда, когда включена анимация (FX); ретайминг не поддерживается|Layers, bones in animation mode and effects: the first edit on a frame > 0 adds the original key on frame 0. Mesh/Warp/perspective/pin deformations are always keyed when animation (FX) is on; retiming is not supported
+«Добавить ключ» и автоключ кости фиксируют позу всей цепочки (например, плечо, предплечье и кисть) и других выбранных костей|"Add Key" and bone auto-key lock the pose of the whole chain (e.g. upper arm, forearm and hand) and other selected bones
+Импорт и экспорт видео продолжаются, если свернуть приложение: идёт служба с уведомлением о ходе работы|Video import and export continue when the app is minimized: a service runs with a progress notification
+Если добавленное аудио или видео длиннее проекта, проект продлевается до его конца (не дольше предела длительности); Undo отменяет и продление|If added audio or video is longer than the project, the project is extended to its end (up to the duration limit); Undo also reverts the extension
+Длительность (мин:сек)|Duration (min:sec)
+Например 1:30 или 0:05:12 (мин:сек:кадры)|For example 1:30 or 0:05:12 (min:sec:frames)
+Всего кадров|Total frames
+Наибольшая длительность при этой частоте: {}|Longest duration at this frame rate: {}
+Импорт и экспорт|Import and export
+Работа продолжается в фоне|Work continues in the background
 """

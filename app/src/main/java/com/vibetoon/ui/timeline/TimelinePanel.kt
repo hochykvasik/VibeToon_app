@@ -222,9 +222,12 @@ fun TimelinePanel(
     }
     val markers by vm.markers.collectAsStateWithLifecycle()
     // Масштаб таймлайна: dp на кадр; меняется щипком двумя пальцами
-    var frameDp by remember { mutableFloatStateOf(DEFAULT_FRAME_DP) }
+    var frameDpRaw by remember { mutableFloatStateOf(DEFAULT_FRAME_DP) }
     val hScroll = rememberScrollState()
     val density = LocalDensity.current
+    // Спринт 41: длинные проекты (до 72 000 кадров) - масштаб ограничен так, чтобы ширина полосы помещалась в Compose
+    val zoomDuration by rememberUpdatedState(duration)
+    val frameDp = com.vibetoon.domain.anim.TimelineZoom.clamp(frameDpRaw, duration, density.density, MIN_FRAME_DP, MAX_FRAME_DP)
     val frameWPx = with(density) { frameDp.dp.toPx() }
     val frameW = frameDp.dp
     val frameNow = frameS
@@ -251,10 +254,11 @@ fun TimelinePanel(
                         if (down.size >= 2) {
                             val d = (down[0].position - down[1].position).getDistance()
                             if (last > 0f && d > 0f) {
-                                val next = (frameDp * d / last).coerceIn(MIN_FRAME_DP, MAX_FRAME_DP)
-                                if (next != frameDp) {
-                                    anchorX = frameNow.value * frameDp.dp.toPx() - hScroll.value
-                                    frameDp = next
+                                val cur = com.vibetoon.domain.anim.TimelineZoom.clamp(frameDpRaw, zoomDuration, density.density, MIN_FRAME_DP, MAX_FRAME_DP)
+                                val next = com.vibetoon.domain.anim.TimelineZoom.clamp(cur * d / last, zoomDuration, density.density, MIN_FRAME_DP, MAX_FRAME_DP)
+                                if (next != cur) {
+                                    anchorX = frameNow.value * cur.dp.toPx() - hScroll.value
+                                    frameDpRaw = next
                                 }
                             }
                             last = d
@@ -451,9 +455,9 @@ fun TimelinePanel(
         LaunchedEffect(activeSc?.id, activeSc?.length, viewportPx) {
             val sc = activeSc ?: return@LaunchedEffect
             if (viewportPx <= 0) return@LaunchedEffect
-            val dp = (viewportPx / density.density / sc.length.coerceAtLeast(1)).coerceIn(MIN_FRAME_DP, MAX_FRAME_DP)
+            val dp = com.vibetoon.domain.anim.TimelineZoom.clamp(viewportPx / density.density / sc.length.coerceAtLeast(1), duration, density.density, MIN_FRAME_DP, MAX_FRAME_DP)
             anchorX = 0f
-            frameDp = dp
+            frameDpRaw = dp
             androidx.compose.runtime.withFrameNanos { }
             androidx.compose.runtime.withFrameNanos { }
             hScroll.scrollTo((sc.start * with(density) { dp.dp.toPx() }).toInt().coerceIn(0, hScroll.maxValue))
@@ -1224,53 +1228,90 @@ private fun FrameField(frame: Int, fps: Int, max: Int, onFrame: (Int) -> Unit) {
     )
 }
 
-/** Настройки таймлайна: общая длительность (кадры) и FPS 1–120 (спринт 32: пресеты + любое значение). */
+/**
+ * Настройки таймлайна (спринт 41): длительность временем «ММ:СС» (или «ММ:СС:КК») и кадрами - поля связаны; FPS 1–120
+ * пресетами и вводом. Смена FPS сохраняет длительность по времени. Предел - [TimeFormat.MAX_DURATION_FRAMES] кадров
+ * (при 24 fps это 50 минут). Окно адаптивное: помещается на телефон и планшет, содержимое прокручивается.
+ */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun TimelineSettingsDialog(duration: Int, fps: Int, onApply: (Int, Int) -> Unit, onDismiss: () -> Unit) {
     var frames by remember { mutableStateOf(duration.toString()) }
     var rate by remember { mutableStateOf(fps.toString()) }
-    val d = frames.trim().toIntOrNull()?.takeIf { it in 1..TimeFormat.MAX_DURATION_FRAMES }
+    var time by remember { mutableStateOf(TimeFormat.durationText(duration, fps)) }
     val f = com.vibetoon.domain.anim.FrameRates.parse(rate)
+    val d = frames.trim().toIntOrNull()?.takeIf { it in 1..TimeFormat.MAX_DURATION_FRAMES }
+    val timeOk = f != null && TimeFormat.parseDuration(time, f)?.let { it in 1..TimeFormat.MAX_DURATION_FRAMES } == true
     // частота экрана: при fps выше неё просмотр пропускает кадры (воспроизведение идёт по времени), экспорт - нет
     val view = androidx.compose.ui.platform.LocalView.current
     val refresh = remember(view) { runCatching { view.display?.refreshRate }.getOrNull() ?: 60f }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Настройки таймлайна") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
-                OutlinedTextField(
-                    value = frames, onValueChange = { frames = it.filter(Char::isDigit).take(5) },
-                    label = { Text("Всего кадров (до ${TimeFormat.MAX_DURATION_FRAMES})") }, singleLine = true,
-                    isError = d == null,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
-                OutlinedTextField(
-                    value = rate, onValueChange = { rate = it.filter(Char::isDigit).take(3) },
-                    label = { Text("FPS (1-${TimeFormat.MAX_FPS})") }, singleLine = true,
-                    isError = f == null,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
-                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                    for (o in com.vibetoon.domain.anim.FrameRates.PROJECT_PRESETS) {
-                        FilterChip(selected = rate == o.toString(), onClick = { rate = o.toString() }, label = { Text("$o", maxLines = 1, softWrap = false) })
-                    }
-                }
-                Text(
-                    if (d != null && f != null) "Длительность: ${TimeFormat.format(d, f)} (мин:сек:кадры)" else "Введите числа",
-                    fontSize = 12.sp
-                )
-                if (f != null && com.vibetoon.domain.anim.FrameRates.exceedsDisplay(f, refresh))
-                    Text("Экран показывает до {} кадров в секунду: при просмотре часть кадров пропускается, в экспорт попадают все"
-                        .replace("{}", com.vibetoon.domain.anim.FrameRates.shownPerSecond(f, refresh).toString()),
-                        fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                Text("Ключи остаются на своих номерах кадров.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    fun setRate(text: String) {
+        val old = com.vibetoon.domain.anim.FrameRates.parse(rate)
+        rate = text
+        val now = com.vibetoon.domain.anim.FrameRates.parse(text) ?: return
+        // длительность по времени остаётся прежней: пересчитываем число кадров
+        val cur = frames.trim().toIntOrNull() ?: return
+        if (old != null && old != now) {
+            val n = TimeFormat.reframe(cur, old, now)
+            frames = n.toString(); time = TimeFormat.durationText(n, now)
+        }
+    }
+    com.vibetoon.ui.shell.AdaptiveDialog(
+        onDismissRequest = onDismiss, title = "Настройки таймлайна", maxWidth = 520.dp,
+        buttons = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+            TextButton(onClick = { if (d != null && f != null) { onApply(d, f); onDismiss() } }, enabled = d != null && f != null) { Text("Применить") }
+        }
+    ) {
+        OutlinedTextField(
+            value = time,
+            onValueChange = { t ->
+                time = t.filter { it.isDigit() || it == ':' || it == '.' || it == ',' }.take(12)
+                val n = f?.let { TimeFormat.parseDuration(time, it) }
+                if (n != null) frames = n.toString()
+            },
+            label = { Text("Длительность (мин:сек)") }, singleLine = true, isError = !timeOk,
+            supportingText = { Text("Например 1:30 или 0:05:12 (мин:сек:кадры)", fontSize = 11.sp) },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+        )
+        OutlinedTextField(
+            value = frames,
+            onValueChange = { t ->
+                frames = t.filter(Char::isDigit).take(6)
+                val n = frames.toIntOrNull()
+                if (n != null && f != null && n >= 1) time = TimeFormat.durationText(n, f)
+            },
+            label = { Text("Всего кадров") }, singleLine = true, isError = d == null,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        OutlinedTextField(
+            value = rate, onValueChange = { setRate(it.filter(Char::isDigit).take(3)) },
+            label = { Text("FPS (1-${TimeFormat.MAX_FPS})") }, singleLine = true,
+            isError = f == null, modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            for (o in com.vibetoon.domain.anim.FrameRates.PROJECT_PRESETS) {
+                FilterChip(selected = rate == o.toString(), onClick = { setRate(o.toString()) }, label = { Text("$o", maxLines = 1, softWrap = false) })
             }
-        },
-        confirmButton = { TextButton(onClick = { if (d != null && f != null) { onApply(d, f); onDismiss() } }, enabled = d != null && f != null) { Text("Применить") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
-    )
+        }
+        Text(
+            if (d != null && f != null) "Длительность: ${TimeFormat.format(d, f)} (мин:сек:кадры)" else "Введите числа",
+            fontSize = 12.sp
+        )
+        if (f != null) Text("Наибольшая длительность при этой частоте: {}".replace("{}", TimeFormat.formatDuration(TimeFormat.MAX_DURATION_FRAMES, f)),
+            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+        if (f != null && com.vibetoon.domain.anim.FrameRates.exceedsDisplay(f, refresh))
+            Text("Экран показывает до {} кадров в секунду: при просмотре часть кадров пропускается, в экспорт попадают все"
+                .replace("{}", com.vibetoon.domain.anim.FrameRates.shownPerSecond(f, refresh).toString()),
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+        Text("Ключи остаются на своих номерах кадров.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    }
 }
 
 /** Метка маркера: треугольник остриём вниз, центр ровно на кадре [x], и тонкая линия кадра поверх плейхеда. */

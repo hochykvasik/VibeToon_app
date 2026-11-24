@@ -301,27 +301,136 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     /** Идёт экспорт: кадры редактора не запрашиваются (рендерер в виде экспорта); в конце кадр редактора запрашивается сам. */
     @Volatile private var exportActive = false
 
+    // ---- спринт 41: экспорт продолжается, когда приложение свёрнуто ----
+    /**
+     * Идёт смена состояния GLSurfaceView (пауза, возврат, создание/смена/потеря поверхности, перерисовка). Главный поток
+     * ждёт GL-поток, а тот сначала выполняет всю очередь событий: пока переход не закончился, цепочка экспорта паркуется
+     * (иначе она бесконечно пополняла бы очередь - «Приложение не отвечает»). Под [exportLock].
+     */
+    private var transitions = 0
+    /** Внеэкранный контекст в фоне не получился (контекст потерян, нет pbuffer): до возврата - парковка. */
+    @Volatile private var backgroundUnavailable = false
+    private var bgDisplay: android.opengl.EGLDisplay? = null
+    private var bgContext: android.opengl.EGLContext? = null
+    private var bgSurface: android.opengl.EGLSurface? = null
+
+    /** Можно ли рисовать в фоне: идёт служба фоновой работы (импорт/экспорт) и настройка не выключена. */
+    val backgroundRenderAllowed: Boolean get() = com.vibetoon.work.BackgroundWork.running
+
+    private fun mustParkLocked(): Boolean =
+        com.vibetoon.domain.export.BackgroundRender.mustPark(transitions, surfacePaused, !backgroundUnavailable, backgroundRenderAllowed)
+
+    private fun mustPark(): Boolean = synchronized(exportLock) { mustParkLocked() }
+
+    private fun beginTransition() { synchronized(exportLock) { transitions++ } }
+
+    private fun endTransition() {
+        val kick = synchronized(exportLock) {
+            transitions = (transitions - 1).coerceAtLeast(0)
+            if (exportParked && !mustParkLocked()) { exportParked = false; true } else false
+        }
+        if (kick) queueEvent { exportTask() }   // экспорт продолжается с того же кадра (в фоне - во внеэкранном контексте)
+    }
+
+    private inline fun transition(block: () -> Unit) {
+        beginTransition()
+        try { block() } finally { endTransition() }
+    }
+
     override fun onPause() {
         // Флаг до super.onPause: очередная задача экспорта увидит паузу и «запаркуется», очередь GL опустеет и
         // GLSurfaceView подтвердит паузу через один кадр, а не после всего экспорта (раньше экспорт приходилось отменять).
         synchronized(exportLock) { surfacePaused = true }
-        super.onPause()
+        transition { super.onPause() }
     }
 
     override fun onResume() {
-        super.onResume()
-        val kick: Boolean
-        synchronized(exportLock) {
-            surfacePaused = false
-            kick = exportParked
-            exportParked = false
+        transition {
+            super.onResume()
+            synchronized(exportLock) { surfacePaused = false }
+            backgroundUnavailable = false
         }
-        if (kick) queueEvent { exportTask() }   // экспорт продолжается с того же кадра
+    }
+
+    override fun surfaceCreated(holder: android.view.SurfaceHolder) = transition { super.surfaceCreated(holder) }
+    override fun surfaceDestroyed(holder: android.view.SurfaceHolder) = transition { super.surfaceDestroyed(holder) }
+    override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, w: Int, h: Int) = transition { super.surfaceChanged(holder, format, w, h) }
+    @Deprecated("GLSurfaceView API")
+    override fun surfaceRedrawNeeded(holder: android.view.SurfaceHolder) = transition { @Suppress("DEPRECATION") super.surfaceRedrawNeeded(holder) }
+
+    /** GL-поток, контекст текущий: запомнить контекст для фоновой работы (меняется при пересоздании контекста). */
+    private fun rememberEgl() {
+        val d = android.opengl.EGL14.eglGetCurrentDisplay()
+        val c = android.opengl.EGL14.eglGetCurrentContext()
+        if (d == android.opengl.EGL14.EGL_NO_DISPLAY || c == android.opengl.EGL14.EGL_NO_CONTEXT) return
+        if (c != bgContext) {
+            bgSurface?.let { old -> bgDisplay?.let { runCatching { android.opengl.EGL14.eglDestroySurface(it, old) } } }
+            bgSurface = null
+        }
+        bgDisplay = d; bgContext = c
+    }
+
+    /**
+     * GL-поток: в фоне (поверхность окна снята, контекст сохранён - preserveEGLContextOnPause) делает контекст текущим
+     * с pbuffer 1x1 или без поверхности (EGL_KHR_surfaceless_context). Экспорт рисует в свои FBO и в Surface кодека,
+     * поэтому окно ему не нужно. false - не вышло, работа ждёт возврата.
+     */
+    private fun ensureBackgroundCurrent(): Boolean {
+        if (android.opengl.EGL14.eglGetCurrentContext() != android.opengl.EGL14.EGL_NO_CONTEXT) return true
+        val d = bgDisplay ?: return false
+        val c = bgContext ?: return false
+        val surf = bgSurface ?: run {
+            val id = IntArray(1); val n = IntArray(1); val cfg = arrayOfNulls<android.opengl.EGLConfig>(1)
+            val pb = if (android.opengl.EGL14.eglQueryContext(d, c, android.opengl.EGL14.EGL_CONFIG_ID, id, 0) &&
+                android.opengl.EGL14.eglChooseConfig(d, intArrayOf(android.opengl.EGL14.EGL_CONFIG_ID, id[0], android.opengl.EGL14.EGL_NONE), 0, cfg, 0, 1, n, 0) && n[0] > 0)
+                android.opengl.EGL14.eglCreatePbufferSurface(d, cfg[0], intArrayOf(android.opengl.EGL14.EGL_WIDTH, 1, android.opengl.EGL14.EGL_HEIGHT, 1, android.opengl.EGL14.EGL_NONE), 0)
+            else android.opengl.EGL14.EGL_NO_SURFACE
+            val ext = android.opengl.EGL14.eglQueryString(d, android.opengl.EGL14.EGL_EXTENSIONS).orEmpty()
+            if (pb == android.opengl.EGL14.EGL_NO_SURFACE && "EGL_KHR_surfaceless_context" !in ext) { backgroundUnavailable = true; return false }
+            pb.also { bgSurface = it }
+        }
+        val ok = android.opengl.EGL14.eglMakeCurrent(d, surf, surf, c)
+        if (!ok) { Log.w("VT/GL", "background context unavailable: ${android.opengl.EGL14.eglGetError()}"); backgroundUnavailable = true }
+        return ok
     }
 
     override fun requestRender() {
         if (exportActive) return
         super.requestRender()
+    }
+
+    // ---- спринт 41: размер поверхности не меняется на каждом кадре анимации панелей ----
+    /**
+     * Выезд/скрытие таймлайна и нижнего меню меняет высоту вида на каждом кадре анимации. Раньше каждая смена
+     * пересоздавала буфер окна и все цели рендера (setViewport -> releaseTargets, сброс кэша эффектов), и пока
+     * SurfaceFlinger показывал буфер старого размера, посреди экрана появлялась перевёрнутая копия холста. Теперь буфер
+     * держит последний устоявшийся размер (SurfaceHolder.setFixedSize; на время анимации система просто масштабирует
+     * его), а новый размер применяется один раз - когда вид перестал меняться [RESIZE_SETTLE_MS] мс.
+     */
+    private var bufferW = 0
+    private var bufferH = 0
+    private val applySettledSize = Runnable {
+        val w = width; val h = height
+        if (w > 0 && h > 0 && (w != bufferW || h != bufferH)) {
+            bufferW = w; bufferH = h
+            holder.setFixedSize(w, h)
+            requestRender()
+        }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w <= 0 || h <= 0) return
+        removeCallbacks(applySettledSize)
+        if (com.vibetoon.domain.render.ResizeSettle.applyNow(bufferW, bufferH, w, h)) {
+            bufferW = w; bufferH = h
+            holder.setFixedSize(w, h)
+        } else postDelayed(applySettledSize, com.vibetoon.domain.render.ResizeSettle.SETTLE_MS)
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(applySettledSize)
+        super.onDetachedFromWindow()
     }
 
     /** View инициализирована не сразу: загрузка проекта ждёт реального создания GL-контекста. */
@@ -391,6 +500,9 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     }
 
     /** Пиксели слоя (см. RenderNative.layerPixels); callback вызывается ИЗ GL-потока. */
+    /** Спринт 41: синхронное чтение пикселей слоя - ТОЛЬКО из GL-потока (событие queueEvent). */
+    fun layerPixelsNow(layerId: Int): ByteArray? = vtRenderer.layerPixels(layerId)
+
     fun layerPixels(layerId: Int, callback: (ByteArray?) -> Unit) {
         queueEvent { callback(vtRenderer.layerPixels(layerId)) }
     }
@@ -504,9 +616,11 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
 
     /** Снимок кадра холста w x h (RGBA premultiplied, строка 0 - низ); [callback] из GL-потока. */
     fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int = 0, callback: (ByteArray?) -> Unit) {
-        if (surfacePaused) { callback(null); return }
+        if (mustPark()) { callback(null); return }
         queueEvent {
-            if (surfacePaused) { callback(null); return@queueEvent }
+            // спринт 41: в фоне (идёт служба импорта/экспорта) снимок делается во внеэкранном контексте
+            if (mustPark() || (surfacePaused && !ensureBackgroundCurrent())) { callback(null); return@queueEvent }
+            if (!surfacePaused) rememberEgl()
             callback(vtRenderer.capture(scene, width, height, transparent, background, flags)); requestRender()
         }
     }
@@ -535,7 +649,8 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     ) {
         exportActive = true
         queueEvent {
-            vtRenderer.startExport(spec, background, sceneAt, onProgress, cancel, { surfacePaused }) { r ->
+            if (!surfacePaused) rememberEgl()   // спринт 41: контекст для продолжения в фоне
+            vtRenderer.startExport(spec, background, sceneAt, onProgress, cancel, { exportInterrupted() }) { r ->
                 exportActive = false
                 onDone(r)
                 super.requestRender()   // кадр редактора после экспорта
@@ -544,16 +659,30 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
         }
     }
 
-    /** Одна задача экспорта (GL-поток); ставит следующую или паркует цепочку на паузе. */
+    /** Кадр экспорта сейчас сделать нельзя: переход состояния или фон без внеэкранного контекста. */
+    private fun exportInterrupted(): Boolean =
+        mustPark() || (surfacePaused && android.opengl.EGL14.eglGetCurrentContext() == android.opengl.EGL14.EGL_NO_CONTEXT)
+
+    /**
+     * Одна задача экспорта (GL-поток); ставит следующую или паркует цепочку. Спринт 41: в фоне при работающей службе
+     * цепочка не паркуется, а идёт во внеэкранном контексте; паркуется только на время переходов состояния.
+     */
     private fun exportTask() {
-        val paused = synchronized(exportLock) { surfacePaused }
-        if (vtRenderer.exportStep(paused)) { queueEvent { exportTask() }; return }
+        var park = mustPark()
+        if (!park && surfacePaused && !ensureBackgroundCurrent()) park = true
+        if (vtRenderer.exportStep(park)) { queueEvent { exportTask() }; return }
         if (!vtRenderer.exportRunning) return
-        // Задача ничего не сделала (пауза): ждём onResume; если он уже прошёл - продолжаем сразу.
+        // Задача ничего не сделала (пауза/переход): ждём конца перехода или возврата; если он уже прошёл - продолжаем.
         val resumeNow = synchronized(exportLock) {
-            if (surfacePaused) { exportParked = true; false } else true
+            if (mustParkLocked() || (surfacePaused && backgroundUnavailable)) { exportParked = true; false } else true
         }
         if (resumeNow) queueEvent { exportTask() }
+    }
+
+    /** Спринт 41: служба фоновой работы запущена/остановлена - запаркованный в фоне экспорт продолжается или ждёт. */
+    fun backgroundWorkChanged() {
+        val kick = synchronized(exportLock) { if (exportParked && !mustParkLocked()) { exportParked = false; true } else false }
+        if (kick) queueEvent { exportTask() }
     }
 
     /** Отмена экспорта, пока цепочка запаркована (приложение свёрнуто): одна задача освободит кодек. */
