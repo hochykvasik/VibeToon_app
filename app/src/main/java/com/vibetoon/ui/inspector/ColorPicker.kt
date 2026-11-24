@@ -1,6 +1,7 @@
 package com.vibetoon.ui.inspector
 
 import androidx.compose.material.icons.filled.Colorize
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -45,6 +46,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.vibetoon.domain.paint.ColorPalette
 import com.vibetoon.domain.paint.ColorModels
+import com.vibetoon.domain.paint.PaletteExchange
+import com.vibetoon.domain.paint.UserPalette
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.FilterChip
@@ -72,7 +75,8 @@ fun ColorPickerDialog(
     var sat by remember { mutableFloatStateOf(hsv.s) }
     var value by remember { mutableFloatStateOf(hsv.v) }
     var hex by remember { mutableStateOf(hexOf(initial)) }
-    val prefs = androidx.compose.ui.platform.LocalContext.current.getSharedPreferences("vt_colors", android.content.Context.MODE_PRIVATE)
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val prefs = ctx.getSharedPreferences("vt_colors", android.content.Context.MODE_PRIVATE)
     // Спринт 37: режим «Круг / RGB / HSB» запоминается между открытиями окна
     var mode by remember { mutableStateOf(prefs.getInt("mode", ColorModels.MODE_WHEEL).takeIf { it in ColorModels.MODES } ?: ColorModels.MODE_WHEEL) }
     var palette by remember { mutableStateOf(ColorPalette.decode(prefs.getString("recent", null))) }
@@ -80,6 +84,48 @@ fun ColorPickerDialog(
         palette = ColorPalette.add(palette, c)
         prefs.edit().putString("recent", ColorPalette.encode(palette)).apply()
     }
+    // Спринт 39: свои палитры (в «vt_app» - попадают в резервную копию настроек), импорт/экспорт файлом
+    val appPrefs = ctx.getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+    var palettes by remember { mutableStateOf(PaletteExchange.load(appPrefs.getString(PaletteExchange.PREF_KEY, null))) }
+    var palIndex by remember { mutableStateOf(-1) }   // -1 - последние цвета
+    var palMenu by remember { mutableStateOf(false) }
+    var palMore by remember { mutableStateOf(false) }
+    val appSt = com.vibetoon.ui.theme.LocalAppSettings.current
+    fun notify(ru: String) {
+        android.widget.Toast.makeText(ctx, com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, ru), android.widget.Toast.LENGTH_LONG).show()
+    }
+    fun storePalettes(list: List<UserPalette>) {
+        palettes = list
+        appPrefs.edit().putString(PaletteExchange.PREF_KEY, PaletteExchange.encode(list)).apply()
+    }
+    val palOut = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            val list = palettes.ifEmpty { listOf(UserPalette(com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, "Последние цвета"), palette)) }
+            val ok = list.any { it.colors.isNotEmpty() } && runCatching { ctx.contentResolver.openOutputStream(uri, "wt")?.use { it.write(PaletteExchange.encode(list).toByteArray()) } != null }.getOrDefault(false)
+            notify(if (ok) "Палитры экспортированы: ${list.size}" else "Не удалось сохранить файл палитры")
+        }
+    }
+    val palIn = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val text = runCatching { ctx.contentResolver.openInputStream(uri)?.use { com.vibetoon.domain.paint.BrushExchange.readLimited(it) ?: "\u0000too-big" } }.getOrNull()
+            when {
+                text == null -> notify("Не удалось открыть файл")
+                text == "\u0000too-big" -> notify(com.vibetoon.domain.paint.ExchangeError.TOO_BIG.ru)
+                else -> {
+                    val r = PaletteExchange.decode(text, com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, "Палитра"))
+                    if (r.ok) {
+                        val before = palettes.size
+                        val merged = PaletteExchange.merge(palettes, r.items)
+                        storePalettes(merged)
+                        if (merged.size > before) palIndex = before   // сразу показываем первую импортированную палитру
+                        val added = merged.size - before
+                        notify(if (added < r.items.size) "Импортировано палитр: $added, не поместилось: ${r.items.size - added} (не больше 50)" else PaletteExchange.report(r))
+                    } else notify(PaletteExchange.report(r))
+                }
+            }
+        }
+    }
+    val shownColors = palettes.getOrNull(palIndex)?.colors ?: palette
 
     fun current(): Long = ColorModels.argb(hue.coerceIn(0f, 360f), sat.coerceIn(0f, 1f), value.coerceIn(0f, 1f))
     /** Готовый цвет (палитра, HEX, RGB): оттенок серого/чёрного не сбрасывается в 0. */
@@ -190,9 +236,49 @@ fun ColorPickerDialog(
                             modifier = Modifier.weight(1f)
                         )
                     }
+                    // спринт 39: выбор палитры (последние цвета или своя) и меню «Импорт / Экспорт»
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.weight(1f)) {
+                            OutlinedButton(onClick = { palMenu = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(30.dp)) {
+                                com.vibetoon.ui.DropText(palettes.getOrNull(palIndex)?.name ?: "Последние цвета", 12.sp)
+                            }
+                            androidx.compose.material3.DropdownMenu(expanded = palMenu, onDismissRequest = { palMenu = false }) {
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Последние цвета") }, onClick = { palMenu = false; palIndex = -1 })
+                                for ((i, pal) in palettes.withIndex())
+                                    androidx.compose.material3.DropdownMenuItem(text = { Text("${pal.name} (${pal.colors.size})") }, onClick = { palMenu = false; palIndex = i })
+                            }
+                        }
+                        Box {
+                            androidx.compose.material3.IconButton(onClick = { palMore = true }, modifier = Modifier.size(30.dp)) {
+                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.MoreVert, com.vibetoon.ui.i18n.L("Палитры"))
+                            }
+                            androidx.compose.material3.DropdownMenu(expanded = palMore, onDismissRequest = { palMore = false }) {
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Новая палитра из последних цветов") }, enabled = palette.isNotEmpty() && palettes.size < PaletteExchange.MAX_PALETTES, onClick = {
+                                    palMore = false
+                                    val name = com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, "Палитра") + " ${palettes.size + 1}"
+                                    storePalettes(PaletteExchange.merge(palettes, listOf(UserPalette(name, palette))))
+                                    palIndex = palettes.size - 1
+                                    notify("Палитра сохранена")
+                                })
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Импорт палитры…") }, onClick = { palMore = false; palIn.launch(arrayOf("*/*")) })
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Экспорт палитр…") }, onClick = { palMore = false; palOut.launch("vibetoon-palettes.json") })
+                                if (palIndex >= 0) androidx.compose.material3.DropdownMenuItem(text = { Text("Удалить палитру") }, onClick = {
+                                    palMore = false
+                                    storePalettes(palettes.filterIndexed { i, _ -> i != palIndex })
+                                    palIndex = -1
+                                    notify("Палитра удалена")
+                                })
+                            }
+                        }
+                    }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(onClick = { saveColor(current()) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("+") }
-                        for (c in palette) {
+                        OutlinedButton(onClick = {
+                            val pal = palettes.getOrNull(palIndex)
+                            if (pal == null) saveColor(current())
+                            else if (pal.colors.size >= PaletteExchange.MAX_COLORS) notify("В палитре уже 64 цвета")
+                            else storePalettes(palettes.mapIndexed { i, p -> if (i == palIndex) p.copy(colors = (p.colors + (current() and 0xFFFFFFFFL)).distinct()) else p })
+                        }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("+") }
+                        for (c in shownColors) {
                             Box(
                                 Modifier.size(28.dp).clip(CircleShape).background(Color(c.toInt() or 0xFF000000.toInt()))
                                     .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), CircleShape)

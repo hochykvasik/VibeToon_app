@@ -320,6 +320,9 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(6.dp)) { LiquifyToolRow(vm) }
                                 }
                                 val brushMenuOpen by vm.brushMenu.collectAsStateWithLifecycle()
+                                // спринт 39: файлы кистей - лаунчеры живут вне Popup, чтобы результат выбора файла не терялся
+                                val brushesOut = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri -> if (uri != null) vm.exportBrushesTo(uri) }
+                                val brushesIn = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.importBrushesFrom(uri) }
                                 if (brushMenuOpen && paintOn != null && !full && !boneMode && !mesh) {
                                     // Popup не обрезается холстом: на низком экране список кистей виден целиком
                                     val off = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(6.dp.roundToPx(), 56.dp.roundToPx()) }
@@ -332,7 +335,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                         androidx.compose.animation.AnimatedVisibility(
                                             visibleState = enter,
                                             enter = com.vibetoon.ui.motion.Motions.panelEnter(fromEnd = false)
-                                        ) { BrushMenu(vm) }
+                                        ) { BrushMenu(vm, onImport = { brushesIn.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, onExport = { brushesOut.launch("vibetoon-brushes.json") }) }
                                     }
                                 }
                                 androidx.compose.animation.AnimatedVisibility(
@@ -617,12 +620,14 @@ private fun ModeBar(vm: MainViewModel, mesh: Boolean, onMesh: (Boolean) -> Unit)
 
 /** Выезжающая панель кистей: список пресетов с превью S-образного мазка; тап выбирает кисть. */
 @Composable
-private fun BrushMenu(vm: MainViewModel) {
+private fun BrushMenu(vm: MainViewModel, onImport: () -> Unit, onExport: () -> Unit) {
     val tool by vm.paintTool.collectAsStateWithLifecycle()
     val brush by vm.brush.collectAsStateWithLifecycle()
     val eraser by vm.eraser.collectAsStateWithLifecycle()
+    val own by vm.customBrushes.collectAsStateWithLifecycle()
     val current = if (tool == MainViewModel.PaintTool.ERASER) eraser.presetId else brush.presetId
-    val items = vm.presetsForTool()
+    val items = remember(tool, own) { vm.presetsForTool() }
+    var more by remember { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f), shape = RoundedCornerShape(12.dp),
         tonalElevation = 6.dp, shadowElevation = 6.dp, modifier = Modifier.width(300.dp).heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.78f).dp)
@@ -630,8 +635,19 @@ private fun BrushMenu(vm: MainViewModel) {
         Column {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(if (tool == MainViewModel.PaintTool.ERASER) "Ластики" else "Кисти", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.weight(1f))
+                // спринт 39: свои кисти - сохранить текущую, импорт и экспорт файлом (.json)
+                Box {
+                    Icon(Icons.Default.MoreVert, com.vibetoon.ui.i18n.L("Свои кисти"), modifier = Modifier.clickable { more = true }.padding(6.dp).size(22.dp))
+                    DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                        DropdownMenuItem(text = { Text("Сохранить текущую как свою") }, leadingIcon = { Icon(Icons.Default.BookmarkAdd, null) }, onClick = { more = false; vm.saveCurrentBrush() })
+                        DropdownMenuItem(text = { Text("Импорт кистей…") }, leadingIcon = { Icon(Icons.Default.FileOpen, null) }, onClick = { more = false; onImport() })
+                        DropdownMenuItem(text = { Text("Экспорт кистей…") }, leadingIcon = { Icon(Icons.Default.Save, null) }, onClick = { more = false; onExport() })
+                    }
+                }
                 Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Закрыть"), modifier = Modifier.clickable { vm.closeBrushMenu() }.padding(6.dp).size(22.dp))
             }
+            if (own.isEmpty()) Text("Свои кисти: «⋮» → «Сохранить текущую как свою» или «Импорт кистей…»", fontSize = 10.sp, modifier = Modifier.padding(horizontal = 12.dp),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
             androidx.compose.foundation.lazy.LazyColumn {
                 items(items.size) { i ->
                     val pr = items[i]
@@ -649,7 +665,9 @@ private fun BrushMenu(vm: MainViewModel) {
                             val prev = vm.brushPreviews[pr.id]
                             if (prev != null) androidx.compose.foundation.Image(prev, com.vibetoon.ui.i18n.L(pr.title), modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.FillBounds)
                         }
-                        Text(pr.title, fontSize = 13.sp, maxLines = 2, modifier = Modifier.padding(start = 10.dp))
+                        Text(pr.title, fontSize = 13.sp, maxLines = 2, modifier = Modifier.padding(start = 10.dp).weight(1f))
+                        if (vm.isCustomBrush(pr.id)) Icon(Icons.Default.Delete, com.vibetoon.ui.i18n.L("Удалить кисть"), modifier = Modifier.clickable { vm.deleteCustomBrush(pr.id) }.padding(4.dp).size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                     }
                 }
             }
@@ -889,7 +907,7 @@ private fun PaintToolRow(vm: MainViewModel, onColor: () -> Unit) {
             }
         }
         // выезжающая панель кистей: пресет с превью мазка
-        val cur = com.vibetoon.domain.paint.BrushPresets.byId(p.presetId)
+        val cur = vm.presetById(p.presetId)   // спринт 39: и свои кисти
         OutlinedButton(onClick = vm::toggleBrushMenu, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp), modifier = Modifier.height(36.dp)) {
             val prev = vm.brushPreviews[p.presetId]
             if (prev != null) androidx.compose.foundation.Image(prev, null, modifier = Modifier.height(24.dp).width(64.dp), contentScale = androidx.compose.ui.layout.ContentScale.Fit)
@@ -1271,6 +1289,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
     val selection by vm.selection.collectAsStateWithLifecycle()
     val lprops by vm.layerPropsState.collectAsStateWithLifecycle()
     val bonesList by vm.bones.collectAsStateWithLifecycle()
+    val listMode by vm.layersList.collectAsStateWithLifecycle()   // спринт 39: вид «Миниатюры» / «Список»
     var multi by remember { mutableStateOf(false) }   // режим галочек: выбрать несколько слоёв и привязать к кости за одно действие
     var boneMenu by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
@@ -1317,6 +1336,13 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Слоёв: ${rows.size}", fontSize = 12.sp, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            // спринт 39: переключатель вида «Миниатюры» / «Список» (запоминается в настройках)
+            IconButton(onClick = { vm.setLayersListMode(false) }, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.ViewModule, com.vibetoon.ui.i18n.L("Миниатюры"), tint = if (!listMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            }
+            IconButton(onClick = { vm.setLayersListMode(true) }, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.ViewList, com.vibetoon.ui.i18n.L("Список"), tint = if (listMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            }
             IconButton(onClick = { multi = !multi }, modifier = Modifier.size(36.dp)) {
                 Icon(Icons.Default.Checklist, com.vibetoon.ui.i18n.L("Мультивыбор"), tint = if (multi) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
             }
@@ -1361,7 +1387,10 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
             TextButton(onClick = { vm.setParent(null) }) { Text("Отвязать", fontSize = 11.sp) }
             if (bonesList.isEmpty()) Text("Костей нет: создайте кость инструментом «Кости»", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
         }
-        Column(Modifier.weight(1f).fillMaxWidth().onSizeChanged { listViewportPx = it.height }.verticalScroll(listScroll)) {
+        if (listMode) LayerListBody(
+            vm, rows, selection, lprops, bonesList, multi, menuFor, stub, Modifier.weight(1f).fillMaxWidth(),
+            onMenu = { menuFor = it }, onMulti = { multi = true }, onRename = { renameFor = it }, onSymbolMode = { symbolModeFor = it }
+        ) else Column(Modifier.weight(1f).fillMaxWidth().onSizeChanged { listViewportPx = it.height }.verticalScroll(listScroll)) {
             if (rows.isEmpty()) Text(
                 "Слоёв пока нет. Нажмите «+» вверху, чтобы добавить PSD, картинку, видео или текст.",
                 fontSize = 12.sp, modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -1485,41 +1514,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                             modifier = Modifier.size(18.dp).clickable { vm.toggleLocked(l.id) }
                         )
                     }
-                    DropdownMenu(expanded = menuFor == l.id, onDismissRequest = { menuFor = null }) {
-                        for (title in listOf(
-                            "Выбрать несколько", "Переименовать", "Заблокировать / разблокировать", "Копировать", "Вставить выше",
-                            "Дублировать", "Наверх группы", "Вниз группы", "Удалить", "Очистить", "Маска вкл/выкл",
-                            "Растрировать", "Слить вниз", "Слить все видимые", "Создать символ"
-                        ) + (if (vm.isSymbolInstance(l.id)) listOf("Редактировать символ", "Выбрать маркер (фонему)") else emptyList())
-                          + (if (vm.maskOf(l.id) == null && vm.maskTargetOf(l.id) == null && vm.mediaKindOf(l.id).let { it == null || it == com.vibetoon.domain.project.MediaKind.IMAGE || it == com.vibetoon.domain.project.MediaKind.TEXT || it == com.vibetoon.domain.project.MediaKind.VIDEO || it == com.vibetoon.domain.project.MediaKind.GROUP || it == com.vibetoon.domain.project.MediaKind.SYMBOL }) listOf("Добавить маску слоя") else emptyList())
-                          + (if (vm.maskOf(l.id) != null) listOf("Удалить маску слоя") else emptyList())) {
-                            DropdownMenuItem(text = { Text(title) }, onClick = {
-                                menuFor = null
-                                when (title) {
-                                    "Выбрать несколько" -> { multi = true; if (l.id !in selection) vm.toggleSelect(l.id) }
-                                    "Переименовать" -> renameFor = l.id
-                                    "Заблокировать / разблокировать" -> vm.toggleLocked(l.id)
-                                    "Копировать" -> vm.copyLayer(l.id)
-                                    "Вставить выше" -> vm.pasteAbove(l.id)
-                                    "Дублировать" -> { vm.selectLayer(l.id); vm.duplicateSelected() }
-                                    "Наверх группы" -> vm.moveLayerToEdge(l.id, top = true)   // пакет 25: PSD и медиа вперемешку
-                                    "Вниз группы" -> vm.moveLayerToEdge(l.id, top = false)
-                                    "Удалить" -> { vm.selectLayer(l.id); vm.deleteSelected() }
-                                    "Очистить" -> vm.clearLayer(l.id)
-                                    "Маска вкл/выкл" -> vm.toggleClipMask(l.id)
-                                    "Растрировать" -> vm.rasterizeLayer(l.id)
-                                    "Слить вниз" -> vm.mergeDown(l.id)
-                                    "Слить все видимые" -> vm.mergeVisible()
-                                    "Создать символ" -> if (selection.size >= 2 && l.id in selection) symbolModeFor = l.id else vm.createSymbol(l.id)
-                                    "Редактировать символ" -> vm.enterSymbol(l.id)
-                                    "Выбрать маркер (фонему)" -> vm.openMarkerPanel(l.id)
-                                    "Добавить маску слоя" -> vm.addLayerMask(l.id)
-                                    "Удалить маску слоя" -> vm.deleteMask(l.id)
-                                    else -> stub(title)
-                                }
-                            })
-                        }
-                    }
+                    LayerContextMenu(vm, l, menuFor == l.id, selection, stub, onClose = { menuFor = null }, onMulti = { multi = true }, onRename = { renameFor = it }, onSymbolMode = { symbolModeFor = it })
                   }
                 }
             }
@@ -1529,6 +1524,197 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
         if (single != null && selRow != null) {
             HorizontalDivider()
             LayerPropsPanel(vm, single, selRow.isGroup, lprops)
+        }
+    }
+}
+
+/**
+ * Спринт 39: вид панели слоёв «Список» - компактные строки без миниатюр, поиск по имени, фильтры по типу,
+ * папки (свернуть/развернуть все), маски (вкл/инверсия прямо в строке), слои-пути (сколько слоёв на пути) и
+ * кости внутри слоя костей (тап выбирает кость). Порядок меняется стрелками у выбранного слоя или через меню.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LayerListBody(
+    vm: MainViewModel, rows: List<com.vibetoon.domain.model.TreeRow>, selection: Set<Int>,
+    lprops: Map<Int, com.vibetoon.domain.model.LayerProps>, bones: List<com.vibetoon.domain.project.Bone>,
+    multi: Boolean, menuFor: Int?, stub: (String) -> Unit, modifier: Modifier,
+    onMenu: (Int?) -> Unit, onMulti: () -> Unit, onRename: (Int) -> Unit, onSymbolMode: (Int) -> Unit
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var filterName by rememberSaveable { mutableStateOf(com.vibetoon.domain.model.LayerListView.Filter.ALL.name) }
+    val filter = com.vibetoon.domain.model.LayerListView.Filter.values().firstOrNull { it.name == filterName } ?: com.vibetoon.domain.model.LayerListView.Filter.ALL
+    var bonesCollapsed by remember { mutableStateOf(setOf<Int>()) }
+    val full = remember(rows, lprops) { vm.treeRowsExpanded() }
+    val infoById = remember(full) { full.associate { it.layer.id to it.layer } }
+    fun entryOf(r: com.vibetoon.domain.model.TreeRow): com.vibetoon.domain.model.LayerListView.Entry {
+        val id = r.layer.id
+        val lp = lprops[id]
+        return com.vibetoon.domain.model.LayerListView.Entry(
+            id, r.layer.name, r.depth, r.layer.parentId, com.vibetoon.domain.model.LayerListView.categoryOf(vm.layerType(id)),
+            isGroup = r.isGroup, mask = (lp != null && lp.mask >= 0) || vm.maskTargetOf(id) != null
+        )
+    }
+    val bonesByLayer = remember(bones) { bones.filter { it.layer != 0 }.groupBy { it.layer }.mapValues { (_, list) -> list.map { it.id to it.name } } }
+    val shown = remember(rows, full, lprops, bonesByLayer, bonesCollapsed, filter, query) {
+        com.vibetoon.domain.model.LayerListView.apply(
+            com.vibetoon.domain.model.LayerListView.withBones(rows.map { entryOf(it) }, bonesByLayer, bonesCollapsed),
+            com.vibetoon.domain.model.LayerListView.withBones(full.map { entryOf(it) }, bonesByLayer),
+            filter, query
+        )
+    }
+    val searching = com.vibetoon.domain.model.LayerListView.active(filter, query)
+    val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+    Column(modifier) {
+        androidx.compose.material3.OutlinedTextField(
+            value = query, onValueChange = { query = it.take(60) }, singleLine = true,
+            placeholder = { Text("Поиск слоя", fontSize = 12.sp) },
+            leadingIcon = { Icon(Icons.Default.Search, com.vibetoon.ui.i18n.L("Поиск слоя"), modifier = Modifier.size(18.dp)) },
+            trailingIcon = { if (query.isNotEmpty()) Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Очистить поиск"), modifier = Modifier.size(18.dp).clickable { query = "" }) },
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(min = 44.dp)
+        )
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            for (f in com.vibetoon.domain.model.LayerListView.Filter.values())
+                FilterChip(selected = f == filter, onClick = { filterName = f.name }, label = { Text(f.title, fontSize = 11.sp, maxLines = 1, softWrap = false) }, modifier = Modifier.height(28.dp))
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(com.vibetoon.domain.model.LayerListView.countLabel(shown, full.size, filter, query), fontSize = 11.sp, color = dim, modifier = Modifier.weight(1f))
+            IconButton(onClick = { vm.setAllGroupsCollapsed(true); bonesCollapsed = bonesByLayer.keys }, enabled = !searching, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.UnfoldLess, com.vibetoon.ui.i18n.L("Свернуть все"), modifier = Modifier.size(18.dp)) }
+            IconButton(onClick = { vm.setAllGroupsCollapsed(false); bonesCollapsed = emptySet() }, enabled = !searching, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.UnfoldMore, com.vibetoon.ui.i18n.L("Развернуть все"), modifier = Modifier.size(18.dp)) }
+        }
+        if (shown.isEmpty()) Text(
+            if (searching) "Ничего не найдено: измените поиск или фильтр" else "Слоёв пока нет. Нажмите «+» вверху, чтобы добавить PSD, картинку, видео или текст.",
+            fontSize = 12.sp, modifier = Modifier.padding(12.dp), color = dim
+        )
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+            items(shown.size, key = { i -> (if (shown[i].entry.bone) "b" else "l") + shown[i].entry.id }) { i ->
+                val sh = shown[i]
+                val e = sh.entry
+                val sel = e.id in selection
+                val rowColor = when {
+                    sel -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                    else -> androidx.compose.ui.graphics.Color.Transparent
+                }
+                if (e.bone) {
+                    // строка кости: тап - режим «Кости» и выбор этой кости
+                    Row(
+                        Modifier.fillMaxWidth().height(30.dp).background(rowColor).clickable { vm.selectBoneRow(e.id) }.padding(start = (8 + 12 * e.depth).dp, end = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Straighten, com.vibetoon.ui.i18n.L("Кость"), modifier = Modifier.size(14.dp), tint = dim)
+                        Text(com.vibetoon.ui.i18n.boneDisplayName(e.name), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 6.dp).weight(1f), color = if (sh.matched) MaterialTheme.colorScheme.onSurface else dim)
+                    }
+                    return@items
+                }
+                val l = infoById[e.id] ?: rows.firstOrNull { it.layer.id == e.id }?.layer ?: return@items
+                val lp = lprops[e.id]
+                val type = vm.layerType(e.id)
+                Box {
+                    Row(
+                        Modifier.fillMaxWidth().height(32.dp).background(rowColor)
+                            .combinedClickable(
+                                onClick = { if (multi) vm.toggleSelect(e.id) else vm.selectLayer(e.id) },
+                                onLongClick = { onMenu(e.id) }
+                            )
+                            .padding(start = (4 + 12 * e.depth).dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (multi) Icon(if (sel) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, com.vibetoon.ui.i18n.L("Выбрать"), tint = if (sel) MaterialTheme.colorScheme.primary else dim, modifier = Modifier.padding(end = 2.dp).size(20.dp).clickable { vm.toggleSelect(e.id) })
+                        val foldable = e.isGroup || e.category == com.vibetoon.domain.model.LayerListView.Category.BONES && bonesByLayer.containsKey(e.id)
+                        val expanded = if (e.isGroup) rows.firstOrNull { it.layer.id == e.id }?.expanded ?: true else e.id !in bonesCollapsed
+                        Box(Modifier.size(20.dp).then(if (foldable && !searching) Modifier.clickable {
+                            if (!e.isGroup) bonesCollapsed = if (e.id in bonesCollapsed) bonesCollapsed - e.id else bonesCollapsed + e.id
+                            if (e.isGroup) vm.toggleGroup(e.id)
+                        } else Modifier), contentAlignment = Alignment.Center) {
+                            if (foldable) Icon(if (expanded || searching) Icons.Default.ExpandMore else Icons.Default.ChevronRight, com.vibetoon.ui.i18n.L("Свернуть / развернуть"), modifier = Modifier.size(16.dp))
+                        }
+                        Icon(
+                            when (type) {
+                                "Текст" -> Icons.Default.TextFields; "Картинка" -> Icons.Default.Image; "Видео" -> Icons.Default.Videocam; "Аудио" -> Icons.Default.Audiotrack
+                                "Группа" -> Icons.Default.Folder; "Символ" -> Icons.Default.Widgets; "Путь" -> Icons.Default.Timeline; "Слой костей" -> Icons.Default.AccountTree
+                                "Вектор" -> Icons.Default.Gesture; "Камера" -> Icons.Default.Videocam
+                                else -> Icons.Default.Brush
+                            }, com.vibetoon.ui.i18n.L(type), modifier = Modifier.padding(horizontal = 4.dp).size(16.dp), tint = dim
+                        )
+                        Text(
+                            l.name, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                            color = if (sh.matched) MaterialTheme.colorScheme.onSurface else dim,
+                            fontWeight = if (searching && sh.matched) androidx.compose.ui.text.font.FontWeight.Bold else null
+                        )
+                        // маска слоя: включить/выключить и инверсия прямо в строке
+                        if (lp != null && lp.mask >= 0) {
+                            Icon(Icons.Default.Masks, com.vibetoon.ui.i18n.L(if (lp.maskOff) "Маска выкл." else "Маска"), tint = if (lp.maskOff) dim else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(26.dp).clickable { vm.setMaskEnabled(e.id, lp.maskOff) }.padding(4.dp))
+                            Icon(Icons.Default.InvertColors, com.vibetoon.ui.i18n.L("Маска (инверсия)"), tint = if (lp.maskInvert) MaterialTheme.colorScheme.primary else dim,
+                                modifier = Modifier.size(26.dp).clickable { vm.setMaskInvert(e.id, !lp.maskInvert) }.padding(4.dp))
+                        }
+                        if (vm.maskTargetOf(e.id) != null) Text(com.vibetoon.ui.i18n.L("Слой-маска"), fontSize = 9.sp, color = dim, modifier = Modifier.padding(horizontal = 2.dp))
+                        if (lp != null && lp.path >= 0) Text(com.vibetoon.ui.i18n.L("На пути"), fontSize = 9.sp, color = dim, modifier = Modifier.padding(horizontal = 2.dp))
+                        if (e.category == com.vibetoon.domain.model.LayerListView.Category.PATH) {
+                            val n = lprops.values.count { it.path == e.id }
+                            if (n > 0) Text("Слоёв на пути: $n", fontSize = 9.sp, color = dim, modifier = Modifier.padding(horizontal = 2.dp))
+                        }
+                        if (sel && selection.size == 1 && !multi) {
+                            Icon(Icons.Default.ArrowUpward, com.vibetoon.ui.i18n.L("Выше"), modifier = Modifier.size(28.dp).clickable { vm.moveLayerStep(e.id, up = true) }.padding(5.dp))
+                            Icon(Icons.Default.ArrowDownward, com.vibetoon.ui.i18n.L("Ниже"), modifier = Modifier.size(28.dp).clickable { vm.moveLayerStep(e.id, up = false) }.padding(5.dp))
+                        }
+                        Icon(
+                            if (lp?.visible == false) Icons.Default.VisibilityOff else Icons.Default.Visibility, com.vibetoon.ui.i18n.L("Видимость"),
+                            modifier = Modifier.size(28.dp).clickable { vm.toggleVisible(e.id) }.padding(5.dp)
+                        )
+                        Icon(
+                            if (lp?.locked == true) Icons.Default.Lock else Icons.Default.LockOpen, com.vibetoon.ui.i18n.L("Замок"),
+                            modifier = Modifier.size(28.dp).clickable { vm.toggleLocked(e.id) }.padding(5.dp)
+                        )
+                    }
+                    LayerContextMenu(vm, l, menuFor == e.id, selection, stub, onClose = { onMenu(null) }, onMulti = onMulti, onRename = onRename, onSymbolMode = onSymbolMode)
+                }
+            }
+        }
+    }
+}
+
+/** Контекстное меню слоя (долгое нажатие): общее для вида «Миниатюры» и «Список» (спринт 39). */
+@Composable
+private fun LayerContextMenu(
+    vm: MainViewModel, l: com.vibetoon.nativebridge.LayerInfo, expanded: Boolean, selection: Set<Int>, stub: (String) -> Unit,
+    onClose: () -> Unit, onMulti: () -> Unit, onRename: (Int) -> Unit, onSymbolMode: (Int) -> Unit
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onClose) {
+        for (title in listOf(
+            "Выбрать несколько", "Переименовать", "Заблокировать / разблокировать", "Копировать", "Вставить выше",
+            "Дублировать", "Наверх группы", "Вниз группы", "Удалить", "Очистить", "Маска вкл/выкл",
+            "Растрировать", "Слить вниз", "Слить все видимые", "Создать символ"
+        ) + (if (vm.isSymbolInstance(l.id)) listOf("Редактировать символ", "Выбрать маркер (фонему)") else emptyList())
+          + (if (vm.maskOf(l.id) == null && vm.maskTargetOf(l.id) == null && vm.mediaKindOf(l.id).let { it == null || it == com.vibetoon.domain.project.MediaKind.IMAGE || it == com.vibetoon.domain.project.MediaKind.TEXT || it == com.vibetoon.domain.project.MediaKind.VIDEO || it == com.vibetoon.domain.project.MediaKind.GROUP || it == com.vibetoon.domain.project.MediaKind.SYMBOL }) listOf("Добавить маску слоя") else emptyList())
+          + (if (vm.maskOf(l.id) != null) listOf("Удалить маску слоя") else emptyList())) {
+            DropdownMenuItem(text = { Text(title) }, onClick = {
+                onClose()
+                when (title) {
+                    "Выбрать несколько" -> { onMulti(); if (l.id !in selection) vm.toggleSelect(l.id) }
+                    "Переименовать" -> onRename(l.id)
+                    "Заблокировать / разблокировать" -> vm.toggleLocked(l.id)
+                    "Копировать" -> vm.copyLayer(l.id)
+                    "Вставить выше" -> vm.pasteAbove(l.id)
+                    "Дублировать" -> { vm.selectLayer(l.id); vm.duplicateSelected() }
+                    "Наверх группы" -> vm.moveLayerToEdge(l.id, top = true)   // пакет 25: PSD и медиа вперемешку
+                    "Вниз группы" -> vm.moveLayerToEdge(l.id, top = false)
+                    "Удалить" -> { vm.selectLayer(l.id); vm.deleteSelected() }
+                    "Очистить" -> vm.clearLayer(l.id)
+                    "Маска вкл/выкл" -> vm.toggleClipMask(l.id)
+                    "Растрировать" -> vm.rasterizeLayer(l.id)
+                    "Слить вниз" -> vm.mergeDown(l.id)
+                    "Слить все видимые" -> vm.mergeVisible()
+                    "Создать символ" -> if (selection.size >= 2 && l.id in selection) onSymbolMode(l.id) else vm.createSymbol(l.id)
+                    "Редактировать символ" -> vm.enterSymbol(l.id)
+                    "Выбрать маркер (фонему)" -> vm.openMarkerPanel(l.id)
+                    "Добавить маску слоя" -> vm.addLayerMask(l.id)
+                    "Удалить маску слоя" -> vm.deleteMask(l.id)
+                    else -> stub(title)
+                }
+            })
         }
     }
 }

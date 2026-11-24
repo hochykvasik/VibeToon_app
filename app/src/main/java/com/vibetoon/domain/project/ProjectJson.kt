@@ -417,6 +417,7 @@ object ProjectJson {
             }
             if (m.fx.active) it["tfx"] = textFxToMap(m.fx)
             if (m.textAlign != 0) it["ta"] = m.textAlign
+            if (m.textDir != 0) it["tdir"] = m.textDir   // спринт 39: необязательный ключ, VERSION не меняется
             if (m.lineSpacing != 1f) it["tls"] = m.lineSpacing.toDouble()
             if (m.letterSpacing != 0f) it["tlt"] = m.letterSpacing.toDouble()
             if (m.stroke) { it["stk"] = true; it["stkW"] = m.strokeWidth.toDouble(); it["stkC"] = colorToString(m.strokeColor) }
@@ -443,6 +444,7 @@ object ProjectJson {
             strokeWidth = o.dbl("stkW", 4.0).toFloat(),
             strokeColor = parseColor(o.str("stkC", "#FF000000")),
             textAlign = o.int("ta", 0).coerceIn(0, 2),
+            textDir = TextBidi.coerce(o.int("tdir", 0)),
             lineSpacing = o.dbl("tls", 1.0).toFloat().coerceIn(0.5f, 3f),
             letterSpacing = o.dbl("tlt", 0.0).toFloat().coerceIn(-0.2f, 1f),
             cells = (o["cells"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { FrameCell((it["s"] as? Number)?.toInt() ?: 0, it["f"] as? String ?: return@let null) } },

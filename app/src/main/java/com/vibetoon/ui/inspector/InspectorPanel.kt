@@ -507,6 +507,12 @@ private fun TextTab(t: TextState, fonts: List<FontEntry>, vm: MainViewModel, onI
             label = { Text("Текст") },
             minLines = 2,
             maxLines = 4,
+            // спринт 39: курсор, выделение и переносы в поле идут по направлению текста (RTL - справа налево)
+            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = when (t.dir) {
+                com.vibetoon.domain.project.TextBidi.RTL -> androidx.compose.ui.text.style.TextDirection.Rtl
+                com.vibetoon.domain.project.TextBidi.LTR -> androidx.compose.ui.text.style.TextDirection.Ltr
+                else -> androidx.compose.ui.text.style.TextDirection.Content
+            }),
             modifier = Modifier.fillMaxWidth()
         )
         Row(
@@ -535,6 +541,14 @@ private fun TextTab(t: TextState, fonts: List<FontEntry>, vm: MainViewModel, onI
             for ((a, title) in listOf(0 to "Слева", 1 to "По центру", 2 to "Справа"))
                 FilterChip(selected = t.align == a, onClick = { vm.setTextAlign(a) }, label = { Text(title, fontSize = 12.sp, maxLines = 1, softWrap = false) })
         }
+        // спринт 39: направление письма (иврит, арабский - справа налево); работает и с текстовыми эффектами
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            Text("Направление", fontSize = 12.sp)
+            for ((d, title) in listOf(com.vibetoon.domain.project.TextBidi.AUTO to "Авто", com.vibetoon.domain.project.TextBidi.LTR to "Слева направо", com.vibetoon.domain.project.TextBidi.RTL to "Справа налево"))
+                FilterChip(selected = t.dir == d, onClick = { vm.setTextDirection(d) }, label = { Text(title, fontSize = 12.sp, maxLines = 1, softWrap = false) })
+        }
+        if (t.dir == com.vibetoon.domain.project.TextBidi.AUTO && t.rtl) Text("Текст пишется справа налево (определено по первой букве)", fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             NumberField("Межстрочный", t.lineSpacing * 100f, "%", true, { vm.setLineSpacing(it / 100f) }, Modifier.weight(1f), perPx = 0.5f, min = 50f, max = 300f)
             NumberField("Межбуквенный", t.letterSpacing * 100f, "%", true, { vm.setLetterSpacing(it / 100f) }, Modifier.weight(1f), perPx = 0.3f, min = -20f, max = 100f)

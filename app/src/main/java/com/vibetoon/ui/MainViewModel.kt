@@ -166,7 +166,9 @@ data class TextState(
     val gradient: List<Long> = emptyList(), val gradientAngle: Float = 0f,
     val fx: com.vibetoon.domain.project.TextFx = com.vibetoon.domain.project.TextFx(),
     val stroke: Boolean = false, val strokeWidth: Float = 4f, val strokeColor: Long = 0xFF000000L,
-    val align: Int = 0, val lineSpacing: Float = 1f, val letterSpacing: Float = 0f
+    val align: Int = 0, val lineSpacing: Float = 1f, val letterSpacing: Float = 0f,
+    /** Спринт 39: направление письма (TextBidi.AUTO/LTR/RTL) и итоговое направление текста для поля ввода. */
+    val dir: Int = 0, val rtl: Boolean = false
 )
 
 /** Дорожка аудио на таймлайне: имя и длина в кадрах проекта. Звук пока не декодируется. */
@@ -1798,7 +1800,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val fps = _animation.value.settings.fps.coerceAtLeast(1)
         val tSec = frame.toFloat() / fps
         textFxKeys[m.id] = m.fx.stateKey(tSec, fps)
-        val r = textRenderer.renderFx(m.text, m.textColor.toInt(), m.font, m.textSize, m.gradient, m.gradientAngle, m.fx, tSec, fps, if (m.stroke) m.strokeWidth else 0f, m.strokeColor.toInt(), m.textAlign, m.lineSpacing, m.letterSpacing)
+        val r = textRenderer.renderFx(m.text, m.textColor.toInt(), m.font, m.textSize, m.gradient, m.gradientAngle, m.fx, tSec, fps, if (m.stroke) m.strokeWidth else 0f, m.strokeColor.toInt(), m.textAlign, m.lineSpacing, m.letterSpacing, m.textDir)
         val ok = RenderNative.uploadBitmapIfCurrent(m.id, r.bitmap, uploadTicket)
         r.bitmap.recycle()
         if (!ok) error("Не удалось передать текст в графику")
@@ -2269,7 +2271,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun refreshText() {
         val id = _selected.value
         val m = media.firstOrNull { it.id == id && it.isText }
-        _textState.value = m?.let { TextState(it.id, it.text, it.textColor, it.font, fonts.title(it.font), it.textSize, it.gradient, it.gradientAngle, it.fx, it.stroke, it.strokeWidth, it.strokeColor, it.textAlign, it.lineSpacing, it.letterSpacing) }
+        _textState.value = m?.let { TextState(it.id, it.text, it.textColor, it.font, fonts.title(it.font), it.textSize, it.gradient, it.gradientAngle, it.fx, it.stroke, it.strokeWidth, it.strokeColor, it.textAlign, it.lineSpacing, it.letterSpacing, it.textDir, com.vibetoon.domain.project.TextBidi.resolveRtl(it.textDir, it.text)) }
     }
 
     /** Правка свойства выделенного текста: сразу в модель, перерисовка Bitmap - с небольшой задержкой. */
@@ -2323,6 +2325,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setFont(key: String) = editSelectedText { it.copy(font = key) }
     /** Выравнивание строк: 0 - слева, 1 - по центру, 2 - справа. */
     fun setTextAlign(a: Int) = editSelectedText { it.copy(textAlign = a.coerceIn(0, 2)) }
+    /**
+     * Спринт 39: направление письма - авто (по первой букве), слева направо, справа налево (иврит, арабский).
+     * Если фактическое направление сменилось, выравнивание «по началу строки» переезжает к новому началу.
+     */
+    fun setTextDirection(d: Int) = editSelectedText {
+        val dir = com.vibetoon.domain.project.TextBidi.coerce(d)
+        val wasRtl = com.vibetoon.domain.project.TextBidi.resolveRtl(it.textDir, it.text)
+        val nowRtl = com.vibetoon.domain.project.TextBidi.resolveRtl(dir, it.text)
+        it.copy(textDir = dir, textAlign = com.vibetoon.domain.project.TextBidi.alignOnDirectionChange(it.textAlign, wasRtl, nowRtl))
+    }
     /** Межстрочный интервал (множитель 0.5..3) и межбуквенный (в em, -0.2..1). */
     fun setLineSpacing(v: Float) { if (v.isFinite()) editSelectedText { it.copy(lineSpacing = v.coerceIn(0.5f, 3f)) } }
     fun setLetterSpacing(v: Float) { if (v.isFinite()) editSelectedText { it.copy(letterSpacing = v.coerceIn(-0.2f, 1f)) } }
@@ -2493,14 +2505,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- камера
 
     private fun rebuildRows() {
+        _rows.value = LayerTree.flatten(shownLayers(), collapsed)
+    }
+
+    /** Слои, которые видны в панели: внутри символа - только его слои, в главной сцене - без содержимого символов. */
+    private fun shownLayers(): List<LayerInfo> {
         val ctx = _editingSymbol.value
         val defs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.map { it.id }
-        val shown = when {
+        return when {
             ctx != null -> { val sub = symbolMembers(ctx) + ctx; layers.filter { it.id in sub }.map { if (it.id == ctx) it.copy(parentId = -1) else it } }   // внутри символа - только его слои
             defs.isEmpty() -> layers
             else -> { val hide = HashSet<Int>(); for (d in defs) { hide += symbolMembers(d); hide += d }; layers.filter { it.id !in hide } }   // содержимое символов в главной сцене не показывается
         }
-        _rows.value = LayerTree.flatten(shown, collapsed)
+    }
+
+    /** Спринт 39: полное дерево (все папки развёрнуты) - для поиска и фильтров вида «Список». */
+    fun treeRowsExpanded(): List<com.vibetoon.domain.model.TreeRow> = LayerTree.flatten(shownLayers(), emptySet())
+
+    /** Спринт 39: «Свернуть все» / «Развернуть все» папки. */
+    fun setAllGroupsCollapsed(collapse: Boolean) {
+        collapsed = if (collapse) layers.filter { it.kind == LayerKind.GROUP_OPEN || it.kind == LayerKind.GROUP_CLOSED }.map { it.id }.toSet() else emptySet()
+        rebuildRows()
+    }
+
+    /** Спринт 39: вид панели слоёв - «Миниатюры» (как раньше) или компактный «Список»; выбор хранится в настройках. */
+    private val _layersList by lazy { MutableStateFlow(com.vibetoon.domain.model.LayerListView.isList(appPrefs().getString(com.vibetoon.domain.model.LayerListView.PREF_KEY, null))) }
+    val layersList: StateFlow<Boolean> get() = _layersList
+
+    fun setLayersListMode(list: Boolean) {
+        _layersList.value = list
+        appPrefs().edit().putString(com.vibetoon.domain.model.LayerListView.PREF_KEY, com.vibetoon.domain.model.LayerListView.store(list)).apply()
+    }
+
+    /** Спринт 39: слой на одну позицию выше/ниже среди соседей (вид «Список», без перетаскивания). Папки тоже. */
+    fun moveLayerStep(id: Int, up: Boolean) {
+        if (_playing.value) return
+        val l = layers.firstOrNull { it.id == id } ?: return
+        val byId = layers.associateBy { it.id }
+        val sib = com.vibetoon.domain.model.StackOrder.children(layers, l.parentId)   // снизу вверх
+            .filter { sid -> byId[sid]?.let { !(it.kind == LayerKind.LAYER && it.isEmpty) } == true || sid == id }
+        val i = sib.indexOf(id)
+        val target = sib.getOrNull(if (up) i + 1 else i - 1)
+        if (i < 0 || target == null) { _state.value = UiState.Message(if (up) "Слой уже наверху группы" else "Слой уже внизу группы"); return }
+        val next = com.vibetoon.domain.model.StackOrder.place(layers, stackOrder, id, target, above = up) ?: return
+        checkpoint("reorder", force = true)
+        stackOrder = next
+        rebuildLayers()
+        pushScene()
+        markDirty()
     }
 
     /** Тап по группе в дереве слоёв: свернуть или развернуть. */
@@ -3595,7 +3647,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 o != null && (o.text != m.text || o.textColor != m.textColor || o.font != m.font || o.textSize != m.textSize ||
                     o.gradient != m.gradient || o.gradientAngle != m.gradientAngle || o.fx != m.fx ||
                     o.stroke != m.stroke || o.strokeWidth != m.strokeWidth || o.strokeColor != m.strokeColor ||
-                    o.textAlign != m.textAlign || o.lineSpacing != m.lineSpacing || o.letterSpacing != m.letterSpacing)
+                    o.textAlign != m.textAlign || o.lineSpacing != m.lineSpacing || o.letterSpacing != m.letterSpacing || o.textDir != m.textDir)
             }
         }
         if (changedText.isNotEmpty()) rerenderTexts(changedText)
@@ -5483,7 +5535,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val fps = _animation.value.settings.fps.coerceAtLeast(1)
             val file = "m$id.png"
             val size = withContext(decodeDispatcher) {
-                val r = textRenderer.renderFx(m.text, m.textColor.toInt(), m.font, m.textSize, m.gradient, m.gradientAngle, m.fx, _frame.value.toFloat() / fps, fps, if (m.stroke) m.strokeWidth else 0f, m.strokeColor.toInt(), m.textAlign, m.lineSpacing, m.letterSpacing)
+                val r = textRenderer.renderFx(m.text, m.textColor.toInt(), m.font, m.textSize, m.gradient, m.gradientAngle, m.fx, _frame.value.toFloat() / fps, fps, if (m.stroke) m.strokeWidth else 0f, m.strokeColor.toInt(), m.textAlign, m.lineSpacing, m.letterSpacing, m.textDir)
                 projects.mediaFile(pid, file).outputStream().use { r.bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
                 RenderNative.uploadBitmap(id, r.bitmap)
                 val sz = r.bitmap.width to r.bitmap.height
@@ -6871,12 +6923,101 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleBrushMenu() {
         _brushMenu.value = !_brushMenu.value
-        if (_brushMenu.value) requestBrushPreviews()
+        if (_brushMenu.value) { reloadCustomBrushes(); requestBrushPreviews() }
     }
     fun closeBrushMenu() { _brushMenu.value = false }
 
     /** Пресеты для меню активного инструмента: кисти или ластики. */
-    fun presetsForTool(): List<BrushPreset> = if (_paintTool.value == PaintTool.ERASER) BrushPresets.erasers else BrushPresets.brushes
+    fun presetsForTool(): List<BrushPreset> {
+        val eraser = _paintTool.value == PaintTool.ERASER
+        val own = _customBrushes.value.filter { (it.params.mode == StrokeMode.ERASE) == eraser }
+        return (if (eraser) BrushPresets.erasers else BrushPresets.brushes) + own
+    }
+
+    // ---- спринт 39: свои кисти (сохранить текущую, импорт/экспорт файлом); хранятся в «vt_app» и попадают в резервную копию ----
+    private val _customBrushes = MutableStateFlow<List<BrushPreset>>(emptyList())
+    val customBrushes: StateFlow<List<BrushPreset>> = _customBrushes.asStateFlow()
+    private var customBrushesLoaded = false
+
+    private fun reloadCustomBrushes() {
+        val list = com.vibetoon.domain.paint.BrushExchange.load(appPrefs().getString(com.vibetoon.domain.paint.BrushExchange.PREF_KEY, null))
+        if (customBrushesLoaded && list != _customBrushes.value) for (b in _customBrushes.value) brushPreviews.remove(b.id)   // после восстановления копии превью строятся заново
+        customBrushesLoaded = true
+        _customBrushes.value = list
+    }
+
+    private fun storeCustomBrushes(list: List<BrushPreset>) {
+        _customBrushes.value = list
+        appPrefs().edit().putString(com.vibetoon.domain.paint.BrushExchange.PREF_KEY, com.vibetoon.domain.paint.BrushExchange.encode(list)).apply()
+    }
+
+    /** Пресет по id: встроенный или свой (для подписи кнопки кистей). */
+    fun presetById(id: String): BrushPreset? {
+        if (!customBrushesLoaded) reloadCustomBrushes()
+        return BrushPresets.byId(id) ?: _customBrushes.value.firstOrNull { it.id == id }
+    }
+
+    fun isCustomBrush(id: String): Boolean = com.vibetoon.domain.paint.BrushExchange.isCustom(id)
+
+    /** «Сохранить текущую как свою»: настройки активной кисти или ластика (без цвета) - в список своих. */
+    fun saveCurrentBrush() {
+        if (!customBrushesLoaded) reloadCustomBrushes()
+        val cur = _customBrushes.value
+        if (cur.size >= com.vibetoon.domain.paint.BrushExchange.MAX_BRUSHES) { _state.value = UiState.Message("Своих кистей уже 100: удалите ненужные"); return }
+        val p = paintParams()
+        val b = com.vibetoon.domain.paint.BrushExchange.fromCurrent(p, com.vibetoon.domain.paint.BrushExchange.suggestName(p, cur), cur.map { it.id }.toSet())
+        storeCustomBrushes(cur + b)
+        if (p.mode == StrokeMode.ERASE) _eraser.value = _eraser.value.copy(presetId = b.id) else _brush.value = _brush.value.copy(presetId = b.id)
+        requestBrushPreviews()
+        _state.value = UiState.Message("Кисть сохранена: ${b.title}")
+    }
+
+    fun deleteCustomBrush(id: String) {
+        val cur = _customBrushes.value
+        val b = cur.firstOrNull { it.id == id } ?: return
+        storeCustomBrushes(cur - b)
+        brushPreviews.remove(id)
+        _state.value = UiState.Message("Кисть удалена: ${b.title}")
+    }
+
+    /** Экспорт своих кистей; если своих нет - текущие настройки кисти/ластика одной кистью. */
+    fun exportBrushesTo(uri: Uri) {
+        if (!customBrushesLoaded) reloadCustomBrushes()
+        val list = _customBrushes.value.ifEmpty {
+            val p = paintParams()
+            listOf(com.vibetoon.domain.paint.BrushExchange.fromCurrent(p, com.vibetoon.domain.paint.BrushExchange.suggestName(p, emptyList()), emptySet()))
+        }
+        val text = com.vibetoon.domain.paint.BrushExchange.encode(list)
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { getApplication<Application>().contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) } != null }.getOrDefault(false)
+            }
+            _state.value = UiState.Message(if (ok) "Кисти экспортированы: ${list.size}" else "Не удалось сохранить файл кистей")
+        }
+    }
+
+    /** Импорт кистей из файла: проверка, повреждённые записи пропускаются, существующие кисти не затираются. */
+    fun importBrushesFrom(uri: Uri) {
+        viewModelScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching { getApplication<Application>().contentResolver.openInputStream(uri)?.use { com.vibetoon.domain.paint.BrushExchange.readLimited(it) ?: "\u0000too-big" } }.getOrNull()
+            }
+            if (text == null) { _state.value = UiState.Message("Не удалось открыть файл"); return@launch }
+            if (text == "\u0000too-big") { _state.value = UiState.Message(com.vibetoon.domain.paint.ExchangeError.TOO_BIG.ru); return@launch }
+            if (!customBrushesLoaded) reloadCustomBrushes()
+            val cur = _customBrushes.value
+            val r = com.vibetoon.domain.paint.BrushExchange.decode(text, cur.map { it.id }.toSet())
+            if (!r.ok) { _state.value = UiState.Message(com.vibetoon.domain.paint.BrushExchange.report(r)); return@launch }
+            val merged = com.vibetoon.domain.paint.BrushExchange.merge(cur, r.items)
+            storeCustomBrushes(merged)
+            requestBrushPreviews()
+            val added = merged.size - cur.size
+            _state.value = UiState.Message(
+                if (added < r.items.size) "Импортировано кистей: $added, не поместилось: ${r.items.size - added} (не больше 100)"
+                else com.vibetoon.domain.paint.BrushExchange.report(r)
+            )
+        }
+    }
 
     /** Выбор пресета: размер, форма, жёсткость, режим, зерно берутся из него; цвет остаётся текущим. */
     fun selectPreset(p: BrushPreset) {
@@ -6888,7 +7029,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun requestBrushPreviews() {
         val view = RenderHost.view ?: return
         val w = 256; val h = 64
-        for (pr in BrushPresets.all()) {
+        if (!customBrushesLoaded) reloadCustomBrushes()
+        for (pr in BrushPresets.all() + _customBrushes.value) {
             if (brushPreviews.containsKey(pr.id) || !previewPending.add(pr.id)) continue
             val p = pr.params
             val dabs = BrushPresets.previewDabs(p, w, h)
@@ -12304,7 +12446,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             for (tm in fxTexts) {   // текст с эффектами: картинка этого кадра заливается в текстуру до отрисовки
                 val tSec = pf.toFloat() / fpsP
-                val render = { textRenderer.renderFx(tm.text, tm.textColor.toInt(), tm.font, tm.textSize, tm.gradient, tm.gradientAngle, tm.fx, tSec, fpsP, if (tm.stroke) tm.strokeWidth else 0f, tm.strokeColor.toInt(), tm.textAlign, tm.lineSpacing, tm.letterSpacing).bitmap }
+                val render = { textRenderer.renderFx(tm.text, tm.textColor.toInt(), tm.font, tm.textSize, tm.gradient, tm.gradientAngle, tm.fx, tSec, fpsP, if (tm.stroke) tm.strokeWidth else 0f, tm.strokeColor.toInt(), tm.textAlign, tm.lineSpacing, tm.letterSpacing, tm.textDir).bitmap }
                 if (shadow) { val b = render(); RenderNative.uploadShadowBitmap(tm.id, b); b.recycle(); continue }
                 plan += session!!.textures.plan(tm.id, "fx:" + tm.fx.stateKey(tSec, fpsP), 0L, render)
             }

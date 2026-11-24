@@ -96,6 +96,8 @@ data class MediaItem(
     val textAlign: Int = 0,
     val lineSpacing: Float = 1f,
     val letterSpacing: Float = 0f,
+    /** Спринт 39: направление письма (TextBidi: 0 - авто по первой букве, 1 - слева направо, 2 - справа налево). */
+    val textDir: Int = 0,
     /** Покадровый слой (только IMAGE): рисунки-экспозиции; пусто - обычная картинка. */
     val cells: List<FrameCell> = emptyList(),
     /** GROUP: длительность > 0 делает группу определением символа (вложенной сцены) с таким числом кадров. */

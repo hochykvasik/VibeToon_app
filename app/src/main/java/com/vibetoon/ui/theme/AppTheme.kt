@@ -38,6 +38,8 @@ val ACCENTS: List<Accent> = listOf(
 /** Что выбрано в настройках внешнего вида; хранится в SharedPreferences и мгновенно применяется (все поля - состояние Compose). */
 class AppSettings(context: Context) {
     private val p = context.applicationContext.getSharedPreferences("vt_app", Context.MODE_PRIVATE)
+    /** Спринт 39: окно цвета (последние цвета, режим) - отдельный раздел резервной копии. */
+    private val colorPrefs = context.applicationContext.getSharedPreferences("vt_colors", Context.MODE_PRIVATE)
 
     /** "ru", "en" или пусто (ещё не выбран - берётся язык системы). */
     var lang by mutableStateOf(p.getString("lang", "") ?: "")
@@ -158,7 +160,7 @@ class AppSettings(context: Context) {
     }
 
     /** Пакет 10: резервная копия всех настроек (JSON) для «Manual Backup». */
-    fun backupJson(): String = com.vibetoon.domain.settings.SettingsBackup.encode(p.all)
+    fun backupJson(): String = com.vibetoon.domain.settings.SettingsBackup.encode(p.all, colors = colorPrefs.all)
 
     /** Пакет 10: «Import Backup» - значения записываются с типами текущих настроек и сразу применяются. */
     fun importBackup(text: String): Boolean {
@@ -176,6 +178,14 @@ class AppSettings(context: Context) {
             }
         }
         e.commit()
+        // спринт 39: последние цвета и режим окна цвета (в старых копиях раздела нет - ничего не меняется)
+        val colors = com.vibetoon.domain.settings.SettingsBackup.decodeColors(text)
+        if (colors.isNotEmpty()) {
+            val ce = colorPrefs.edit()
+            (colors["recent"] as? String)?.let { ce.putString("recent", it) }
+            (colors["mode"] as? Number)?.let { ce.putInt("mode", it.toInt()) }
+            ce.commit()
+        }
         reload()
         return true
     }

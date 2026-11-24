@@ -1582,4 +1582,68 @@ Out of Pegs: соседние рисунки стоят там, где слой 
 Слой «{}» стал маской: видно там, где он непрозрачный|Layer “{}” became a mask: visible where it is opaque
 Маска отвязана: теперь это обычный слой|Mask unlinked: it is a regular layer now
 Слой костей не дублируется: создайте новый и нарисуйте кости|A bone layer can't be duplicated: create a new one and draw bones
+Миниатюры|Thumbnails
+Список|List
+Поиск слоя|Search layers
+Очистить поиск|Clear search
+Свернуть все|Collapse all
+Развернуть все|Expand all
+Ничего не найдено: измените поиск или фильтр|Nothing found: change the search or filter
+Кость|Bone
+Свернуть / развернуть|Collapse / expand
+Слоёв на пути: {}|Layers on path: {}
+Найдено: {} из {}|Found: {} of {}
+Рисунки|Drawings
+Медиа|Media
+Маски|Masks
+Кости и пути|Bones and paths
+Свои кисти|Custom brushes
+Сохранить текущую как свою|Save current as custom
+Импорт кистей…|Import brushes…
+Экспорт кистей…|Export brushes…
+Удалить кисть|Delete brush
+Свои кисти: «⋮» → «Сохранить текущую как свою» или «Импорт кистей…»|Custom brushes: “⋮” → “Save current as custom” or “Import brushes…”
+Своих кистей уже 100: удалите ненужные|You already have 100 custom brushes: delete some
+Кисть сохранена: {}|Brush saved: {}
+Кисть удалена: {}|Brush deleted: {}
+Кисти экспортированы: {}|Brushes exported: {}
+Не удалось сохранить файл кистей|Could not save the brush file
+Своя кисть|Custom brush
+Свой ластик|Custom eraser
+Своя кисть {}|Custom brush {}
+Свой ластик {}|Custom eraser {}
+Последние цвета|Recent colors
+Палитры|Palettes
+Палитра|Palette
+Новая палитра из последних цветов|New palette from recent colors
+Импорт палитры…|Import palette…
+Экспорт палитр…|Export palettes…
+Удалить палитру|Delete palette
+Палитра сохранена|Palette saved
+Палитра удалена|Palette deleted
+В палитре уже 64 цвета|The palette already has 64 colors
+Палитры экспортированы: {}|Palettes exported: {}
+Не удалось сохранить файл палитры|Could not save the palette file
+Направление|Direction
+Авто|Auto
+Слева направо|Left to right
+Справа налево|Right to left
+Текст пишется справа налево (определено по первой букве)|The text runs right to left (detected from the first letter)
+Файл пустой|The file is empty
+Файл слишком большой (больше 1 МБ)|The file is too large (over 1 MB)
+Файл повреждён: это не JSON|The file is damaged: it is not JSON
+Это не файл кистей VibeToon|This is not a VibeToon brush file
+Это не файл палитры (нужен .json VibeToon, .gpl GIMP или список HEX)|This is not a palette file (use a VibeToon .json, a GIMP .gpl or a HEX list)
+Это файл палитры: импортируйте его в окне цвета|This is a palette file: import it in the color window
+Это файл кистей: импортируйте его в меню кистей|This is a brush file: import it in the brush menu
+Файл из более новой версии VibeToon: обновите приложение|The file is from a newer VibeToon version: update the app
+В файле нет ни одной исправной кисти|The file has no valid brushes
+В файле нет ни одного цвета|The file has no colors
+Нечего экспортировать|Nothing to export
+Импортировано кистей: {}|Brushes imported: {}
+Импортировано кистей: {}, пропущено повреждённых: {}|Brushes imported: {}, damaged skipped: {}
+Импортировано кистей: {}, не поместилось: {} (не больше 100)|Brushes imported: {}, did not fit: {} (100 max)
+Импортировано палитр: {}, цветов: {}|Palettes imported: {}, colors: {}
+Импортировано палитр: {}, цветов: {}, пропущено: {}|Palettes imported: {}, colors: {}, skipped: {}
+Импортировано палитр: {}, не поместилось: {} (не больше 50)|Palettes imported: {}, did not fit: {} (50 max)
 """
