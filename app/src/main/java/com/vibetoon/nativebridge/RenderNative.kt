@@ -49,6 +49,14 @@ object RenderNative {
     external fun setTextureAliases(renderer: Long, ids: IntArray, primary: IntArray, fallback: IntArray, rects: FloatArray)
     /** Удалить текстуры форм символов (только GL-поток). */
     external fun dropTextures(renderer: Long, ids: IntArray)
+    /** Пакет 29: бюджет GPU-памяти под текстуры в байтах (см. TextureBudget). Только GL-поток. */
+    external fun setTextureBudget(renderer: Long, bytes: Long)
+    /** [занято, бюджет] в байтах. Только GL-поток. */
+    external fun textureMemory(renderer: Long): LongArray?
+    /** Текстуры, которые рендерер может вытеснить при нехватке памяти (их восстановит ViewModel). Только GL-поток. */
+    external fun setEvictable(renderer: Long, ids: IntArray?)
+    /** События памяти текстур с прошлого вызова: пары [вид, id] (см. TextureEvents) или null. Только GL-поток. */
+    external fun takeTextureEvents(renderer: Long): IntArray?
     /** Флаги [captureFrame]: теневые текстуры символа / не снимать, пока у видимых слоёв нет текстур (пустой результат). */
     const val CAPTURE_SHADOW = 1
     const val CAPTURE_STRICT = 2
@@ -96,6 +104,8 @@ object RenderNative {
     external fun endExport(renderer: Long)
     /** Снимок кадра w x h в память: RGBA premultiplied, строка 0 - низ кадра (как у glReadPixels); null - ошибка. Только из GL-потока. */
     external fun captureFrame(renderer: Long, width: Int, height: Int, transparent: Boolean, flags: Int): ByteArray?
+    /** Пакет 29: снимок прямо в текстуру [id] без копии в память: 1 - готово, 0 - не всё загружено (CAPTURE_STRICT), -1 - ошибка, -2 - бюджет. */
+    external fun captureToTexture(renderer: Long, id: Int, width: Int, height: Int, transparent: Boolean, flags: Int): Int
     /** Цвет пикселя экрана ARGB (пипетка); вызывать из GL-потока сразу после drawFrame. */
     external fun readPixel(renderer: Long, x: Int, y: Int): Int
     /** true = нужен ещё кадр (позже: идёт загрузка текстур). */

@@ -348,7 +348,7 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
     val longPressMillis = config.longPressTimeoutMillis
     Box(modifier) {
         AndroidView(
-            factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextRecreated = { vm.onGlContextRecreated() }; RenderHost.view = it } },
+            factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextRecreated = { vm.onGlContextRecreated() }; it.onTextureEvents = { ev -> vm.onTextureEvents(ev) }; RenderHost.view = it } },
             onRelease = { it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
             modifier = Modifier.matchParentSize()
         )

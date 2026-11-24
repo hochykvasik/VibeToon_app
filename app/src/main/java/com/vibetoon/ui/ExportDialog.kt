@@ -211,7 +211,7 @@ fun ExportDialog(vm: MainViewModel, visible: Boolean, onHide: () -> Unit) {
                 val message = if (s.gallerySaved) "${s.file.length() / 1024} КБ. Сохранено в папку проекта и в галерею."
                     else if (s.file.extension.lowercase() in setOf("png", "jpg", "gif", "mp4")) "${s.file.length() / 1024} КБ. Сохранено в папку проекта; копию в галерею создать не удалось."
                     else "${s.file.length() / 1024} КБ. Сохранено в папку проекта."
-                Text(s.file.name + "\n" + com.vibetoon.ui.i18n.L(message) + (s.note?.let { "\n" + com.vibetoon.ui.i18n.L(it) } ?: ""))
+                Text(s.file.name + "\n" + com.vibetoon.ui.i18n.L(message) + (s.note?.let { n -> "\n" + n.split("\n").map { com.vibetoon.ui.i18n.L(it) }.joinToString("\n") } ?: ""))
             },
             confirmButton = { TextButton({ share(ctx, s.file, shareTitle) }) { Text("Поделиться") } },
             dismissButton = { TextButton({ vm.dismissExport(); onHide() }) { Text("Закрыть") } }

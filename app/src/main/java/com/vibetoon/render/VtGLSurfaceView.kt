@@ -27,7 +27,11 @@ class VtRenderer(
     private val frameParams: () -> FrameParams,
     private val requestRender: () -> Unit,
     private val onReady: () -> Unit,
-    private val onContextRecreated: () -> Unit = {}
+    private val onContextRecreated: () -> Unit = {},
+    /** Пакет 29: бюджет текстур по памяти устройства (аргумент - GL_MAX_TEXTURE_SIZE). */
+    private val textureBudget: (Int) -> Long = { com.vibetoon.domain.render.TextureBudget.DEFAULT },
+    /** Пакет 29: события памяти текстур (вытеснение, отказ) - вызывается ИЗ GL-потока. */
+    private val onTextureEvents: (IntArray) -> Unit = {}
 ) : GLSurfaceView.Renderer {
     private var handle = 0L
     @Volatile private var disposed = false
@@ -50,6 +54,13 @@ class VtRenderer(
         handle = RenderNative.create()
         val maxTex = RenderNative.initGL(handle)
         Log.i(TAG_GL, "initGL maxTexture=$maxTex")
+        // пакет 29: бюджет текстур по памяти устройства; список вытесняемых - тот же, что у прежнего рендерера
+        val budget = textureBudget(maxTex)
+        RenderNative.setTextureBudget(handle, budget)
+        TextureMemoryHost.budgetBytes = budget
+        TextureMemoryHost.maxTextureSize = maxTex
+        Log.i(TAG_GL, "texture budget ${budget / (1024 * 1024)} MB")
+        lastEvictable?.let { RenderNative.setEvictable(handle, it) }
         // Текстуры потеряны вместе с контекстом; сцену отправим заново (TODO: перезагрузка слоёв).
         lastScene?.let { applyScene(it) }
         onReady()
@@ -89,19 +100,49 @@ class VtRenderer(
                 if (st.size >= 7) RenderMetrics.groupCached = st[6]
             }
         }
+        pollTextureEvents()
         sampleReq?.let { (x, y, cb) -> sampleReq = null; cb(RenderNative.readPixel(handle, x, y)) }
         val checks = afterFrameChecks.toList(); afterFrameChecks.clear()
         checks.forEach { (id, callback) -> callback(layerSize(id)) }
         if (more) requestRender() // в очереди остались загрузки
     }
 
+    // ---- пакет 29: память текстур ----
+    private var lastEvictable: IntArray? = null
+
+    /** Какие текстуры можно вытеснять (только GL-поток); переживает пересоздание контекста. */
+    fun setEvictable(ids: IntArray) {
+        lastEvictable = ids
+        if (handle != 0L) RenderNative.setEvictable(handle, ids)
+    }
+
+    /** Забрать события памяти текстур после кадра и отдать ViewModel (только GL-поток). */
+    private fun pollTextureEvents() {
+        if (handle == 0L) return
+        val ev = RenderNative.takeTextureEvents(handle) ?: return
+        RenderNative.textureMemory(handle)?.let { if (it.size >= 2) { TextureMemoryHost.usedBytes = it[0]; TextureMemoryHost.budgetBytes = it[1] } }
+        runCatching { onTextureEvents(ev) }
+    }
+
     /** Снимок кадра: при [scene] != null временно подставляет её, потом возвращает прежнюю. Только из GL-потока. */
     fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int = 0): ByteArray? {
         if (handle == 0L || exportJob != null) return null   // посреди экспорта MP4 сцена и вид заняты им
-        if (scene != null) applyScene(scene)
+        if (scene != null) { applyScene(scene); scene.beforeDraw?.invoke() }
         RenderNative.setBackground(handle, scene?.backgroundOverride ?: background)
         val r = RenderNative.captureFrame(handle, width, height, transparent, flags)
+        pollTextureEvents()
         if (scene != null) lastScene?.let { applyScene(it) }
+        return r
+    }
+
+    /** Пакет 29: снимок сцены прямо в текстуру [id] (см. RenderNative.captureToTexture). Только из GL-потока. */
+    fun captureToTexture(scene: SceneData, id: Int, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int): Int {
+        if (handle == 0L || exportJob != null) return -1
+        applyScene(scene)
+        RenderNative.setBackground(handle, scene.backgroundOverride ?: background)
+        val r = RenderNative.captureToTexture(handle, id, width, height, transparent, flags)
+        pollTextureEvents()
+        lastScene?.let { applyScene(it) }
         return r
     }
 
@@ -189,21 +230,24 @@ class VtRenderer(
             if (interrupted()) return null
             val s = job.prefetch.get(index)
             applyScene(s)
+            s.beforeDraw?.invoke()   // пакет 29: картинки именно этого кадра - прямо перед его отрисовкой
             RenderNative.setBackground(handle, s.backgroundOverride ?: background)
             RenderNative.setSelection(handle, null)
-            return RenderNative.captureFrame(handle, width, height, false, 0)
+            return RenderNative.captureFrame(handle, width, height, false, 0).also { pollTextureEvents() }
         }
 
         override fun drawFrame(index: Int): Boolean {
             val s = job.prefetch.get(index)
             applyScene(s)
+            s.beforeDraw?.invoke()   // пакет 29: картинки именно этого кадра - прямо перед его отрисовкой
             RenderNative.setBackground(handle, s.backgroundOverride ?: background)   // пакет 24: переход через цвет
             // пока в очереди есть загрузки текстур, кадр рисуется повторно (лимит от зависания); пауза/отмена прерывают
             // кадр - он не уходит в кодек и будет нарисован заново
             var guard = 0
             while (RenderNative.drawFrame(handle) && guard++ < 500) {
-                if (job.cancel.get() || interrupted()) return false
+                if (job.cancel.get() || interrupted()) { pollTextureEvents(); return false }
             }
+            pollTextureEvents()
             return true
         }
 
@@ -225,7 +269,22 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     private val params = AtomicReference(FrameParams())
     private val rendererReady = kotlinx.coroutines.CompletableDeferred<Unit>()
     var onContextRecreated: (() -> Unit)? = null
-    private val vtRenderer = VtRenderer({ pendingScene.getAndSet(null) }, { params.get() }, { requestRender() }, { rendererReady.complete(Unit) }, { onContextRecreated?.invoke() })
+    /** Пакет 29: события памяти текстур (пары [вид, id], см. TextureEvents); вызывается ИЗ GL-потока. */
+    var onTextureEvents: ((IntArray) -> Unit)? = null
+    private val vtRenderer = VtRenderer({ pendingScene.getAndSet(null) }, { params.get() }, { requestRender() }, { rendererReady.complete(Unit) },
+        { onContextRecreated?.invoke() }, ::computeTextureBudget, { ev -> onTextureEvents?.invoke(ev) })
+
+    /** Пакет 29: бюджет текстур по памяти устройства (ActivityManager) и возможностям GPU. */
+    private fun computeTextureBudget(maxTex: Int): Long = runCatching {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        com.vibetoon.domain.render.TextureBudget.compute(mi.totalMem, mi.availMem, am.isLowRamDevice, maxTex)
+    }.getOrDefault(com.vibetoon.domain.render.TextureBudget.DEFAULT)
+
+    /** Пакет 29: список текстур, которые рендерер может вытеснить (применяется в GL-потоке). */
+    fun setEvictable(ids: IntArray) {
+        queueEvent { vtRenderer.setEvictable(ids) }
+    }
 
     /**
      * Поверхность уходит на паузу. GLSurfaceView.onPause ждёт GL-поток, а тот сначала выполняет ВСЕ события очереди
@@ -449,6 +508,15 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
         queueEvent {
             if (surfacePaused) { callback(null); return@queueEvent }
             callback(vtRenderer.capture(scene, width, height, transparent, background, flags)); requestRender()
+        }
+    }
+
+    /** Пакет 29: снимок в текстуру [id] в GL-потоке; результат (1/0/-1/-2) придёт в callback ИЗ GL-потока. */
+    fun captureToTexture(scene: SceneData, id: Int, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int, callback: (Int) -> Unit) {
+        if (surfacePaused) { callback(-1); return }
+        queueEvent {
+            if (surfacePaused) { callback(-1); return@queueEvent }
+            callback(vtRenderer.captureToTexture(scene, id, width, height, transparent, background, flags)); requestRender()
         }
     }
 

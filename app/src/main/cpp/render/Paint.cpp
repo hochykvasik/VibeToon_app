@@ -263,6 +263,7 @@ void Renderer::paintDrawDabs(int mode, const float color[3], const BrushPreset& 
 bool Renderer::paintBegin(int layerId, int mode, float opacity, bool alphaLock, float r, float g, float b, const BrushPreset& preset, const uint8_t* grain) {
     bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
     touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
+    markModified(layerId);   // пакет 29: содержимое теперь только в GPU - текстуру не вытеснять
     const auto t = textures_.find(layerId);
     if (t == textures_.end() || t->second.w <= 0 || t->second.h <= 0 || !vbo_) return false;
     if (paintActive_) {  // прерванный штрих (потеря касания и т.п.): слой возвращается к состоянию до него
@@ -501,6 +502,7 @@ int Renderer::paintPoll(std::vector<uint8_t>& out) {
 bool Renderer::paintRestore(int layerId, int x, int y, int w, int h, const uint8_t* rgba) {
     bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
     touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
+    markModified(layerId);   // пакет 29
     const auto t = textures_.find(layerId);
     if (t == textures_.end() || !rgba) return false;
     Tex& tex = t->second;

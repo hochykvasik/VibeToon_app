@@ -3,6 +3,7 @@
 #include <android/bitmap.h>
 #include <jni.h>
 #include <cstring>
+#include <vector>
 
 #include "render/Renderer.h"
 #include "render/UploadQueue.h"
@@ -231,6 +232,41 @@ Java_com_vibetoon_nativebridge_RenderNative_dropTextures(JNIEnv* env, jobject, j
     R(h)->dropTextures(reinterpret_cast<const int*>(a.data()), static_cast<int>(n));
 }
 
+// Пакет 29: бюджет GPU-памяти под текстуры (байты), считается в Kotlin по памяти устройства.
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setTextureBudget(JNIEnv*, jobject, jlong h, jlong bytes) {
+    R(h)->setTextureBudget(static_cast<int64_t>(bytes));
+}
+
+// [занято, бюджет] в байтах.
+JNIEXPORT jlongArray JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_textureMemory(JNIEnv* env, jobject, jlong h) {
+    const jlong v[2] = {static_cast<jlong>(R(h)->textureBytesUsed()), static_cast<jlong>(R(h)->textureBudget())};
+    jlongArray out = env->NewLongArray(2);
+    if (out) env->SetLongArrayRegion(out, 0, 2, v);
+    return out;
+}
+
+// Текстуры, которые можно вытеснить при нехватке памяти (Kotlin их восстановит). null - ни одной.
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setEvictable(JNIEnv* env, jobject, jlong h, jintArray ids) {
+    const jsize n = ids ? env->GetArrayLength(ids) : 0;
+    std::vector<jint> a(n);
+    if (n > 0) env->GetIntArrayRegion(ids, 0, n, a.data());
+    R(h)->setEvictable(reinterpret_cast<const int*>(a.data()), static_cast<int>(n));
+}
+
+// События памяти текстур [вид, id, ...] с прошлого вызова или null (их нет - без выделения памяти).
+JNIEXPORT jintArray JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_takeTextureEvents(JNIEnv* env, jobject, jlong h) {
+    std::vector<int> ev;
+    R(h)->takeTextureEvents(ev);
+    if (ev.empty()) return nullptr;
+    jintArray out = env->NewIntArray(static_cast<jsize>(ev.size()));
+    if (out) env->SetIntArrayRegion(out, 0, static_cast<jsize>(ev.size()), reinterpret_cast<const jint*>(ev.data()));
+    return out;
+}
+
 // Отбрасывает ещё не загруженные в GPU текстуры предыдущего проекта
 JNIEXPORT void JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_clearPendingUploads(JNIEnv*, jobject) {
@@ -442,6 +478,13 @@ Java_com_vibetoon_nativebridge_RenderNative_captureFrame(JNIEnv* env, jobject, j
     if (!arr) return nullptr;
     env->SetByteArrayRegion(arr, 0, static_cast<jsize>(px.size()), reinterpret_cast<const jbyte*>(px.data()));
     return arr;
+}
+
+// Пакет 29: снимок прямо в текстуру [id] (формы символов для экспорта): 1 - готово, 0 - текстуры участников ещё
+// грузятся (kCaptureStrict), -1 - ошибка, -2 - не хватает бюджета памяти текстур.
+JNIEXPORT jint JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_captureToTexture(JNIEnv*, jobject, jlong h, jint id, jint w, jint hh, jboolean transparent, jint flags) {
+    return R(h)->captureToTexture(id, w, hh, transparent == JNI_TRUE, flags);
 }
 
 JNIEXPORT jint JNICALL

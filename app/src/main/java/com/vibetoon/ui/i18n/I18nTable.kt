@@ -1397,6 +1397,8 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Файл другого приложения повреждён или в неподдерживаемой версии формата" to R.string.ui_the_file_from_another_app_is_damaged,
     "Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster или Krita" to R.string.ui_the_file_doesn_t_look_like_a_project,
     "Проект Rough Animator не читается напрямую: экспортируйте анимацию в Rough Animator как последовательность PNG (ZIP), GIF или видео и импортируйте этот файл" to R.string.ui_rough_animator_projects_can_t_be_rea,
+    "Не хватает памяти GPU: часть слоёв временно показана без обновления. Скройте лишние слои - показ восстановится сам" to R.string.ui_not_enough_gpu_memory_some_layers_ar,
+    "Картинка слоя больше предела GPU: слой показан без обновления. Уменьшите её размер" to R.string.ui_the_layer_image_exceeds_the_gpu_limi,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -1419,6 +1421,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Анимационный\\ слой\\ «(.+?)»:\\ рисуйте,\\ «Добавить\\ пустой\\ кадр»\\ ставит\\ следующий\\ рисунок\$" to R.string.ui_animation_layer_draw_add_empty_frame,
     "^Обведено\\ слоёв:\\ (.+?)\\.\\ Выберите\\ кость\\ \\(инструмент\\ «Выбрать»\\)\\ и\\ нажмите\\ «Привязать»\$" to R.string.ui_layers_lassoed_select_a_bone_select_,
     "^PSD\\ «(.+?)»\\ вставлен\\ как\\ покадровый\\ слой:\\ кадров\\ (.+?)\\ \\(больше\\ за\\ раз\\ не\\ импортируется\\)\$" to R.string.ui_psd_inserted_as_a_frame_by_frame_lay,
+    "^Не\\ хватило\\ памяти\\ GPU:\\ часть\\ картинок\\ слоёв\\ в\\ файле\\ могла\\ не\\ обновиться\\ \\((.+?)\\)\$" to R.string.ui_not_enough_gpu_memory_some_layer_ima,
     "^Импортировано\\ как\\ символ\\ «Символ\\ (.+?)»:\\ двойной\\ тап\\ открывает\\ редактирование\$" to R.string.ui_imported_as_symbol_symbol_double_tap,
     "^Текстовые\\ слои\\ PSD\\ стали\\ редактируемым\\ текстом:\\ (.+?);\\ остались\\ картинкой:\\ (.+?)\$" to R.string.ui_psd_text_layers_became_editable_text,
     "^Символ\\ «Символ\\ (.+?)»\\ создан:\\ двойной\\ тап\\ по\\ нему\\ открывает\\ редактирование\$" to R.string.ui_symbol_symbol_created_double_tap_it_,

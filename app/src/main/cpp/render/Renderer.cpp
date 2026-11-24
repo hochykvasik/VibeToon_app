@@ -25,8 +25,7 @@
 namespace vt {
 namespace {
 
-// Бюджет GPU-памяти под текстуры слоёв (с учётом mip-уровней +33%).
-constexpr size_t kTextureBudgetBytes = 192u * 1024u * 1024u;
+// Бюджет GPU-памяти под текстуры слоёв - пакет 29: Renderer::budget_ (задаёт Kotlin, см. TextureBudgetPolicy.h).
 // Сколько байт грузим в GPU за один кадр (чтобы не подвешивать UI).
 constexpr size_t kUploadBytesPerFrame = 16u * 1024u * 1024u;
 
@@ -354,6 +353,7 @@ int Renderer::initGL() {
     GLint maxTex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
     LOGI("GL_MAX_TEXTURE_SIZE=%d", maxTex);
+    maxTexSize_ = maxTex;
 
     progSolid_ = buildProgram(kVertex, kFragSolid);
     progTex_ = buildProgram(kVertex, kFragTex);
@@ -462,6 +462,9 @@ int Renderer::initGL() {
     fxCacheBytes_ = 0;
     groupCache_.clear();   // FBO прошлого контекста недействительны (не удаляем - их id уже чужие)
     texGen_.clear();
+    texUse_.clear();
+    modifiedTex_.clear();
+    texEvents_.clear();
     ++texSalt_;
     bumpEpoch();
     textureBytes_ = 0;
@@ -524,7 +527,61 @@ void Renderer::beginExport(int width, int height) {
     }
 }
 
-bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out, int flags) {
+int Renderer::captureToTexture(int id, int w, int h, bool transparent, int flags) {
+    if (id < 0 || w < 1 || h < 1) return kCaptureToTexFailed;
+    if (maxTexSize_ > 0 && (w > maxTexSize_ || h > maxTexSize_)) { pushTexEvent(kTexRejectedSize, id); return kCaptureToTexFailed; }
+    if (!ensureRoom(texbudget::textureBytes(w, h), id)) { pushTexEvent(kTexRejectedBudget, id); return kCaptureToTexBudget; }
+    std::vector<uint8_t> none;
+    if (!captureFrame(w, h, transparent, none, flags, id)) return kCaptureToTexFailed;
+    return textures_.count(id) ? kCaptureToTexOk : kCaptureToTexNotReady;
+}
+
+// Пакет 29: содержимое FBO снимка -> новая текстура [id] (строки перевёрнуты: как у загруженных картинок, строка 0 -
+// верх), с mip-уровнями. Только GPU. Прежняя текстура [id] заменяется. false - ошибка GL (прежняя не тронута).
+bool Renderer::keepCaptureAsTexture(GLuint srcFbo, int id, int w, int h) {
+    const size_t bytes = texbudget::textureBytes(w, h);
+    checkGl("before keepCaptureAsTexture");
+    GLuint dst = 0, dstFbo = 0;
+    glGenTextures(1, &dst);
+    glBindTexture(GL_TEXTURE_2D, dst);
+    const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(w, h))));
+    glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, w, h);
+    glGenFramebuffers(1, &dstFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dstFbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
+    bool ok = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    if (ok) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+        glBlitFramebuffer(0, 0, w, h, 0, h, w, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, dst);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        ok = checkGl("keepCaptureAsTexture");
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+    glDeleteFramebuffers(1, &dstFbo);
+    if (!ok) { if (dst) glDeleteTextures(1, &dst); return false; }
+    const auto old = textures_.find(id);
+    if (old != textures_.end()) {
+        glDeleteTextures(1, &old->second.id);
+        textureBytes_ -= std::min(textureBytes_, old->second.bytes);
+        textures_.erase(old);
+    }
+    Tex t;
+    t.id = dst; t.w = w; t.h = h; t.bytes = bytes;   // альфы для касаний нет: такие текстуры только для экспорта
+    textures_[id] = std::move(t);
+    textureBytes_ += bytes;
+    texUse_[id] = ++useClock_;
+    droppedTex_.erase(id);
+    dropFxEntry(id);
+    touchTex(id);
+    return true;
+}
+
+bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out, int flags, int toTexture) {
     // Приложение в фоне: поверхность GLSurfaceView снята, контекст не текущий - любые GL-вызовы дадут мусор
     // (раньше пустой снимок мог стать картинкой символа). Отказ - вызывающий повторит после возврата.
     if (eglGetCurrentContext() == EGL_NO_CONTEXT) return false;
@@ -580,6 +637,8 @@ bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>
             if (notReady) {
                 out.clear();
                 ok = true;
+            } else if (toTexture >= 0) {
+                ok = keepCaptureAsTexture(fbo, toTexture, w, h);   // пакет 29: без glReadPixels
             } else {
                 out.assign(static_cast<size_t>(w) * h * 4, 0);
                 glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -708,6 +767,17 @@ void Renderer::setScene(const int* ops, const float* params, int n) {
         const int* o = ops + i * 4;
         const float* p = params + i * 8;
         scene_.push_back({o[0], o[1], o[2], o[3], {p[0], p[1], p[2], p[3], p[4], p[5]}, p[6]});
+    }
+    // пакет 29: давность текстур для LRU-вытеснения (слои сцены и формы их экземпляров)
+    ++useClock_;
+    for (const Item& it : scene_) {
+        if (it.op != 0) continue;
+        texUse_[it.layerId] = useClock_;
+        const auto a = aliases_.find(it.layerId);
+        if (a != aliases_.end()) {
+            if (a->second.primary >= 0) texUse_[a->second.primary] = useClock_;
+            if (a->second.fallback >= 0) texUse_[a->second.fallback] = useClock_;
+        }
     }
 }
 
@@ -966,6 +1036,10 @@ void Renderer::clearTextures() {
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
     textureBytes_ = 0;
+    texUse_.clear();
+    modifiedTex_.clear();
+    evictable_.clear();
+    texEvents_.clear();
     ++texSalt_;
     clearShadows();
     dropFxCache();
@@ -1032,12 +1106,78 @@ void Renderer::setTextureAliases(const int* ids, const int* prim, const int* fal
     }
     aliases_.swap(next);
     if (!same) { bumpEpoch(); for (int i = 0; i < n; ++i) dropFxEntry(ids[i]); }
+    ++useClock_;   // пакет 29: формы на экране - самые свежие для LRU
+    for (int i = 0; i < n; ++i) {
+        if (prim[i] >= 0) texUse_[prim[i]] = useClock_;
+        if (fallback[i] >= 0) texUse_[fallback[i]] = useClock_;
+    }
+}
+
+// ---------------------------------------------------------------- пакет 29: бюджет и вытеснение текстур
+
+void Renderer::setEvictable(const int* ids, int n) {
+    evictable_.clear();
+    for (int i = 0; i < n; ++i) evictable_.insert(ids[i]);
+}
+
+void Renderer::pushTexEvent(int kind, int id) {
+    if (texEvents_.size() >= 512) return;   // Kotlin забирает каждый кадр; переполнение - только если он не успевает
+    texEvents_.push_back(kind);
+    texEvents_.push_back(id);
+}
+
+void Renderer::evictTexture(int id) {
+    const auto t = textures_.find(id);
+    if (t == textures_.end()) return;
+    glDeleteTextures(1, &t->second.id);
+    textureBytes_ -= std::min(textureBytes_, t->second.bytes);
+    textures_.erase(t);
+    texUse_.erase(id);
+    touchTex(id);
+    dropFxEntry(id);
+    bumpEpoch();
+    pushTexEvent(kTexEvicted, id);
+    LOGI("texture %d evicted (LRU), %zu/%zu MB in use", id, textureBytes_ / texbudget::kMiB, budget_ / texbudget::kMiB);
+}
+
+bool Renderer::ensureRoom(size_t need, int keepId) {
+    if (texbudget::fits(textureBytes_, need, budget_)) return true;
+    if (need > budget_) return false;
+    // закреплены: слои текущей сцены и формы их экземпляров, слой под кистью и его чтения, изменённые на месте,
+    // не разрешённые Kotlin к вытеснению
+    std::unordered_set<int> live;
+    for (const Item& it : scene_) {
+        if (it.op != 0) continue;
+        live.insert(it.layerId);
+        const auto a = aliases_.find(it.layerId);
+        if (a != aliases_.end()) { live.insert(a->second.primary); live.insert(a->second.fallback); }
+    }
+    if (paintActive_) live.insert(paintLayer_);
+    for (const PaintRead& pr : paintReads_) live.insert(pr.layerId);
+    std::vector<texbudget::Candidate> cands;
+    cands.reserve(textures_.size());
+    for (const auto& kv : textures_) {
+        const int id = kv.first;
+        const auto u = texUse_.find(id);
+        texbudget::Candidate c;
+        c.id = id;
+        c.lastUse = u == texUse_.end() ? 0 : u->second;
+        c.bytes = kv.second.bytes;
+        c.pinned = id == keepId || live.count(id) || !evictable_.count(id) || modifiedTex_.count(id);
+        cands.push_back(c);
+    }
+    std::vector<int> victims;
+    if (!texbudget::plan(std::move(cands), textureBytes_, need, budget_, victims)) return false;
+    for (int id : victims) evictTexture(id);
+    return texbudget::fits(textureBytes_, need, budget_);
 }
 
 void Renderer::dropTextures(const int* ids, int n) {
     for (int i = 0; i < n; ++i) {
         droppedTex_.insert(ids[i]);
         touchTex(ids[i]);
+        texUse_.erase(ids[i]);
+        modifiedTex_.erase(ids[i]);
         const auto t = textures_.find(ids[i]);
         if (t == textures_.end()) continue;
         glDeleteTextures(1, &t->second.id);
@@ -1059,10 +1199,8 @@ int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, i
     if (!queueGuard.prepareLayer(layerId)) return -5;
     // Консервативная оценка всех mip-уровней, включая пик одновременного существования обеих текстур.
     const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 8;
-    if (bytes > kTextureBudgetBytes || textureBytes_ > kTextureBudgetBytes - bytes) return -4;
-    GLint maxTex = 0;
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
-    if (w > maxTex || h > maxTex) return -4;
+    if (maxTexSize_ > 0 && (w > maxTexSize_ || h > maxTexSize_)) return -4;
+    if (!ensureRoom(bytes, layerId)) { pushTexEvent(kTexRejectedBudget, layerId); return -4; }
     Tex t;
     t.w = w; t.h = h; t.bytes = bytes;
     try {
@@ -1093,6 +1231,7 @@ int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, i
     }
     queueGuard.invalidateLayer(layerId);
     touchTex(layerId);
+    markModified(layerId);   // пакет 29: содержимое из памяти (не из файла) - не вытеснять
     bumpEpoch();
     const GLuint oldId = old->second.id;
     textureBytes_ -= old->second.bytes;
@@ -1135,31 +1274,54 @@ void Renderer::uploadPending() {
     size_t uploaded = 0;
     PendingUpload up;
     while (uploaded < kUploadBytesPerFrame && uploadQueue::pop(up)) {
-        const size_t bytes = static_cast<size_t>(up.width) * up.height * 4 * 4 / 3;  // с mip
+        const size_t bytes = texbudget::textureBytes(up.width, up.height);  // с mip
         if (!droppedTex_.empty() && droppedTex_.count(up.layerId)) continue;   // форма уже удалена - загрузка опоздала
-        auto old = textures_.find(up.layerId);
-        // Старую текстуру держим до успешного создания новой: бюджет учитывает пик обеих.
-        if (up.width <= 0 || up.height <= 0 || bytes > kTextureBudgetBytes ||
-            textureBytes_ > kTextureBudgetBytes - bytes) {
-            LOGW("texture budget exceeded, layer %d unchanged (%zu MB in use)", up.layerId,
-                 textureBytes_ / (1024 * 1024));
-            continue;
-        }
-        GLint maxTex = 0;
-        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
-        if (up.width > maxTex || up.height > maxTex) {
+        if (up.width <= 0 || up.height <= 0 || up.rgba.size() < static_cast<size_t>(up.width) * up.height * 4) continue;
+        if (maxTexSize_ > 0 && (up.width > maxTexSize_ || up.height > maxTexSize_)) {
             LOGW("texture dimensions exceed GL limit, layer %d unchanged", up.layerId);
+            pushTexEvent(kTexRejectedSize, up.layerId);
             continue;
         }
+        auto old = textures_.find(up.layerId);
+        // Пакет 29: тот же размер - пишем в существующую текстуру (без новой памяти, пика и пересоздания).
+        if (old != textures_.end() && old->second.id && old->second.w == up.width && old->second.h == up.height) {
+            Tex& t = old->second;
+            checkGl("before uploadPending reuse");
+            glBindTexture(GL_TEXTURE_2D, t.id);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE, up.rgba.data());
+            glGenerateMipmap(GL_TEXTURE_2D);
+            if (checkGl("uploadPending reuse")) {
+                if (t.alpha.size() != static_cast<size_t>(up.width) * up.height) t.alpha.resize(static_cast<size_t>(up.width) * up.height);
+                for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = up.rgba[i * 4 + 3];
+                uploaded += up.rgba.size();
+                dropFxEntry(up.layerId);
+                touchTex(up.layerId);
+                bumpEpoch();
+                up = PendingUpload();
+                continue;
+            }
+            // ошибка записи - пробуем обычный путь с новой текстурой
+        }
+        // Старую текстуру держим до успешного создания новой: бюджет учитывает пик обеих. Не хватает - вытесняем
+        // давно не показанные текстуры, которые можно восстановить; не вышло - сообщаем Kotlin (предупреждение).
+        if (!ensureRoom(bytes, up.layerId)) {
+            LOGW("texture budget exceeded, layer %d unchanged (%zu/%zu MB in use)", up.layerId,
+                 textureBytes_ / texbudget::kMiB, budget_ / texbudget::kMiB);
+            pushTexEvent(kTexRejectedBudget, up.layerId);
+            continue;
+        }
+        old = textures_.find(up.layerId);   // ensureRoom не трогает keepId, но итератор мог стать недействительным
         Tex t;
         if (!makeTexture(up, bytes, t)) continue;
         if (old != textures_.end()) {
             glDeleteTextures(1, &old->second.id);
-            textureBytes_ -= old->second.bytes;
+            textureBytes_ -= std::min(textureBytes_, old->second.bytes);
             textures_.erase(old);
         }
         textures_[up.layerId] = std::move(t);
         textureBytes_ += bytes;
+        texUse_[up.layerId] = ++useClock_;   // только что загруженная - самая свежая
         uploaded += up.rgba.size();
         dropFxEntry(up.layerId);
         touchTex(up.layerId);
@@ -1174,15 +1336,13 @@ void Renderer::uploadPending() {
 void Renderer::uploadShadows() {
     PendingUpload up;
     while (uploadQueue::popShadow(up)) {
-        const size_t bytes = static_cast<size_t>(up.width) * up.height * 4 * 4 / 3;
-        if (up.width <= 0 || up.height <= 0 || bytes > kTextureBudgetBytes ||
-            textureBytes_ > kTextureBudgetBytes - bytes) {
+        const size_t bytes = texbudget::textureBytes(up.width, up.height);
+        if (up.width <= 0 || up.height <= 0) continue;
+        if (maxTexSize_ > 0 && (up.width > maxTexSize_ || up.height > maxTexSize_)) continue;
+        if (!ensureRoom(bytes, -1)) {
             LOGW("shadow texture budget exceeded, layer %d", up.layerId);
             continue;
         }
-        GLint maxTex = 0;
-        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
-        if (up.width > maxTex || up.height > maxTex) continue;
         Tex t;
         if (!makeTexture(up, bytes, t)) continue;
         auto old = shadowTex_.find(up.layerId);

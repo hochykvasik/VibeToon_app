@@ -1590,4 +1590,7 @@
     <string name="ui_the_file_from_another_app_is_damaged">Файл другого приложения повреждён или в неподдерживаемой версии формата</string>
     <string name="ui_the_file_doesn_t_look_like_a_project">Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster или Krita</string>
     <string name="ui_rough_animator_projects_can_t_be_rea">Проект Rough Animator не читается напрямую: экспортируйте анимацию в Rough Animator как последовательность PNG (ZIP), GIF или видео и импортируйте этот файл</string>
+    <string name="ui_not_enough_gpu_memory_some_layers_ar">Не хватает памяти GPU: часть слоёв временно показана без обновления. Скройте лишние слои - показ восстановится сам</string>
+    <string name="ui_the_layer_image_exceeds_the_gpu_limi">Картинка слоя больше предела GPU: слой показан без обновления. Уменьшите её размер</string>
+    <string name="ui_not_enough_gpu_memory_some_layer_ima">Не хватило памяти GPU: часть картинок слоёв в файле могла не обновиться ({})</string>
 </resources>

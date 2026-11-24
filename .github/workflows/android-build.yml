@@ -38,6 +38,8 @@ jobs:
           /tmp/vibetoon-mask-policy-test
           g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/GroupCachePolicyTest.cpp -o /tmp/vibetoon-group-cache-test
           /tmp/vibetoon-group-cache-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/TextureBudgetPolicyTest.cpp -o /tmp/vibetoon-texture-budget-test
+          /tmp/vibetoon-texture-budget-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
       - name: Run unit tests

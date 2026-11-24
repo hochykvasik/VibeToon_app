@@ -592,6 +592,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         thumbGen++; thumbs.clear(); thumbPending.clear()   // миниатюры прошлого проекта не должны всплывать у новых слоёв
         stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null
         paintSizes.clear(); paintDirty.clear(); versionedRasterIds.clear(); mediaIds.reset()
+        residency.clear(); everEdited.clear(); lastEvictable = null   // пакет 29: учёт памяти текстур - заново
         saveJob?.cancel()
         camera = Camera()
         RenderHost.view?.setCamera(camera)
@@ -752,9 +753,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (projectId != pid) return@launch
             resetForms(dropTextures = false)   // текстуры форм жили в старом контексте
             cellShown.clear(); textFxKeys.clear()
+            residency.clear(); lastEvictable = null   // пакет 29: всё загружается заново
+            for (m in media) if (m.kind == MediaKind.VIDEO) videoFrames.forget(m.id)
             runCatching { restoreMediaTextures(pid) }
             if (projectId != pid) return@launch
-            updateCells(_frame.value); updateTextFx(_frame.value); updateSymbols(_frame.value)
+            updateCells(_frame.value); updateTextFx(_frame.value); updateSymbols(_frame.value); updateVideoFrames(_frame.value)
+            pushEvictable()
             RenderHost.view?.requestRender()
         }
     }
@@ -2668,6 +2672,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         refreshBoneOverlay()
         updateSelectionFrame()
+        reloadNonResident()   // пакет 29: вытесненные текстуры, снова попавшие в сцену
+        if (!_playing.value) pushEvictable()
     }
 
     private fun refreshPanelsAfterPlay() {
@@ -3611,7 +3617,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // а сцена каждого кадра несёт таблицу «экземпляр -> текстура формы» (SceneData.aliases). Таблица и сцена
     // применяются в GL одним кадром, поэтому на любом кадре видна ровно одна форма - та, что задана ключом.
 
-    private val FORM_BUDGET_BYTES = 72L * 1024 * 1024   // формы символов на GPU (общий бюджет текстур рендерера - 192 МБ)
+    // пакет 29: бюджет форм - доля (3/8) бюджета текстур рендерера, который считается по памяти устройства
+    private val FORM_BUDGET_BYTES get() = com.vibetoon.domain.render.TextureBudget.formBudget(com.vibetoon.render.TextureMemoryHost.budgetBytes)
     private val FORM_MAX_BYTES = 12L * 1024 * 1024      // одна форма после обрезки
     private val FORM_TEX_BASE = 1_500_000_000            // id текстур форм: не пересекаются с id слоёв, не переиспользуются
     private val formCache = SymbolFormCache(FORM_BUDGET_BYTES)
@@ -3623,6 +3630,95 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var nextFormTexId = FORM_TEX_BASE
     private var formSignature = 0
     private var formBudgetWarned = false
+
+    // ---- пакет 29: память текстур (бюджет по устройству, вытеснение, предупреждение) ----
+    private val residency = com.vibetoon.domain.render.TextureResidency()
+    /** Слои, которые в этой сессии правились (кисть, Liquify, выделение): не вытесняются - содержимое может быть только в GPU. */
+    private val everEdited = HashSet<Int>()
+    private var lastEvictable: IntArray? = null
+    @Volatile private var exportPinnedForms: Set<SymbolFormCache.Key> = emptySet()
+
+    /** События памяти текстур от рендерера (из GL-потока). */
+    fun onTextureEvents(raw: IntArray) {
+        viewModelScope.launch(Dispatchers.Main) { handleTextureEvents(raw) }
+    }
+
+    private fun handleTextureEvents(raw: IntArray) {
+        val all = com.vibetoon.domain.render.TextureEvents.decode(raw)
+        if (all.isEmpty()) return
+        // формы символов: вытесненная/отклонённая форма перестаёт быть готовой и снимется заново, когда понадобится
+        // (отказ формы сообщает verifyFormTexture своим текстом)
+        val (forms, layersEv) = all.partition { it.id >= FORM_TEX_BASE }
+        var formsChanged = false
+        for (e in forms) if (formCache.removeTex(e.id) != null) formsChanged = true
+        if (formsChanged) refreshFormAliases()
+        val out = residency.onEvents(layersEv, SystemClock.uptimeMillis())
+        out.warning?.let { w ->
+            if (_export.value !is ExportUi.Running && !appBackground) _state.value = UiState.Message(
+                if (w.tooLarge) "Картинка слоя больше предела GPU: слой показан без обновления. Уменьшите её размер"
+                else "Не хватает памяти GPU: часть слоёв временно показана без обновления. Скройте лишние слои - показ восстановится сам"
+            )
+        }
+        if (out.evicted.isNotEmpty()) Log.i("VT/Tex", "evicted ${out.evicted.size} textures (${com.vibetoon.domain.render.TextureBudget.mb(com.vibetoon.render.TextureMemoryHost.usedBytes)}/${com.vibetoon.domain.render.TextureBudget.mb(com.vibetoon.render.TextureMemoryHost.budgetBytes)} MB)")
+        reloadNonResident()
+    }
+
+    /** Вытесненные (и отклонённые, когда пришло время повтора) текстуры слоёв текущей сцены загружаются заново. */
+    private fun reloadNonResident() {
+        if (residency.nonResident.isEmpty()) return
+        val pid = projectId ?: return
+        val sc = scene ?: return
+        val ids = residency.toReload(sc.textureIds, SystemClock.uptimeMillis())
+        if (ids.isEmpty()) return
+        val f = _frame.value
+        var cells = false; var videos = false; var fx = false
+        for (id in ids) {
+            val m = media.firstOrNull { it.id == id } ?: continue
+            when {
+                m.kind == MediaKind.VIDEO -> { videoFrames.forget(id); videos = true }
+                m.kind == MediaKind.IMAGE && m.cells.isNotEmpty() -> { cellShown.remove(id); cells = true }
+                m.isText && m.fx.animated -> { textFxKeys.remove(id); fx = true }
+                else -> viewModelScope.launch {
+                    runCatching { withContext(decodeDispatcher) { uploadTextureFor(pid, m) } }
+                        .onFailure { Log.w("VT/Tex", "texture ${m.id} not reloaded: ${it.message}") }
+                    RenderHost.view?.requestRender()
+                }
+            }
+        }
+        if (videos) updateVideoFrames(f)
+        if (cells) updateCells(f)
+        if (fx) updateTextFx(f)
+    }
+
+    /** Сообщает рендереру, какие текстуры можно вытеснять (только восстановимые без потерь, см. TextureEviction). */
+    private fun pushEvictable() {
+        val view = RenderHost.view ?: return
+        synchronized(paintDirty) { everEdited.addAll(paintDirty) }
+        if (liqLayer >= 0) everEdited += liqLayer
+        val items = ArrayList<Pair<Int, com.vibetoon.domain.render.TextureEviction.Source>>(media.size)
+        for (m in media) {
+            val src = when {
+                m.kind == MediaKind.VIDEO -> com.vibetoon.domain.render.TextureEviction.Source.VIDEO
+                m.isText -> com.vibetoon.domain.render.TextureEviction.Source.TEXT
+                m.kind == MediaKind.IMAGE && m.vector -> com.vibetoon.domain.render.TextureEviction.Source.OTHER
+                m.kind == MediaKind.IMAGE && m.cells.isNotEmpty() -> com.vibetoon.domain.render.TextureEviction.Source.CELLS
+                m.kind == MediaKind.IMAGE -> com.vibetoon.domain.render.TextureEviction.Source.IMAGE_FILE
+                else -> null
+            } ?: continue
+            items += m.id to src
+        }
+        val ids = com.vibetoon.domain.render.TextureEviction.evictable(items, everEdited, formCache.texIds(), formCache.texIdsOf(pinnedForms()))
+        if (lastEvictable?.contentEquals(ids) == true) return
+        lastEvictable = ids
+        view.setEvictable(ids)
+    }
+
+    /** Строка в итог экспорта: сколько загрузок текстур не поместилось в память GPU за время экспорта. */
+    private fun exportGpuNote(base: String?): String? {
+        val n = residency.rejectedSinceMark
+        val gpu = if (n > 0) "Не хватило памяти GPU: часть картинок слоёв в файле могла не обновиться ($n)" else null
+        return listOfNotNull(base, gpu).joinToString("\n").ifEmpty { null }
+    }
 
     /** Экземпляры, видимые в текущем контексте: на главной сцене - верхнего уровня, в открытом символе - вложенные в него. */
     private fun formInstances(): List<Pair<MediaItem, MediaItem>> {
@@ -3673,6 +3769,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Формы на экране сейчас (не вытесняются по бюджету). */
     private fun pinnedForms(): Set<SymbolFormCache.Key> {
         val out = HashSet<SymbolFormCache.Key>(formShown.values)
+        out += exportPinnedForms   // пакет 29: формы, которые использует идущий экспорт
         val f = _frame.value
         for ((inst, def) in formInstances()) out += formKey(inst, def, f)
         return out
@@ -3805,10 +3902,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val bytes = prepared.first.width.toLong() * prepared.first.height * 4 * 4 / 3
                 prepared.first.recycle()
                 if (!uploaded) { formFails[key] = 3; continue }
+                formCache.budgetBytes = FORM_BUDGET_BYTES
                 val drop = formCache.put(key, SymbolFormCache.Entry(id, prepared.second, bytes, gen), pinnedForms())
                 dropFormTexturesLater(drop)
                 verifyFormTexture(key, id, 0)
                 refreshFormAliases()
+                if (!_playing.value) pushEvictable()
                 if (!_playing.value) for ((inst, d) in formInstances()) if (d.id == key.def) invalidateThumb(inst.id)
             }
         }
@@ -3953,35 +4052,117 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Предварительная отрисовка вложенных сцен для экспорта: определение -> PNG каждого внутреннего кадра (null - не снялся). [frame] - только кадр проекта. */
-    private suspend fun prerenderSymbols(frame: Int? = null): Map<Int, List<ByteArray?>> {
+    /**
+     * Формы символов для экспорта (пакет 29). Раньше каждая форма снималась в память (glReadPixels), сжималась в PNG,
+     * а на каждом кадре экспорта PNG декодировался и снова грузился в текстуру экземпляра. Теперь:
+     *  1) готовые формы редактора (текстуры на GPU) берутся как есть, если их не уменьшали;
+     *  2) недостающие формы снимаются прямо в текстуру (FBO -> текстура, без копий в память) - один раз;
+     *  3) только если формам не хватает памяти GPU - прежний путь через PNG для оставшихся форм.
+     * Экземпляр на кадре экспорта показывает текстуру формы через таблицу форм сцены (как холст при Play).
+     * [frame] - только кадр проекта (снимок кадра).
+     */
+    private suspend fun prerenderSymbols(frame: Int? = null): com.vibetoon.domain.project.ExportSymbolForms.Set {
+        residency.mark()   // пакет 29: отказы памяти GPU считаются за этот экспорт
         val inside = HashSet<Int>()
         for (d in media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }) inside += symbolMembers(d.id)
         val top = media.filter { it.kind == MediaKind.SYMBOL && it.id !in inside }
         val defs = top.map { it.symRef }.distinct().mapNotNull { id -> media.firstOrNull { it.id == id && it.symDur > 0 } }
-        if (defs.isEmpty()) return emptyMap()
+        if (defs.isEmpty()) return com.vibetoon.domain.project.ExportSymbolForms.Set.EMPTY
         check(flushPaintSavesSafely()) { "Не удалось сохранить рисунок" }
-        val st = _animation.value.settings
-        val out = HashMap<Int, List<ByteArray?>>()
-        for (d in defs) {
-            val insts = top.filter { it.symRef == d.id }
-            val n = d.symDur.coerceAtLeast(1)
-            val keys: Collection<Int> = if (frame != null) insts.map { symbolKey(it, d, frame) }.toSet()
-                else if (insts.any { needsAllFrames(it, d) }) (0 until n).toList()
-                else (insts.flatMap { i -> i.timeKeys.map { it.value.coerceIn(0, n - 1) } } + 0).toSet()   // статичный символ: только кадры ключей
-            val list = MutableList<ByteArray?>(n) { null }
-            for (k in keys) {
-                if (k !in list.indices) continue
-                val b = symbolBitmap(d.id, k, 0, strict = false) ?: continue
-                list[k] = withContext(Dispatchers.Default) {
-                    val bo = java.io.ByteArrayOutputStream()
-                    b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo); b.recycle()
-                    bo.toByteArray()
+        val (dimW, dimH) = symbolDims()
+        val minLong = maxOf(canvasW, canvasH)
+        var room = FORM_BUDGET_BYTES
+        var gpuOff = false
+        val forms = HashMap<SymbolFormCache.Key, com.vibetoon.domain.project.ExportSymbolForms.Form>()
+        val pinned = HashSet<SymbolFormCache.Key>()
+        val owned = ArrayList<Int>()
+        val pngs = HashMap<Int, List<ByteArray?>>()
+        var editorForms = 0; var gpuForms = 0; var pngForms = 0
+        try {
+            for (d in defs) {
+                val insts = top.filter { it.symRef == d.id }
+                val crops = insts.map { formCrop(it.id) }.toSet()
+                val n = d.symDur.coerceAtLeast(1)
+                val keys: Collection<Int> = if (frame != null) insts.map { symbolKey(it, d, frame) }.toSet()
+                    else if (insts.any { needsAllFrames(it, d) }) (0 until n).toList()
+                    else (insts.flatMap { i -> i.timeKeys.map { it.value.coerceIn(0, n - 1) } } + 0).toSet()   // статичный символ: только кадры ключей
+                val list = MutableList<ByteArray?>(n) { null }
+                for (k in keys) {
+                    if (k !in list.indices) continue
+                    // 1) готовые формы редактора
+                    var missing = false
+                    for (c in crops) {
+                        val key = SymbolFormCache.Key(d.id, k, c)
+                        val e = formCache.fresh(key)
+                        if (e != null && com.vibetoon.domain.project.ExportSymbolForms.editorFormFullRes(e.rect, dimW, dimH, FORM_MAX_BYTES)) {
+                            forms[key] = com.vibetoon.domain.project.ExportSymbolForms.Form(e.texId, e.rect); pinned += key; editorForms++
+                        } else missing = true
+                    }
+                    if (!missing) continue
+                    // 2) снимок прямо в текстуру (полный квадрат: годится и для обрезанных, и для деформируемых экземпляров)
+                    if (!gpuOff) {
+                        val sz = com.vibetoon.domain.project.ExportSymbolForms.gpuSize(dimW, dimH, room, minLong)
+                        if (sz == null) gpuOff = true
+                        else {
+                            val id = nextFormTexId++
+                            val r = symbolToTexture(d.id, k, id, sz.first, sz.second)
+                            if (r == 1) {
+                                owned += id; gpuForms++
+                                room -= com.vibetoon.domain.project.ExportSymbolForms.textureBytes(sz.first, sz.second)
+                                val form = com.vibetoon.domain.project.ExportSymbolForms.Form(id, com.vibetoon.domain.project.ExportSymbolForms.FULL_RECT)
+                                for (c in crops) forms.putIfAbsent(SymbolFormCache.Key(d.id, k, c), form)
+                                continue
+                            }
+                            if (r == -2) gpuOff = true   // памяти GPU не хватает - остальные формы прежним путём
+                        }
+                    }
+                    // 3) запасной путь: PNG в памяти, картинка грузится в текстуру экземпляра на кадрах с этой формой
+                    val b = symbolBitmap(d.id, k, 0, strict = false) ?: continue
+                    list[k] = withContext(Dispatchers.Default) {
+                        val bo = java.io.ByteArrayOutputStream()
+                        b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo); b.recycle()
+                        bo.toByteArray()
+                    }
+                    pngForms++
                 }
+                pngs[d.id] = list
             }
-            out[d.id] = list
+        } catch (t: Throwable) {
+            if (owned.isNotEmpty()) RenderHost.view?.dropTextures(owned.toIntArray())
+            throw t
         }
-        return out
+        Log.i("VT/Export", "symbol forms: editor $editorForms, gpu $gpuForms, png $pngForms")
+        exportOwnedForms.addAll(owned)
+        exportPinnedForms = pinned
+        pushEvictable()
+        return com.vibetoon.domain.project.ExportSymbolForms.Set(forms, pngs, owned, pinned)
+    }
+
+    /** Текстуры форм, созданные для текущего экспорта: удаляются после него (restoreAfterExport). */
+    private val exportOwnedForms: MutableList<Int> = java.util.Collections.synchronizedList(ArrayList())
+
+    /**
+     * Снимок формы символа [defId] (внутренний кадр [local]) прямо в текстуру [texId] размером [w] x [h]: те же теневые
+     * текстуры участников и вложенных экземпляров, что у обычного снимка, но картинка остаётся на GPU.
+     * 1 - готово, -2 - не хватает памяти GPU, иначе ошибка.
+     */
+    private suspend fun symbolToTexture(defId: Int, local: Int, texId: Int, w: Int, h: Int): Int = symbolMutex.withLock {
+        val view = RenderHost.view
+        if (appBackground || view == null) return@withLock -1
+        val nested = nestedSymbolBitmaps(defId, local, 0, false)
+        try {
+            for ((id, b) in nested) RenderNative.uploadShadowBitmap(id, b)
+            val fps = _animation.value.settings.fps
+            val scene = withContext(Dispatchers.Default) { buildSceneAt(fps, null, defId)(local) }   // теневые рисунки участников
+            val bg = meta?.background?.toInt() ?: 0
+            kotlinx.coroutines.withTimeoutOrNull(20000) {
+                kotlinx.coroutines.suspendCancellableCoroutine<Int> { c ->
+                    view.captureToTexture(scene, texId, w, h, true, bg, RenderNative.CAPTURE_SHADOW) { if (c.isActive) c.resumeWith(Result.success(it)) }
+                }
+            } ?: -1
+        } finally {
+            nested.forEach { it.second.recycle() }
+        }
     }
 
     /**
@@ -4452,9 +4633,56 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun restoreAfterExport() {
+        releaseExportResources()
         textFxKeys.clear(); cellShown.clear()
         updateTextFx(_frame.value)
         updateCells(_frame.value)
+        // пакет 29: экспорт ставил в видео-слои кадры своих моментов - вернуть кадр плейхеда
+        for (m in media) if (m.kind == MediaKind.VIDEO) videoFrames.forget(m.id)
+        updateVideoFrames(_frame.value)
+    }
+
+    /** Пакет 29: закрыть декодеры видео экспорта, освободить неприменённые картинки, удалить формы, снятые для экспорта. */
+    private fun releaseExportResources() {
+        closeExportSessions()
+        val owned = synchronized(exportOwnedForms) { exportOwnedForms.toList().also { exportOwnedForms.clear() } }
+        if (owned.isNotEmpty()) RenderHost.view?.dropTextures(owned.toIntArray())
+        exportPinnedForms = emptySet()
+        pushEvictable()
+    }
+
+    /**
+     * Пакет 29: загрузки картинок кадров экспорта (рисунки, кадры видео, текст с эффектами, запасные картинки символов).
+     * Сборка сцены их готовит, поток отрисовки применяет прямо перед своим кадром (SceneData.beforeDraw).
+     */
+    private inner class ExportSession(longSide: Int) : java.io.Closeable {
+        val textures = com.vibetoon.domain.export.ExportTextures<android.graphics.Bitmap>(
+            // билет берётся в момент применения: кадры собираются заранее, и билет сборки устарел бы к отрисовке
+            upload = { id, b, _ -> RenderNative.uploadBitmapIfCurrent(id, b, RenderNative.textureUploadTicket(id)) },
+            release = { it.recycle() }
+        )
+        val video = com.vibetoon.data.ExportVideoFrames(longSide, longSide)
+        private val batches = java.util.concurrent.ConcurrentLinkedQueue<com.vibetoon.domain.export.ExportTextures.Batch<android.graphics.Bitmap>>()
+
+        fun track(b: com.vibetoon.domain.export.ExportTextures.Batch<android.graphics.Bitmap>) {
+            batches.removeAll { it.isApplied }
+            batches += b
+        }
+
+        override fun close() {
+            for (b in batches) textures.discard(b)   // кадры, которые так и не нарисовали (отмена)
+            batches.clear()
+            video.close()
+            if (video.decoded + video.failed > 0) Log.i("VT/Export", "video frames: ${video.decoded} decoded, ${video.failed} failed; uploads ${textures.uploads}, late ${textures.lateLoads}")
+        }
+    }
+
+    private val exportSessions = ArrayList<ExportSession>()
+
+    /** Закрыть сессии загрузок собранных сцен (декодеры видео, неприменённые картинки); формы экспорта остаются. */
+    private fun closeExportSessions() {
+        val sessions = synchronized(exportSessions) { exportSessions.toList().also { exportSessions.clear() } }
+        sessions.forEach { runCatching { it.close() } }
     }
 
     /** Пакет 17: Import → Insert Images into Existing Drawing включено и выбран подходящий слой-картинка. */
@@ -4642,6 +4870,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val (w, h) = captureDims()
             val scene = withContext(Dispatchers.Default) { buildSceneAt(st.fps, leaf)(_frame.value) }
             val bytes = captureNow(scene, true, w, h)
+            closeExportSessions()   // пакет 29: декодеры и неприменённые картинки сборки
             if (bytes == null) { _state.value = UiState.Message("Не удалось собрать слой, повторите"); return@launch }
             val newId = nextMediaId()
             val file = "m$newId.png"
@@ -4807,7 +5036,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     } finally { bmp.recycle() }
                     saveToGallery(output, if (jpeg) "image/jpeg" else "image/png")
                 }
-                _export.value = ExportUi.Done(output, gallerySaved)
+                _export.value = ExportUi.Done(output, gallerySaved, exportGpuNote(null))
             } catch (t: kotlinx.coroutines.CancellationException) {
                 file?.let { com.vibetoon.domain.export.ExportFiles.discard(it) }
                 _export.value = ExportUi.Idle
@@ -4849,7 +5078,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     enc.finish()
                 }
                 val gallerySaved = withContext(Dispatchers.IO) { saveToGallery(file, "image/gif") }
-                _export.value = ExportUi.Done(file, gallerySaved)
+                _export.value = ExportUi.Done(file, gallerySaved, exportGpuNote(null))
             } catch (t: kotlinx.coroutines.CancellationException) {
                 file.delete(); _export.value = ExportUi.Idle
             } catch (t: Throwable) {
@@ -4895,7 +5124,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
-                _export.value = ExportUi.Done(file)
+                _export.value = ExportUi.Done(file, note = exportGpuNote(null))
             } catch (t: kotlinx.coroutines.CancellationException) {
                 file.delete(); _export.value = ExportUi.Idle
             } catch (t: Throwable) {
@@ -4951,6 +5180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (visible) {
                         val scene = withContext(Dispatchers.Default) { buildSceneAt(st.fps, setOf(n.id), symCache = symCache)(frame) }
                         val bytes = captureNow(scene, true, w, h)
+                        closeExportSessions()   // пакет 29: у каждого слоя PSD своя сборка - декодеры не копятся
                         if (bytes != null) {
                             rec = withContext(Dispatchers.Default) {
                                 val argb = captureArgb(bytes, w, h)
@@ -4989,7 +5219,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     file.parentFile?.mkdirs()
                     file.outputStream().use { com.vibetoon.domain.export.PsdWriter.write(it, w, h, recs, compPlanes) }
                 }
-                _export.value = ExportUi.Done(file)
+                _export.value = ExportUi.Done(file, note = exportGpuNote(null))
             } catch (t: Throwable) {
                 Log.e("VT/Export", "psd failed", t)
                 file.delete(); _export.value = ExportUi.Failed(t.message ?: "Не удалось записать PSD")
@@ -10798,7 +11028,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * реального времени. Сцена каждого кадра строится из снимка анимации: ручные правки кадра не влияют.
      */
     /** Строит функцию «номер кадра результата -> сцена» (копии данных проекта: можно звать из любого потока). */
-    private fun buildSceneAt(fps: Int, onlyLayers: Set<Int>? = null, symbol: Int? = null, symCache: Map<Int, List<ByteArray?>> = emptyMap(),
+    private fun buildSceneAt(fps: Int, onlyLayers: Set<Int>? = null, symbol: Int? = null,
+                             symCache: com.vibetoon.domain.project.ExportSymbolForms.Set = com.vibetoon.domain.project.ExportSymbolForms.Set.EMPTY,
                              range: com.vibetoon.domain.anim.SceneRange? = null): (Int) -> SceneData {
         val outsideIds: Set<Int> = if (onlyLayers == null) emptySet() else layers.filter { it.kind == LayerKind.LAYER && it.id !in onlyLayers }.map { it.id }.toSet()
         val st = _animation.value.settings
@@ -10834,10 +11065,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val symDefs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to (it.symDur to symbolCycles(it.id)) }
         val symMarks = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to it.markers }
         val symLoops = symInst.associate { it.id to it.symLoop }
-        val symExp = HashMap<Int, Int>()
-        val cellExp = HashMap<Int, String>()
+        val symCropExp = symInst.associate { it.id to formCrop(it.id) }
         val pidExp = projectId
         val shadow = symbol != null   // снимок символа: свои (теневые) рисунки участников, текстуры редактора не трогаем
+        // Пакет 29: видео-слои - кадр источника на каждом кадре экспорта (раньше весь ролик стоял один кадр)
+        val videoExp = if (shadow || pidExp == null) emptyList() else media.filter { it.kind == MediaKind.VIDEO && it.id !in hiddenExp && it.id !in outsideIds }
+            .map { Triple(it, clipOf(it.id), projects.mediaFile(pidExp, it.file.removePrefix("assets/"))) }
+        val session = if (shadow) null else ExportSession(maxOf(cw, ch)).also { synchronized(exportSessions) { exportSessions += it } }
         val sceneRange = if (symbol == null) range else null   // пакет 9: экспорт только текущей сцены
         val sceneAtFn = { i: Int ->
             // Внутренний кадр символа берётся как есть (раньше обрезался длительностью проекта - формы за её концом
@@ -10846,6 +11080,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 else if (sceneRange != null) com.vibetoon.domain.anim.SceneMath.exportFrame(i, st.fps, fps, sceneRange)
                 else ExportMath.projectFrame(i, st.fps, fps, st.durationFrames)
             val lookExp = if (scenesExp.isEmpty()) com.vibetoon.domain.anim.SceneCanvas.Look.NONE else com.vibetoon.domain.anim.SceneCanvas.look(scenesExp, pf, bgExp)
+            // Пакет 29: картинки этого кадра не ставятся в очередь загрузки сразу (сцена следующего кадра MP4 собирается,
+            // пока рисуется текущий), а готовятся здесь и применяются перед отрисовкой именно этого кадра (beforeDraw).
+            val plan = ArrayList<com.vibetoon.domain.export.ExportTextures.Item<android.graphics.Bitmap>>()
+            val fpsP = st.fps.coerceAtLeast(1)
             for (cm in cellLayers) {   // покадровые слои: в текстуре рисунок этого кадра
                 val act = FrameMath.active(cm.cells, pf) ?: continue
                 if (pidExp == null) continue
@@ -10856,34 +11094,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     continue
                 }
-                if (cellExp[cm.id] == act.file) continue
-                runCatching {
-                    val ticket = RenderNative.textureUploadTicket(cm.id)
-                    val d = importer.decodeImage(projects.fileOf(pidExp, act.file))
-                    val uploaded = RenderNative.uploadBitmapIfCurrent(cm.id, d.bitmap, ticket); d.bitmap.recycle()
-                    if (uploaded) cellExp[cm.id] = act.file
+                plan += session!!.textures.plan(cm.id, "cell:" + act.file, 0L) { importer.decodeImage(projects.fileOf(pidExp, act.file)).bitmap }
+            }
+            if (session != null) for ((vm, clip, file) in videoExp) {   // видео: кадр источника на моменте этого кадра
+                if (!clip.visibleAt(pf)) continue
+                val ms = videoSourceMs(clip, pf, fpsP)
+                plan += session.textures.plan(vm.id, com.vibetoon.domain.export.ExportVideo.Key(file.path, ms), 0L) {
+                    session.video.frame(file, ms, vm.srcWidth, vm.srcHeight)
                 }
             }
-            for (si in symInst) {   // экземпляры символов: готовая картинка вложенной сцены на этом кадре
-                val frames = symCache[si.symRef] ?: continue
+            val formAliases = ArrayList<Pair<Int, com.vibetoon.domain.project.ExportSymbolForms.Form>>()
+            for (si in symInst) {   // экземпляры символов: готовая форма на GPU (или запасная картинка) на этом кадре
                 val def = symDefs[si.symRef] ?: continue
                 val loop = symLoops[si.id] == true
                 val key = SymbolForms.frameAt(si.timeKeys, pf, def.first, def.second && loop, loop, symMarks[si.symRef].orEmpty())   // то же правило, что в редакторе
-                if (symExp[si.id] == key) continue
-                val png = frames.getOrNull(key) ?: continue
-                runCatching {
-                    val ticket = RenderNative.textureUploadTicket(si.id)
-                    val bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size)
-                    val uploaded = RenderNative.uploadBitmapIfCurrent(si.id, bmp, ticket); bmp.recycle()
-                    if (uploaded) symExp[si.id] = key
-                }
+                val form = symCache.form(si.symRef, key, symCropExp[si.id] == true)
+                if (form != null) { formAliases += si.id to form; continue }
+                val png = symCache.png(si.symRef, key) ?: continue
+                if (session == null) continue
+                plan += session.textures.plan(si.id, "sym:${si.symRef}:$key", 0L) { android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size) }
             }
             for (tm in fxTexts) {   // текст с эффектами: картинка этого кадра заливается в текстуру до отрисовки
-                val ticket = RenderNative.textureUploadTicket(tm.id)
-                val rt = textRenderer.renderFx(tm.text, tm.textColor.toInt(), tm.font, tm.textSize, tm.gradient, tm.gradientAngle, tm.fx, pf.toFloat() / st.fps.coerceAtLeast(1), st.fps.coerceAtLeast(1), if (tm.stroke) tm.strokeWidth else 0f, tm.strokeColor.toInt(), tm.textAlign, tm.lineSpacing, tm.letterSpacing)
-                if (shadow) RenderNative.uploadShadowBitmap(tm.id, rt.bitmap) else RenderNative.uploadBitmapIfCurrent(tm.id, rt.bitmap, ticket)
-                rt.bitmap.recycle()
+                val tSec = pf.toFloat() / fpsP
+                val render = { textRenderer.renderFx(tm.text, tm.textColor.toInt(), tm.font, tm.textSize, tm.gradient, tm.gradientAngle, tm.fx, tSec, fpsP, if (tm.stroke) tm.strokeWidth else 0f, tm.strokeColor.toInt(), tm.textAlign, tm.lineSpacing, tm.letterSpacing).bitmap }
+                if (shadow) { val b = render(); RenderNative.uploadShadowBitmap(tm.id, b); b.recycle(); continue }
+                plan += session!!.textures.plan(tm.id, "fx:" + tm.fx.stateKey(tSec, fpsP), 0L, render)
             }
+            val batch = if (session != null && plan.isNotEmpty()) session.textures.batch(plan).also { session.track(it) } else null
             val groupInputs = com.vibetoon.domain.render.GroupSceneInputs.build(groupAnchorsExp, wl, pl, pf, baseCopy, anim, true, warpSizesExp)
             try {
             SceneBuilder.buildTree(r, cw, ch, ids.associateWith { id ->
@@ -10902,7 +11139,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 groupInputs.perspectives, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
                 sceneLookFx(fxRecords(fxl, adjCopy, anim, pf, st.fps), lookExp, leafExp), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides,
                 stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxl, anim, pf),
-                stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxl, anim, pf)).also { it.backgroundOverride = lookExp.background }
+                stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxl, anim, pf)).also { sc ->
+                sc.backgroundOverride = lookExp.background
+                if (formAliases.isNotEmpty()) sc.aliases = com.vibetoon.domain.project.ExportSymbolForms.aliases(formAliases)
+                if (batch != null && session != null) sc.beforeDraw = { session.textures.commit(batch) }
+            }
             } catch (e: IllegalArgumentException) {
                 if (groupInputs.groups.isEmpty() && denseExp.isEmpty()) throw e
                 throw IllegalStateException("Экспорт остановлен: неподдерживаемая деформация или область", e)
@@ -10964,7 +11205,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                     note = if (added.isSuccess) "Со звуком: AAC, стерео 44,1 кГц" else "Звук добавить не удалось - видео сохранено без звука"
                                 }
                                 val gallerySaved = withContext(Dispatchers.IO) { saveToGallery(file, "video/mp4") }
-                                _export.value = ExportUi.Done(file, gallerySaved, note)
+                                _export.value = ExportUi.Done(file, gallerySaved, exportGpuNote(note))
                             } catch (t: kotlinx.coroutines.CancellationException) {
                                 _export.value = ExportUi.Idle; throw t
                             } catch (t: Exception) {

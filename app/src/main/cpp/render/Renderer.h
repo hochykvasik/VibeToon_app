@@ -14,6 +14,7 @@
 #include "render/LayerBounds.h"
 #include "render/MaskPolicy.h"
 #include "render/GroupCachePolicy.h"
+#include "render/TextureBudgetPolicy.h"
 
 namespace vt {
 
@@ -130,7 +131,11 @@ public:
     // Снимок кадра в память: холст w x h (без камеры и рамки) через внутренний FBO; RGBA premultiplied, строка 0 - низ.
     // transparent: без фона холста (PNG/GIF с прозрачностью). Вызывать с текущим GL-контекстом.
     // Возвращает false при ошибке. При kCaptureStrict и недогруженных текстурах - true и пустой out.
-    bool captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out, int flags = 0);
+    bool captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out, int flags = 0, int toTexture = -1);
+    // Пакет 29: снимок прямо в текстуру [id] (без glReadPixels и копий в память): FBO -> копия с переворотом строк
+    // (как у загруженных картинок) -> mip-уровни. Нужен экспорту для форм символов. Возвращает kCaptureToTex*.
+    int captureToTexture(int id, int w, int h, bool transparent, int flags);
+    static constexpr int kCaptureToTexOk = 1, kCaptureToTexNotReady = 0, kCaptureToTexFailed = -1, kCaptureToTexBudget = -2;
     void clearShadows();
     // Идёт жест камеры: результаты эффектов можно переиспользовать с преобразованием вида.
     void setInteractive(bool on);
@@ -140,6 +145,18 @@ public:
     void setTextureAliases(const int* ids, const int* prim, const int* fallback, const float* rects, int n);
     // Удаляет текстуры форм (id не переиспользуются: поздние загрузки этих id отбрасываются).
     void dropTextures(const int* ids, int n);
+    // Пакет 29: бюджет GPU-памяти под текстуры (байты; считает Kotlin по памяти устройства), см. TextureBudgetPolicy.h.
+    void setTextureBudget(int64_t bytes) { budget_ = texbudget::clampBudget(bytes); }
+    size_t textureBudget() const { return budget_; }
+    size_t textureBytesUsed() const { return textureBytes_; }
+    // Какие текстуры можно вытеснять при нехватке памяти (их Kotlin умеет восстановить). Список целиком заменяет прежний.
+    void setEvictable(const int* ids, int n);
+    // События памяти текстур с прошлого вызова: пары [вид, id]; вид 1 - текстура вытеснена (не в сцене, давно не
+    // показывалась), 2 - загрузка отклонена: не хватило бюджета, 3 - больше GL_MAX_TEXTURE_SIZE. Очередь очищается.
+    static constexpr int kTexEvicted = 1;
+    static constexpr int kTexRejectedBudget = 2;
+    static constexpr int kTexRejectedSize = 3;
+    void takeTextureEvents(std::vector<int>& out) { out.swap(texEvents_); texEvents_.clear(); }
     // Цвет пикселя экрана (ARGB) после drawFrame: для пипетки. Координаты вида, ось y вниз.
     int readPixel(int x, int y) const;
     // Освобождает GL-объекты (контекст должен быть текущим).
@@ -333,6 +350,20 @@ private:
 
     std::unordered_map<int, Tex> textures_;
     std::unordered_map<int, Tex> shadowTex_;
+    // --- пакет 29: бюджет и вытеснение текстур ---
+    size_t budget_ = texbudget::kDefaultBudget;
+    int maxTexSize_ = 0;                          // GL_MAX_TEXTURE_SIZE (запрашивается один раз в initGL)
+    std::unordered_set<int> evictable_;           // разрешено вытеснять (Kotlin восстановит)
+    std::unordered_set<int> modifiedTex_;         // изменены на месте (кисть, Undo, замена) - не вытесняются никогда
+    std::unordered_map<int, uint64_t> texUse_;    // когда текстура последний раз была в сцене
+    uint64_t useClock_ = 0;
+    std::vector<int> texEvents_;                  // [вид, id] для Kotlin
+    void pushTexEvent(int kind, int id);
+    // Освободить место под [need] байт вытеснением (не трогая [keepId]); false - места не будет.
+    bool ensureRoom(size_t need, int keepId);
+    bool keepCaptureAsTexture(GLuint srcFbo, int id, int w, int h);
+    void evictTexture(int id);
+    void markModified(int id) { modifiedTex_.insert(id); }
     bool useShadows_ = false;
     size_t textureBytes_ = 0;
     std::unordered_map<int, FxEntry> fxCache_;

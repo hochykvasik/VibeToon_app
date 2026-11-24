@@ -1590,4 +1590,7 @@
     <string name="ui_the_file_from_another_app_is_damaged">The file from another app is damaged or uses an unsupported format version</string>
     <string name="ui_the_file_doesn_t_look_like_a_project">The file doesn\'t look like a project: use .tsproj, .zip with project.json, project.json, PSD, Procreate, Lottie, OpenRaster or Krita</string>
     <string name="ui_rough_animator_projects_can_t_be_rea">Rough Animator projects can\'t be read directly: export the animation from Rough Animator as a PNG sequence (ZIP), GIF or video and import that file</string>
+    <string name="ui_not_enough_gpu_memory_some_layers_ar">Not enough GPU memory: some layers are temporarily shown without updates. Hide unneeded layers - display will recover by itself</string>
+    <string name="ui_the_layer_image_exceeds_the_gpu_limi">The layer image exceeds the GPU limit: the layer is shown without updates. Reduce its size</string>
+    <string name="ui_not_enough_gpu_memory_some_layer_ima">Not enough GPU memory: some layer images in the file may not have updated ({})</string>
 </resources>

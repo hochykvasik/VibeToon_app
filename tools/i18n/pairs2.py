@@ -1283,4 +1283,7 @@ Animation Assist: кадры сведены (режимы наложения в�
 Файл другого приложения повреждён или в неподдерживаемой версии формата|The file from another app is damaged or uses an unsupported format version
 Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster или Krita|The file doesn't look like a project: use .tsproj, .zip with project.json, project.json, PSD, Procreate, Lottie, OpenRaster or Krita
 Проект Rough Animator не читается напрямую: экспортируйте анимацию в Rough Animator как последовательность PNG (ZIP), GIF или видео и импортируйте этот файл|Rough Animator projects can't be read directly: export the animation from Rough Animator as a PNG sequence (ZIP), GIF or video and import that file
+Не хватает памяти GPU: часть слоёв временно показана без обновления. Скройте лишние слои - показ восстановится сам|Not enough GPU memory: some layers are temporarily shown without updates. Hide unneeded layers - display will recover by itself
+Картинка слоя больше предела GPU: слой показан без обновления. Уменьшите её размер|The layer image exceeds the GPU limit: the layer is shown without updates. Reduce its size
+Не хватило памяти GPU: часть картинок слоёв в файле могла не обновиться ({})|Not enough GPU memory: some layer images in the file may not have updated ({})
 """
