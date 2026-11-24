@@ -227,7 +227,7 @@ class ProjectRepository(context: Context) {
      * папку, проверяется (версия, project.json, отсутствующие файлы), получает новый id и неповторяющееся имя и только
      * потом целиком появляется в списке. Существующие проекты не меняются. Ошибки - [ProjectArchive.ImportException].
      */
-    fun importProject(open: () -> java.io.InputStream, existingNames: Collection<String>): Imported {
+    fun importProject(open: () -> java.io.InputStream, existingNames: Collection<String>, fileName: String = ""): Imported {
         val head = ByteArray(32)
         val n = try {
             open().use { s -> var r = 0; while (r < head.size) { val k = s.read(head, r, head.size - r); if (k < 0) break; r += k }; r }
@@ -237,23 +237,47 @@ class ProjectRepository(context: Context) {
             val (w, h) = ProjectArchive.psdSize(head) ?: throw ProjectArchive.ImportException(ProjectArchive.Reason.DAMAGED)
             return Imported.Psd(w, h)
         }
-        if (kind == ProjectArchive.Kind.UNKNOWN) throw ProjectArchive.ImportException(ProjectArchive.Reason.NOT_PROJECT)
+        if (kind == ProjectArchive.Kind.UNKNOWN) throw ProjectArchive.ImportException(ProjectArchive.Reason.NOT_PROJECT, null,
+            com.vibetoon.domain.project.foreign.ForeignImport.unknownMessage(fileName))
         val staging = File(importRoot, UUID.randomUUID().toString().take(12))
+        val converted = File(importRoot, staging.name + "-p")
         return try {
             staging.mkdirs()
             val input = try { open() } catch (e: Exception) { throw ProjectArchive.ImportException(ProjectArchive.Reason.READ_FAILED, e) }
+            var foreign: com.vibetoon.domain.project.foreign.ForeignImport.Result? = null
             input.use { s ->
-                if (kind == ProjectArchive.Kind.ZIP) ProjectArchive.unzip(s, staging)
-                else {
+                if (kind == ProjectArchive.Kind.ZIP) {
+                    // пакет 28: ZIP сначала во временный файл - центральный каталог читает и ZIP64, и записи Procreate
+                    val zip = File(importRoot, staging.name + ".zip")
+                    try {
+                        zip.outputStream().use { s.copyTo(it, 64 * 1024) }
+                        try { ProjectArchive.unzipFile(zip, staging) } catch (e: ProjectArchive.ImportException) {
+                            if (e.reason != ProjectArchive.Reason.DAMAGED) throw e
+                            staging.deleteRecursively(); staging.mkdirs()
+                            zip.inputStream().use { z -> ProjectArchive.unzip(z, staging) }
+                        }
+                    } finally { zip.delete() }
+                } else {
                     val bytes = s.readBytes()
                     if (bytes.size > 64 * 1024 * 1024) throw ProjectArchive.ImportException(ProjectArchive.Reason.TOO_LARGE)
-                    File(staging, "project.json").writeBytes(bytes)
+                    val text = bytes.toString(Charsets.UTF_8)
+                    if (com.vibetoon.domain.project.foreign.LottieImport.looksLike(text.trimStart('\uFEFF'))) {
+                        val name = fileName.ifBlank { "animation.json" }.let { if (it.lowercase().endsWith(".json")) it else "$it.json" }
+                        File(staging, name.substringAfterLast('/')).writeBytes(bytes)
+                    } else File(staging, "project.json").writeBytes(bytes)
                 }
             }
-            val root = ProjectArchive.locateRoot(staging) ?: throw ProjectArchive.ImportException(ProjectArchive.Reason.NOT_PROJECT)
+            val root = ProjectArchive.locateRoot(staging) ?: run {
+                // пакет 28: не проект VibeToon - пробуем форматы других приложений (Procreate, Lottie, ORA, кадры...)
+                foreign = com.vibetoon.domain.project.foreign.ForeignImport.toProjectDir(
+                    com.vibetoon.domain.project.foreign.ForeignImport.DirSource(staging), converted, fileName)
+                staging.deleteRecursively()
+                converted
+            }
             var newId: String
             do { newId = UUID.randomUUID().toString().take(8) } while (dir(newId).exists())
             val report0 = ProjectArchive.prepare(root, newId, System.currentTimeMillis(), existingNames)
+                .let { r -> foreign?.let { f -> r.copy(app = f.app, notes = f.notes) } ?: r }
             val archiveFonts = File(root, "fonts").takeIf { it.isDirectory } ?: File(staging, "fonts").takeIf { it.isDirectory }
             val (restored, fontsMissing) = ProjectArchive.restoreFonts(archiveFonts, fontsDir, ProjectArchive.usedFontFiles(report0.data))
             File(root, "fonts").deleteRecursively()
@@ -279,6 +303,7 @@ class ProjectRepository(context: Context) {
             throw ProjectArchive.ImportException(ProjectArchive.Reason.TOO_LARGE, e)
         } finally {
             runCatching { staging.deleteRecursively() }
+            runCatching { converted.deleteRecursively() }
         }
     }
 }

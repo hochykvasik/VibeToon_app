@@ -2017,23 +2017,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Текстура медиа-слоя из файла проекта (текст рисуется заново из его свойств). */
-    private fun uploadTextureFor(pid: String, m: MediaItem) {
-        if (m.kind == MediaKind.CAMERA || m.kind == MediaKind.GROUP || m.kind == MediaKind.SYMBOL || m.kind == MediaKind.NULLOBJ) return   // у камеры и группы нет картинки
+    /** Возвращает размер отрисованного текста (для текста) или null. */
+    private fun uploadTextureFor(pid: String, m: MediaItem): Pair<Float, Float>? {
+        if (m.kind == MediaKind.CAMERA || m.kind == MediaKind.GROUP || m.kind == MediaKind.SYMBOL || m.kind == MediaKind.NULLOBJ) return null   // у камеры и группы нет картинки
         if (m.kind == MediaKind.IMAGE && m.cells.isNotEmpty()) cellShown[m.id] = m.file
+        if (m.vector && m.vectors.isNotEmpty() && projects.fileOf(pid, m.file).let { !it.isFile || it.length() == 0L }) return null   // пакет 28: перерисуется из примитивов
         if (m.isText) {
-            renderAndUpload(m)
+            return renderAndUpload(m)
         } else {
             val file = projects.fileOf(pid, m.file)
             val ticket = RenderNative.textureUploadTicket(m.id)
             val d = if (m.kind == MediaKind.IMAGE) importer.decodeImage(file) else importer.decodeVideoFrame(file)
             try { RenderNative.uploadBitmapIfCurrent(m.id, d.bitmap, ticket) } finally { d.bitmap.recycle() }
         }
+        return null
     }
 
     private val RESTORE_QUEUE_LIMIT = 96L * 1024 * 1024
 
     /** При открытии проекта текстуры картинок и кадров видео создаются заново из файлов проекта. */
     private suspend fun restoreMediaTextures(pid: String) = withContext(decodeDispatcher) {
+        val measured = HashMap<Int, Pair<Float, Float>>()
         for (m in media.toList()) {
             if (!m.isVisual) continue
             // Очередь загрузки не раздуваем: большой проект целиком в RAM давал OOM при возврате из фона.
@@ -2042,8 +2046,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 RenderHost.view?.requestRender(); kotlinx.coroutines.delay(15); waited++
             }
             runCatching { uploadTextureFor(pid, m) }.onFailure { Log.w("VT/Media", "texture for ${m.name} not restored: ${it.message}") }
+                .getOrNull()?.let { size -> if (m.isText && (m.w <= 0f || m.h <= 0f)) measured[m.id] = size }
         }
-        withContext(Dispatchers.Main) { updateCells(_frame.value); refreshOnion() }
+        withContext(Dispatchers.Main) {
+            // пакет 28: текст из Lottie приходит без рамки - она задаётся по отрисовке (x - начало строки с учётом выравнивания)
+            if (measured.isNotEmpty() && projectId == pid) {
+                for ((id, size) in measured) {
+                    val i = media.indexOfFirst { it.id == id && it.isText && (it.w <= 0f || it.h <= 0f) }
+                    if (i < 0) continue
+                    val m = media[i]
+                    val (w, h) = size
+                    val x = when (m.textAlign) { 1 -> m.x - w / 2f; 2 -> m.x - w; else -> m.x }
+                    media[i] = m.copy(x = x, w = w, h = h)
+                }
+                rebuildLayers(); pushScene(); markDirty()
+            }
+            // пакет 28: векторные слои без картинки (импорт Lottie) рисуются из примитивов и сохраняются
+            for (m in media.toList()) if (m.vector && m.vectors.isNotEmpty() && projects.fileOf(pid, m.file).let { !it.isFile || it.length() == 0L }) renderVector(m, save = true)
+            updateCells(_frame.value); refreshOnion()
+        }
         RenderHost.view?.requestRender()
     }
 

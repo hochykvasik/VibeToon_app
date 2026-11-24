@@ -29,7 +29,9 @@ object ProjectArchive {
 
     /** Причины отказа: у каждой своё понятное сообщение (RU/EN через таблицу перевода). */
     enum class Reason(val message: String) {
-        NOT_PROJECT("Файл не похож на проект VibeToon: нужен .tsproj, .zip с project.json, project.json или PSD"),
+        NOT_PROJECT("Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster или Krita"),
+        /** Пакет 28: файл другого приложения распознан, но не читается (повреждён или незнакомая версия формата). */
+        FOREIGN_DAMAGED("Файл другого приложения повреждён или в неподдерживаемой версии формата"),
         NEWER_VERSION("Проект создан в более новой версии VibeToon: обновите приложение и повторите импорт"),
         DAMAGED("Файл проекта повреждён или обрезан: project.json не читается"),
         TOO_LARGE("Архив слишком большой или содержит слишком много файлов"),
@@ -37,7 +39,10 @@ object ProjectArchive {
         READ_FAILED("Не удалось прочитать выбранный файл")
     }
 
-    class ImportException(val reason: Reason, cause: Throwable? = null) : IOException(reason.message, cause)
+    /** [detail] - своё сообщение (пакет 28: отказ импорта другого приложения с подсказкой, что делать). */
+    class ImportException(val reason: Reason, cause: Throwable? = null, val detail: String? = null) : IOException(detail ?: reason.message, cause) {
+        val text: String get() = detail ?: reason.message
+    }
 
     /** Итог подготовки: данные с новым id, исходная версия формата, отсутствующие файлы, шрифты. */
     data class Report(
@@ -46,7 +51,10 @@ object ProjectArchive {
         val missing: List<String>,
         val fontsRestored: Int = 0,
         val fontsMissing: List<String> = emptyList(),
-        val renamed: Boolean = false
+        val renamed: Boolean = false,
+        /** Пакет 28: приложение-источник (пусто - VibeToon) и что не перенесено. */
+        val app: String = "",
+        val notes: List<String> = emptyList()
     )
 
     /** Тип файла по первым байтам (расширение у файлов из «Загрузок» часто теряется). */
@@ -117,6 +125,48 @@ object ProjectArchive {
         } catch (e: IOException) {
             throw ImportException(if (isNoSpace(e)) Reason.NO_SPACE else Reason.DAMAGED, e)
         } catch (e: IllegalArgumentException) {   // кривые имена/кодировка записей
+            throw ImportException(Reason.DAMAGED, e)
+        }
+        return files
+    }
+
+    /**
+     * Пакет 28: распаковка ZIP-файла по центральному каталогу (ZIP64, записи STORED с дескриптором - так пишет Procreate).
+     * Те же ограничения, что у [unzip].
+     */
+    fun unzipFile(zip: File, dest: File, maxEntries: Int = MAX_ENTRIES, maxBytes: Long = MAX_BYTES): Int {
+        var files = 0
+        var total = 0L
+        val buf = ByteArray(64 * 1024)
+        try {
+            java.util.zip.ZipFile(zip).use { z ->
+                val en = z.entries()
+                while (en.hasMoreElements()) {
+                    val e = en.nextElement()
+                    if (e.isDirectory) continue
+                    val rel = BackupMath.safePath(e.name) ?: continue
+                    if (isJunk(rel)) continue
+                    if (++files > maxEntries) throw ImportException(Reason.TOO_LARGE)
+                    val f = File(dest, rel)
+                    f.parentFile?.mkdirs()
+                    z.getInputStream(e).use { input ->
+                        f.outputStream().use { out ->
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                total += n
+                                if (total > maxBytes) throw ImportException(Reason.TOO_LARGE)
+                                out.write(buf, 0, n)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: ImportException) {
+            throw e
+        } catch (e: IOException) {
+            throw ImportException(if (isNoSpace(e)) Reason.NO_SPACE else Reason.DAMAGED, e)
+        } catch (e: IllegalArgumentException) {
             throw ImportException(Reason.DAMAGED, e)
         }
         return files
@@ -205,7 +255,9 @@ object ProjectArchive {
             updatedAt = now
         )
         val fixed = data.copy(meta = meta)
-        val missing = referencedFiles(fixed).filterNot(exists)
+        // пакет 28: картинку векторного слоя редактор перерисовывает из примитивов - её отсутствие не потеря данных
+        val regenerable = fixed.media.filter { it.vector && it.vectors.isNotEmpty() && it.cells.isEmpty() }.mapTo(HashSet()) { it.file }
+        val missing = referencedFiles(fixed).filterNot { exists(it) || it in regenerable }
         return Report(fixed, version, missing, renamed = name != data.meta.name.trim().ifEmpty { "Проект" })
     }
 

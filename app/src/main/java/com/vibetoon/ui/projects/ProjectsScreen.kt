@@ -138,11 +138,16 @@ fun ProjectsScreen(app: AppViewModel) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                     Text("«" + st.name + "»", fontWeight = FontWeight.Bold)
+                    if (st.app.isNotEmpty()) Text(com.vibetoon.ui.i18n.L("Импортировано из: ${com.vibetoon.ui.i18n.L(st.app)}"), fontSize = 13.sp)
                     if (st.renamed) Text("Проект с таким именем уже есть - импортированный назван по-другому, ваш проект не изменён.", fontSize = 13.sp)
                     if (st.missing.isEmpty()) Text("Все файлы проекта на месте.", fontSize = 13.sp)
                     else {
                         Text(com.vibetoon.ui.i18n.L("Не найдено файлов: ${st.missing.size}. Эти слои будут пустыми; данные (ключи, кости, эффекты) сохранены."), fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                         Text(st.missing.take(6).joinToString("\n") { it.substringAfterLast('/') } + if (st.missing.size > 6) "\n…" else "", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                    }
+                    if (st.notes.isNotEmpty()) {
+                        Text("Не перенесено или упрощено:", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(st.notes.take(12).joinToString("\n") { "• " + com.vibetoon.ui.i18n.L(it) } + if (st.notes.size > 12) "\n…" else "", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
                     }
                     if (st.fontsRestored > 0) Text(com.vibetoon.ui.i18n.L("Добавлено шрифтов: ${st.fontsRestored}"), fontSize = 13.sp)
                     if (st.fontsMissing.isNotEmpty()) Text(com.vibetoon.ui.i18n.L("Нет шрифтов: ${st.fontsMissing.joinToString()} - текст покажется шрифтом по умолчанию"), fontSize = 13.sp)

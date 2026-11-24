@@ -1231,4 +1231,56 @@ PSD в текущий проект|PSD into current project
 Пустой отрезок|Empty range
 Кодек не открыт|The codec is not open
 Некорректный размер видео|Invalid video size
+Последовательность кадров|Frame sequence
+Проект ToonSquid (.tsproj) не читается напрямую: экспортируйте его в ToonSquid в PSD, GIF, видео или последовательность PNG (ZIP) и импортируйте этот файл|ToonSquid projects (.tsproj) can't be read directly: export the project from ToonSquid as PSD, GIF, video or a PNG sequence (ZIP) and import that file
+Формат не распознан. Поддерживаются: .tsproj/.zip VibeToon, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra) и ZIP с кадрами PNG/JPEG|Unrecognized format. Supported: VibeToon .tsproj/.zip, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra) and ZIP with PNG/JPEG frames
+В файле нет слоёв с пикселями|The file has no layers with pixels
+Анимация контуров фигур не переносится (взята первая форма)|Shape path animation is not imported (the first shape is used)
+Скругление звёзд и многоугольников не переносится|Star and polygon roundness is not imported
+Анимация групп внутри слоя-фигуры не переносится (взято первое положение)|Group animation inside a shape layer is not imported (the first position is used)
+Перекос (skew) не переносится|Skew is not imported
+Градиенты заменены сплошным цветом|Gradients replaced with a solid color
+Анимация цвета и прозрачности заливок не переносится|Fill color and opacity animation is not imported
+Анимация толщины обводки не переносится|Stroke width animation is not imported
+Пунктир обводки не переносится|Dashed strokes are not imported
+Trim Paths не переносится|Trim Paths is not imported
+Repeater не переносится|Repeater is not imported
+Merge Paths не переносится|Merge Paths is not imported
+Round Corners не переносится|Round Corners is not imported
+Эффекты фигур ({}) не переносятся|Shape effects ({}) are not imported
+В файле .lottie несколько анимаций - импортирована первая|The .lottie file has several animations - the first one was imported
+Композиция {}×{} уменьшена до {}×{}|Composition {}×{} scaled down to {}×{}
+Частота кадров {} округлена до {}|Frame rate {} rounded to {}
+Длительность обрезана до {} кадров|Duration trimmed to {} frames
+Слишком глубокая вложенность композиций|Compositions are nested too deeply
+Слои Lottie типа {} не переносятся|Lottie layers of type {} are not imported
+3D-слои импортированы как 2D|3D layers imported as 2D
+Time Remap не переносится|Time Remap is not imported
+Auto-Orient не переносится|Auto-Orient is not imported
+Маски слоёв Lottie не переносятся|Lottie layer masks are not imported
+Эффекты слоёв Lottie не переносятся|Lottie layer effects are not imported
+Track Matte не переносится: слой-подложка скрыт|Track Matte is not imported: the matte layer is hidden
+Не найдена вложенная композиция «{}»|Nested composition "{}" not found
+Выражения (expressions) не переносятся|Expressions are not imported
+Импортировано слоёв: {} (больше за раз не импортируется)|Layers imported: {} (the maximum per import)
+Не найдена картинка слоя «{}»|Image for layer "{}" not found
+Некоторые режимы наложения заменены на Normal|Some blend modes replaced with Normal
+Шрифты текста Lottie заменены шрифтом по умолчанию|Lottie text fonts replaced with the default font
+Текстовые элементы OpenRaster не переносятся|OpenRaster text elements are not imported
+Режимы наложения заменены на Normal: {}|Blend modes replaced with Normal: {}
+Холст {}×{} вписан в {}×{}|Canvas {}×{} fitted into {}×{}
+В файле Krita нет сведённой картинки (mergedimage.png): сохраните его в Krita в PSD или ORA|The Krita file has no merged image (mergedimage.png): save it in Krita as PSD or ORA
+Krita: слои хранятся во внутреннем формате - импортирована сведённая картинка. Для отдельных слоёв сохраните файл в Krita как PSD или ORA|Krita: layers are stored in an internal format - the merged image was imported. For separate layers, save the file in Krita as PSD or ORA
+Импортировано кадров: {} из {}|Frames imported: {} of {}
+Кадры разного размера растянуты до {}×{}|Frames of different sizes stretched to {}×{}
+Кадры по порядку имён файлов, по одному кадру проекта ({} fps)|Frames in file name order, one project frame each ({} fps)
+Холст {}×{} уменьшен до {}×{}|Canvas {}×{} scaled down to {}×{}
+Animation Assist: кадры сведены (режимы наложения внутри кадра - как Normal), настройки кальки и удержания кадров не переносятся|Animation Assist: frames are flattened (blend modes inside a frame act as Normal); onion skin and frame hold settings are not imported
+Текстовые слои импортированы картинками: {}|Text layers imported as images: {}
+Маски слоёв запечены в прозрачность|Layer masks baked into transparency
+Импортировано из: {}|Imported from: {}
+Не перенесено или упрощено:|Not imported or simplified:
+Файл другого приложения повреждён или в неподдерживаемой версии формата|The file from another app is damaged or uses an unsupported format version
+Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster или Krita|The file doesn't look like a project: use .tsproj, .zip with project.json, project.json, PSD, Procreate, Lottie, OpenRaster or Krita
+Проект Rough Animator не читается напрямую: экспортируйте анимацию в Rough Animator как последовательность PNG (ZIP), GIF или видео и импортируйте этот файл|Rough Animator projects can't be read directly: export the animation from Rough Animator as a PNG sequence (ZIP), GIF or video and import that file
 """

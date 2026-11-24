@@ -27,7 +27,9 @@ sealed interface ImportUi {
     data object Busy : ImportUi
     data class Done(
         val id: String, val name: String, val missing: List<String>, val fontsRestored: Int,
-        val fontsMissing: List<String>, val renamed: Boolean, val sourceVersion: Int
+        val fontsMissing: List<String>, val renamed: Boolean, val sourceVersion: Int,
+        /** Пакет 28: приложение-источник (пусто - VibeToon) и что не перенесено. */
+        val app: String = "", val notes: List<String> = emptyList()
     ) : ImportUi
     data class Failed(val message: String) : ImportUi
 }
@@ -126,7 +128,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val names = repo.list().map { it.name }
                     repo.importProject({
                         cr.openInputStream(uri) ?: throw com.vibetoon.domain.project.ProjectArchive.ImportException(com.vibetoon.domain.project.ProjectArchive.Reason.READ_FAILED)
-                    }, names)
+                    }, names, displayName(uri))
                 }
             }
             refresh()
@@ -135,7 +137,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     is ProjectRepository.Imported.Project -> {
                         val rep = r.report
                         if (rep.data.meta.folder.isNotBlank()) addFolder(rep.data.meta.folder)   // папка проекта появляется в менеджере
-                        _import.value = ImportUi.Done(rep.data.meta.id, rep.data.meta.name, rep.missing, rep.fontsRestored, rep.fontsMissing, rep.renamed, rep.sourceVersion)
+                        _import.value = ImportUi.Done(rep.data.meta.id, rep.data.meta.name, rep.missing, rep.fontsRestored, rep.fontsMissing, rep.renamed, rep.sourceVersion, rep.app, rep.notes)
                     }
                     is ProjectRepository.Imported.Psd -> {
                         // PSD: новый проект размером с PSD (не больше 4096 по длинной стороне), слои загрузятся в редакторе
@@ -151,7 +153,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }.onFailure { t ->
                 android.util.Log.w("VT/Import", "project import failed", t)
-                val msg = (t as? com.vibetoon.domain.project.ProjectArchive.ImportException)?.reason?.message
+                val msg = (t as? com.vibetoon.domain.project.ProjectArchive.ImportException)?.text
                     ?: if (t is OutOfMemoryError) com.vibetoon.domain.project.ProjectArchive.Reason.TOO_LARGE.message
                     else com.vibetoon.domain.project.ProjectArchive.Reason.READ_FAILED.message
                 _import.value = ImportUi.Failed(msg)
