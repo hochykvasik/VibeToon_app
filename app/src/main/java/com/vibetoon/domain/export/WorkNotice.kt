@@ -20,9 +20,10 @@ object WorkNotice {
 
     /** Заголовок: «VibeToon: экспорт 42 %»; без процента (ещё не начался или импорт) - без числа. */
     fun title(kind: Kind, percent: Int?): String = when (kind) {
-        Kind.EXPORT -> if (percent != null) "$APP_NAME: экспорт ${percent.coerceIn(0, 100)} %" else "$APP_NAME: экспорт"
-        Kind.IMPORT -> if (percent != null) "$APP_NAME: импорт ${percent.coerceIn(0, 100)} %" else "$APP_NAME: импорт"
-        Kind.OTHER -> "$APP_NAME: фоновая работа"
+        // имя приложения - прямо в литерале: строка целиком должна совпасть с парой словаря RU/EN
+        Kind.EXPORT -> if (percent != null) "VibeToon: экспорт ${percent.coerceIn(0, 100)} %" else "VibeToon: экспорт"
+        Kind.IMPORT -> if (percent != null) "VibeToon: импорт ${percent.coerceIn(0, 100)} %" else "VibeToon: импорт"
+        Kind.OTHER -> "VibeToon: фоновая работа"
     }
 
     /** Строка состояния: какой кадр из скольких (если кадров больше одного), иначе этап работы. */
