@@ -60,6 +60,9 @@ inline float effectReach(const float* e) {
         case 14: return f(1);                      // Motion Blur: длина
         case 17: return f(1) + f(2) + f(3);        // RGB Split: сдвиги + глитч
         case 19: return f(1);                      // Displacement: сила
+        case 22: return f(4);                      // Inner Glow: читает альфу в радиусе (пишет только внутри контура)
+        case 23: return f(1);                      // Halftone: центр ячейки до ~0.71 ячейки от пикселя
+        case 24: return f(1);                      // Line Boil: амплитуда смещения
         default: return -1.f;
     }
 }

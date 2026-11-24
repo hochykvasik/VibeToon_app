@@ -201,6 +201,33 @@ private fun DrawScope.preview(type: Int) {
             }
             disc(c, r * 0.5f, Pink)
         }
+        // Спринт 35
+        EffectMath.INNER_GLOW -> {
+            disc(c, r * 1.2f, Pink)
+            for (i in 1..5) drawCircle(Color(0xFFFFE0B0).copy(alpha = 0.18f * i), r * 1.2f - (5 - i) * r * 0.08f, c, style = Stroke(r * 0.09f))
+        }
+        EffectMath.HALFTONE -> {
+            val n = 7; val s = w / n
+            for (i in 0 until n) for (j in 0 until n) {
+                val o = Offset(i * s + s / 2, j * s + s / 2)
+                val ink = (1f - (o - c).getDistance() / (w * 0.55f)).coerceIn(0f, 1f)
+                if (ink > 0.02f) disc(o, s * 0.7072f * kotlin.math.sqrt(ink), Navy)
+            }
+        }
+        EffectMath.LINE_BOIL -> {
+            for ((k, alpha) in listOf(0 to 0.25f, 1 to 0.45f, 2 to 1f)) {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    for (x in 0..24) {
+                        val a = x / 24f * 6.2832f
+                        val rr = r * (1.25f + 0.07f * kotlin.math.sin(a * 5f + k * 2.1f) + 0.05f * kotlin.math.cos(a * 3f - k))
+                        val p = c + Offset(kotlin.math.cos(a), kotlin.math.sin(a)) * rr
+                        if (x == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y)
+                    }
+                    close()
+                }
+                drawPath(path, Navy.copy(alpha = alpha), style = Stroke(5f))
+            }
+        }
         else -> disc(c, r, Orange)
     }
 }

@@ -1440,4 +1440,33 @@ HEVC: файл примерно вдвое меньше при том же ка�
 Защита от ладони: вкладка «Жесты» → «Определение касаний»|Palm rejection: “Gestures” tab → “Touch Detection”
 Сбросить настройки пера|Reset pen settings
 Стаб.|Stab.
+Внутреннее свечение|Inner Glow
+Полутон|Halftone
+Живая линия|Line Boil
+Распространение|Spread
+Интенсивность (альфа)|Intensity (alpha)
+Режим|Mode
+Инверсия (от центра)|Invert (from center)
+Обычный|Normal
+Экран (наложение)|Screen
+Добавление|Add
+Умножение|Multiply
+Размер ячейки|Cell size
+Сдвиг тона|Tone shift
+Монохром|Monochrome
+Монохром на белом|Monochrome on white
+Цвета рисунка|Original colors
+Масштаб шума|Noise scale
+Частота дрожания, fps|Boil rate, fps
+Тип шума|Noise type
+Вариантов в цикле (0 - без повтора)|Variants per loop (0 - no repeat)
+Детализация|Detail
+Зерно|Seed
+Дрожание текстуры|Texture jitter
+Плавный|Smooth
+Зернистый|Grainy
+Волнистый|Wavy
+Свечение внутри контура: не выходит за альфу рисунка|Glow inside the outline: never spills past the drawing's alpha
+Полутон: точки в координатах холста, сетка не плывёт при сдвиге вида|Halftone: dots live in canvas coordinates, the grid stays put when the view moves
+Живая линия: рисунок меняется с частотой дрожания, а не с fps проекта|Line Boil: the drawing changes at the boil rate, not at the project fps
 """

@@ -44,6 +44,15 @@ int main() {
     assert(near(effectReach(glow), 9.f));
     assert(effectReach(mirror) < 0.f);
     assert(effectReach(zoom) < 0.f);
+    // Спринт 35: внутреннее свечение читает альфу в радиусе, полутон - центр ячейки, Line Boil - смещение на амплитуду.
+    const float inner[10] = {22, 1, .9f, .5f, 16, 0, 1, 1, 0, 0};
+    const float halftone[10] = {23, 10, 45, 1, 0, 0, 0, 0, 0, 0};
+    const float boil[10] = {24, 3, 24, 8, 0, 3, 2, 0, .15f, 1.5f};
+    assert(near(effectReach(inner), 16.f));
+    assert(near(effectReach(halftone), 10.f));
+    assert(near(effectReach(boil), 3.f));
+    const float* chain3[3] = {inner, halftone, boil};
+    assert(near(chainReach(chain3, 3), 29.f));
     const float* chain1[3] = {cc, blur, shadow};
     assert(near(chainReach(chain1, 3), 30.f));
     const float* chain2[2] = {blur, mirror};

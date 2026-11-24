@@ -159,6 +159,7 @@ private fun EffectsTab(vm: MainViewModel) {
                             androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, com.vibetoon.ui.i18n.L("Удалить эффект"))
                         }
                     }
+                    if (def.hint.isNotEmpty()) Text(com.vibetoon.ui.i18n.L(def.hint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                     if (def.colorAt >= 0) {
                         val at = def.colorAt
                         val col = Color(e.p[at], e.p[at + 1], e.p[at + 2])
@@ -201,7 +202,9 @@ private fun EffectsTab(vm: MainViewModel) {
                                         label = { Text(label, fontSize = 12.sp) })
                                 }
                             }
-                        } else TurbSlider(p.name, e.p[pi], p.min..p.max, if (p.name.contains("°")) "%.1f°".format(e.p[pi]) else "%.2f".format(e.p[pi])) { vm.setEffectParam(idx, pi, it) }
+                        } else TurbSlider(p.name, e.p[pi], p.min..p.max, if (p.whole) "%.0f".format(e.p[pi]) else if (p.name.contains("°")) "%.1f°".format(e.p[pi]) else "%.2f".format(e.p[pi])) {
+                            vm.setEffectParam(idx, pi, if (p.whole) kotlin.math.round(it) else it)   // Спринт 35: целые параметры (октавы, зерно, цикл)
+                        }
                     }
                 }
             }

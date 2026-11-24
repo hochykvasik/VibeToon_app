@@ -180,7 +180,8 @@ void main() {
 // Эффекты слоя: один полноэкранный проход над результатом предыдущего (premultiplied текстура).
 // uMode: 0 ChromaKey, 1 Blur, 2 ColorCorrection, 3 Pixelate, 4 Glow, 5 DropShadow, 6 Invert, 7 Vignette,
 // 8 Stroke, 9 Wave, 10 Mirror, 11 Tiles, 12 Noise, 13 Shake, 14 MotionBlur, 15 ZoomBlur (16 Spin - на CPU),
-// 17 RGB Split / Glitch, 18 Pulse, 19 Displacement (процедурная карта смещения).
+// 17 RGB Split / Glitch, 18 Pulse, 19 Displacement (процедурная карта смещения),
+// 22 Inner Glow, 23 Halftone, 24 Line Boil (Спринт 35).
 // Параметры p0..p7 = uP0.xyzw, uP1.xyzw. Расстояния в параметрах - пиксели холста, здесь умножаются на uView.x.
 const char* kFragFx = R"(#version 300 es
 precision highp float;
@@ -204,6 +205,35 @@ float vnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+// Спринт 35: холст (y вниз) -> uv цели; обратное к q в main().
+vec2 uvOf(vec2 qc) { return vec2(qc.x * uView.x + uView.y, uSize.y - (qc.y * uView.x + uView.z)) / uSize; }
+float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+// Покрытие точки полутона в пикселе холста qc: сетка с шагом cell (px холста) под углом ang, краска ink (0..1) в центре ячейки.
+float htDot(vec2 qc, vec2 g, float cell, float ink) {
+    vec2 f = g - (floor(g) + 0.5);
+    float r = 0.7072 * sqrt(clamp(ink, 0.0, 1.0));
+    float aa = 0.75 / max(cell * uView.x, 1.0);
+    return 1.0 - smoothstep(r - aa, r + aa, length(f));
+}
+mat2 rot2(float a) { float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }
+// Центр ячейки сетки (угол ang, шаг cell) для пикселя холста qc: координаты сетки g и центр в холсте.
+vec2 htGrid(vec2 qc, float ang, float cell) { return rot2(-ang) * qc / cell; }
+vec2 htCenter(vec2 g, float ang, float cell) { return rot2(ang) * ((floor(g) + 0.5) * cell); }
+float htInk(float v) { return clamp((clamp(v, 0.0, 1.0) - 0.5) * uP0.z + 0.5 + uP0.w, 0.0, 1.0); }
+float boilNoise(vec2 p, int kind, int oct) {
+    if (kind == 1) return hash(floor(p * 2.0));                              // зернистый: ступеньки без сглаживания
+    if (kind == 2) return 0.5 + 0.25 * (sin(p.x * 2.1 + sin(p.y * 1.3) * 1.7) + sin(p.y * 1.9 + sin(p.x * 1.1) * 1.5));   // волнистый
+    float n = 0.0, a = 0.5, sum = 0.0;
+    for (int i = 0; i < 4; ++i) {                                            // плавный: сумма октав шума
+        if (i >= oct) break;
+        n += a * vnoise(p);
+        sum += a;
+        p = p * 2.03 + 11.7;
+        a *= 0.5;
+    }
+    return n / max(sum, 0.0001);
 }
 
 // Гауссово размытие по спирали (золотой угол): веса exp(-r^2 / 2s^2), s = радиус / 2.
@@ -337,6 +367,67 @@ void main() {
         vec2 m = q / max(uP0.y, 4.0) + vec2(uView.w * uP0.z, -uView.w * uP0.z * 0.7);
         vec2 d = vec2(vnoise(m), vnoise(m + 17.3)) - 0.5;
         o = tx(uv + vec2(d.x, -d.y) * 2.0 * uP0.x * k / uSize);
+    } else if (uMode == 22) {                       // Inner Glow: цвет rgb, радиус, распространение, интенсивность, режим, инверсия
+        if (c.a > 0.0001) {
+            float ba = blurAt(uv, max(uP0.w * k, 0.5)).a;
+            float edge = clamp((1.0 - ba) * 2.0, 0.0, 1.0);                 // у края контура размытая альфа ~0.5
+            float m = clamp(edge / (1.0 - clamp(uP1.x, 0.0, 0.98)), 0.0, 1.0);
+            if (uP1.w >= 0.5) m = 1.0 - m;                                   // инверсия: свечение от центра
+            float a = clamp(m * uP1.y, 0.0, 1.0);
+            vec3 col = unpre(c), g = clamp(uP0.xyz, 0.0, 1.0), r;
+            int bm = int(uP1.z + 0.5);
+            if (bm == 1) r = 1.0 - (1.0 - col) * (1.0 - g);                  // экран
+            else if (bm == 2) r = min(col + g, vec3(1.0));                   // добавление
+            else if (bm == 3) r = col * g;                                   // умножение (затемнение краёв тёмным цветом)
+            else r = g;                                                      // обычный
+            o = vec4(mix(col, r, a) * c.a, c.a);                             // альфа слоя не меняется: за контур не выходит
+        }
+    } else if (uMode == 23) {                       // Halftone: ячейка (px), угол, контраст, сдвиг, режим, цвет точек rgb
+        float cell = max(uP0.x, 2.0);
+        float ang = radians(uP0.y);
+        int hm = int(uP1.x + 0.5);
+        vec3 ink = clamp(uP1.yzw, 0.0, 1.0);
+        if (hm == 3 || hm == 4) {                   // CMYK на белом / RGB на чёрном: свой угол у каждого канала
+            vec4 angs = hm == 3 ? vec4(15.0, 75.0, 0.0, 45.0) : vec4(15.0, 75.0, 0.0, 0.0);
+            vec4 cov = vec4(0.0);
+            for (int ch = 0; ch < 4; ++ch) {
+                if (hm == 4 && ch == 3) break;
+                float aa = ang + radians(angs[ch] - 45.0);
+                vec2 g = htGrid(q, aa, cell);
+                vec4 s = tx(uvOf(htCenter(g, aa, cell)));
+                vec3 sc = unpre(s);
+                float v;
+                if (hm == 3) {
+                    float kk = 1.0 - max(max(sc.r, sc.g), sc.b);
+                    float den = max(1.0 - kk, 0.0001);
+                    v = ch == 0 ? (1.0 - sc.r - kk) / den : ch == 1 ? (1.0 - sc.g - kk) / den : ch == 2 ? (1.0 - sc.b - kk) / den : kk;
+                } else v = ch == 0 ? sc.r : ch == 1 ? sc.g : sc.b;
+                cov[ch] = htDot(q, g, cell, htInk(v) * step(0.0001, s.a));
+            }
+            vec3 col;
+            if (hm == 3) col = (1.0 - cov.x * vec3(1.0, 0.0, 0.0)) * (1.0 - cov.y * vec3(0.0, 1.0, 0.0)) * (1.0 - cov.z * vec3(0.0, 0.0, 1.0)) * (1.0 - cov.w);
+            else col = cov.xyz;
+            o = vec4(col * c.a, c.a);
+        } else {
+            vec2 g = htGrid(q, ang, cell);
+            vec4 s = tx(uvOf(htCenter(g, ang, cell)));
+            vec3 sc = unpre(s);
+            float cov = htDot(q, g, cell, htInk((1.0 - lum(sc)) * s.a)) * c.a;   // точки только в пределах рисунка
+            vec3 dc = hm == 2 ? sc : ink;
+            if (hm == 1) o = vec4(dc * cov + vec3(1.0) * (c.a - cov), c.a);     // на белой «бумаге» внутри контура
+            else o = vec4(dc * cov, cov);
+        }
+    } else if (uMode == 24) {                       // Line Boil: амплитуда, масштаб шума, fps дрожания, тип, цикл, октавы, зерно, текстура
+        float st = floor(max(uView.w, 0.0) * clamp(uP0.z, 0.1, 24.0) + 0.0001);
+        float cyc = floor(uP1.x + 0.5);
+        st = cyc >= 1.0 ? mod(st, cyc) : mod(st, 4096.0);                   // без цикла - период 4096 шагов (точность sin в hash)
+        vec2 seed = vec2(hash(vec2(st, uP1.z + 1.3)), hash(vec2(uP1.z + 7.9, st))) * 173.0;
+        vec2 m = q / max(uP0.y, 2.0) + seed;
+        int kind = int(uP0.w + 0.5), oct = int(clamp(uP1.y, 1.0, 4.0) + 0.5);
+        vec2 d = vec2(boilNoise(m, kind, oct), boilNoise(m + vec2(37.2, 91.4), kind, oct)) - 0.5;
+        o = tx(uv + vec2(d.x, -d.y) * 2.0 * uP0.x * k / uSize);
+        float gr = vnoise(m * 4.0 + 31.7);
+        o *= clamp(1.0 - uP1.w * (gr - 0.3) * 1.4, 0.0, 1.0);               // дрожание текстуры (прозрачное зерно)
     }
     outColor = o;
 }
