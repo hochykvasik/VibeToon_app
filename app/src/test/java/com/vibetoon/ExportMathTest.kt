@@ -7,11 +7,16 @@ import org.junit.Test
 
 class ExportMathTest {
     @Test fun exportPresetsAreExplicitPerFormat() {
-        assertEquals(listOf(1080, 720, 480), ExportMath.QUALITIES)
+        // спринт 32: 4K и 1440p, частоты 12-120, GIF до 50 fps
+        assertEquals(listOf(2160, 1440, 1080, 720, 480), ExportMath.QUALITIES)
         assertEquals(listOf(480, 360), ExportMath.GIF_QUALITIES)
-        assertEquals(listOf(24, 30, 60), ExportMath.FPS_OPTIONS)
+        assertEquals(listOf(12, 15, 24, 25, 30, 48, 50, 60, 90, 120), ExportMath.FPS_OPTIONS)
         assertEquals(ExportMath.FPS_OPTIONS, ExportMath.SEQUENCE_FPS_OPTIONS)
-        assertEquals(listOf(12, 24, 30), ExportMath.GIF_FPS_OPTIONS)
+        assertEquals(listOf(8, 10, 12, 15, 20, 24, 25, 30, 50), ExportMath.GIF_FPS_OPTIONS)
+        assertEquals("4K (2160p)", ExportMath.qualityLabel(2160))
+        assertEquals("1440p (2K)", ExportMath.qualityLabel(1440))
+        assertEquals("720p", ExportMath.qualityLabel(720))
+        assertEquals(3840 to 2160, ExportMath.videoSize(1920, 1080, 2160))
     }
 
     @Test fun landscapeKeepsAspectAndEven() {

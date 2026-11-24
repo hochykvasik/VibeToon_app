@@ -58,7 +58,7 @@ class ProjectRepository(context: Context) {
             name = spec.name.ifBlank { com.vibetoon.ui.i18n.defaultName(appContext, "Новый проект") },
             width = spec.width,
             height = spec.height,
-            fps = spec.fps,
+            fps = com.vibetoon.domain.anim.FrameRates.clamp(spec.fps),
             background = spec.background,
             createdAt = now,
             updatedAt = now

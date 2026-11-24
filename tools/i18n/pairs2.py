@@ -527,7 +527,7 @@ PNG-последовательность (ZIP)|PNG sequence (ZIP)
 Многослойный PSD текущего кадра: слои и группы сохраняются, режимы наложения тоже. Текст, видео, символы и вектор идут как растр; прозрачность слоя запекается в пиксели.|Layered PSD of the current frame: layers and groups are kept, blend modes too. Text, video, symbols and vector go as raster; layer opacity is baked into pixels.
 Все дорожки проекта сводятся в один WAV (стерео 44,1 кГц) на всю длительность проекта.|All project tracks are mixed into one WAV (stereo 44.1 kHz) for the whole project duration.
 Резервная копия проекта со всеми файлами. Её можно импортировать на экране проектов.|A backup of the project with all its files. It can be imported on the projects screen.
-Каждый кадр - PNG с прозрачным фоном, всё в одном ZIP. Это замена видео MOV с альфой: Android не умеет ProRes 4444.|Each frame is a PNG with a transparent background, all in one ZIP. This replaces MOV video with alpha: Android cannot do ProRes 4444.
+Каждый кадр - PNG с прозрачным фоном, всё в одном ZIP. Для видео с альфой выберите «MOV (альфа)».|Each frame is a PNG with a transparent background, all in one ZIP. For video with alpha, choose “MOV (alpha)”.
 Обрезать холст (Crop)|Crop canvas
 Изменить размер холста (Resize)|Resize canvas
 Сохранять пропорции|Keep proportions
@@ -1337,4 +1337,32 @@ Transform Layer создаётся через addNullLayer|Transform Layer is cr
 Warp для группы: нажмите «Включить для группы»|Warp for group: tap “Enable for group”
 Плавные анимации интерфейса|Smooth UI Animations
 Панели и окна появляются плавно; учитывается «Масштаб длительности анимации» Android (0 - без анимации)|Panels and windows appear smoothly; follows Android's “Animator duration scale” (0 turns animations off)
+На устройстве нет кодировщика видео для этого размера|The device has no video encoder for this size
+HEVC на этом устройстве не берёт {}×{}: видео будет в H.264|HEVC on this device cannot encode {}×{}: the video will be H.264
+На устройстве нет кодировщика HEVC: видео будет в H.264|The device has no HEVC encoder: the video will be H.264
+Устройство не кодирует {}×{} ({}): видео будет {}×{}|The device cannot encode {}×{} ({}): the video will be {}×{}
+Кодировщик заявляет до {} fps при {}×{}: файл записан с {} fps, но слабые устройства могут показывать его неплавно|The encoder declares up to {} fps at {}×{}: the file is written at {} fps, but weaker devices may play it unevenly
+Некорректная частота кадров|Invalid frame rate
+Некорректная частота звука|Invalid audio sample rate
+MOV уже закрыт|The MOV file is already closed
+Кадр MOV должен быть PNG|A MOV frame must be a PNG
+MOV создан без звука|The MOV file was created without audio
+В MOV нет ни одного кадра|The MOV file has no frames
+Нет совместимого кодека HEVC для {}×{}|No compatible HEVC codec for {}×{}
+Нет совместимого кодека H.264 для {}×{}|No compatible H.264 codec for {}×{}
+Со звуком: PCM 16 бит, стерео|With sound: PCM 16-bit, stereo
+MOV с альфа-каналом (PNG без потерь): откройте в After Effects, Premiere, Final Cut или DaVinci Resolve|MOV with alpha channel (lossless PNG): open it in After Effects, Premiere, Final Cut or DaVinci Resolve
+Не удалось записать MOV|Could not write the MOV file
+Кодек: {}, {}×{}, {} fps|Codec: {}, {}×{}, {} fps
+MOV (альфа)|MOV (alpha)
+{} fps (проект)|{} fps (project)
+Видео QuickTime с альфа-каналом: кадры PNG без потерь, звук PCM. Открывается в After Effects, Premiere, Final Cut и DaVinci Resolve. ProRes 4444 Android не кодирует, файл крупнее MP4.|QuickTime video with alpha channel: lossless PNG frames, PCM sound. Opens in After Effects, Premiere, Final Cut and DaVinci Resolve. Android cannot encode ProRes 4444, so the file is larger than MP4.
+MOV {}×{}, {} кадров|MOV {}×{}, {} frames
+4K в MOV: каждый кадр - PNG в несколько мегабайт, экспорт долгий и файл большой|4K in MOV: each frame is a PNG of several megabytes, export is slow and the file is large
+GIF показывает не больше {} fps: кадры проекта прорежены|GIF shows at most {} fps: project frames are thinned out
+Настройки видео: кодек, разрешение и FPS|Video settings: codec, resolution and FPS
+На устройстве нет кодировщика HEVC: доступен только H.264|The device has no HEVC encoder: only H.264 is available
+HEVC: файл примерно вдвое меньше при том же качестве, но старые телефоны и Windows без расширения его могут не открыть|HEVC: the file is about half the size at the same quality, but old phones and Windows without the extension may not open it
+Своя частота (1-120 fps)|Custom frame rate (1-120 fps)
+Экран показывает до {} кадров в секунду: при просмотре часть кадров пропускается, в экспорт попадают все|The screen shows up to {} frames per second: some frames are skipped during playback, export keeps all of them
 """

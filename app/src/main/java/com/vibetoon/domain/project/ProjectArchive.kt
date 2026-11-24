@@ -250,7 +250,7 @@ object ProjectArchive {
         val meta = data.meta.copy(
             id = newId, name = name,
             width = ProjectMath.clampSize(data.meta.width), height = ProjectMath.clampSize(data.meta.height),
-            fps = data.meta.fps.coerceIn(1, 120),
+            fps = com.vibetoon.domain.anim.FrameRates.clamp(data.meta.fps),
             createdAt = if (data.meta.createdAt > 0) data.meta.createdAt else now,
             updatedAt = now
         )

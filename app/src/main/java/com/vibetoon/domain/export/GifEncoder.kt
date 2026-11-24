@@ -8,7 +8,9 @@ import java.io.OutputStream
  * 15-битной гистограмме), LZW, расширение NETSCAPE2.0 (бесконечный цикл) и прозрачность одним индексом.
  */
 class GifEncoder(private val out: OutputStream, private val width: Int, private val height: Int, fps: Int, private val transparency: Boolean) {
-    private val delayCs = Math.round(100f / fps.coerceIn(1, 60)).coerceAtLeast(2)
+    /** Спринт 32: частота GIF 1–50 (FrameRates.GIF_MAX), задержки без накопления ошибки округления (24 fps = 4,4,5,4...). */
+    private val fps = fps.coerceIn(com.vibetoon.domain.anim.FrameRates.MIN, com.vibetoon.domain.anim.FrameRates.GIF_MAX)
+    private var frameIndex = 0
     private var started = false
 
     private fun u16(v: Int) { out.write(v and 0xFF); out.write((v shr 8) and 0xFF) }
@@ -34,7 +36,7 @@ class GifEncoder(private val out: OutputStream, private val width: Int, private 
         out.write(0x21); out.write(0xF9); out.write(4)
         val hasT = q.transparentIndex >= 0
         out.write(((if (hasT) 2 else 1) shl 2) or (if (hasT) 1 else 0))   // disposal: 2 для прозрачных кадров, 1 иначе
-        u16(delayCs)
+        u16(com.vibetoon.domain.anim.FrameRates.gifDelayCs(frameIndex++, fps))
         out.write(if (hasT) q.transparentIndex else 0)
         out.write(0)
         // Image Descriptor с локальной палитрой

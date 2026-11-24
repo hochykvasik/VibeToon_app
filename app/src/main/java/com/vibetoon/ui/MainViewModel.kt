@@ -5099,10 +5099,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Экспорт анимированного GIF: [shortSide] - короткая сторона, [fps] 12/24/30, [transparent] - без фона холста. */
-    fun exportGif(shortSide: Int, fps: Int, transparent: Boolean) {
+    fun exportGif(shortSide: Int, fpsRequested: Int, transparent: Boolean) {
         val pid = projectId ?: return
         if (_export.value is ExportUi.Running) return
         pause()
+        // спринт 32: GIF не воспроизводит чаще 50 fps (задержка в 1/100 с) - число кадров считается от реальной частоты
+        val fps = fpsRequested.coerceIn(com.vibetoon.domain.anim.FrameRates.MIN, com.vibetoon.domain.anim.FrameRates.GIF_MAX)
         val (w, h, frames) = exportInfo(shortSide, fps)
         exportCancel = java.util.concurrent.atomic.AtomicBoolean(false)
         val cancel = exportCancel
@@ -5177,6 +5179,76 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (t: Throwable) {
                 Log.e("VT/Export", "png zip failed", t)
                 file.delete(); _export.value = ExportUi.Failed(t.message ?: "Не удалось записать ZIP")
+            } finally {
+                withContext(kotlinx.coroutines.NonCancellable) { runCatching { restoreAfterExport() } }
+            }
+        }
+    }
+
+    /**
+     * Спринт 32: видео MOV с альфа-каналом (кадры PNG внутри QuickTime, без потерь) и, если есть, звуком PCM 16 бит.
+     * Android не умеет ProRes 4444, поэтому файл собирает свой MovWriter; [shortSide] - короткая сторона, [fps] 1–120.
+     */
+    fun exportMov(shortSide: Int, fps: Int, transparent: Boolean, withAudio: Boolean) {
+        val pid = projectId ?: return
+        if (_export.value is ExportUi.Running) return
+        pause()
+        val outFps = com.vibetoon.domain.anim.FrameRates.clamp(fps)
+        val (w, h) = ExportMath.size(canvasW, canvasH, shortSide)
+        val st = _animation.value.settings
+        val frames = ExportMath.frameCount(exportRange()?.length ?: st.durationFrames, st.fps, outFps)
+        exportCancel = java.util.concurrent.atomic.AtomicBoolean(false)
+        val cancel = exportCancel
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+        val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp-${java.util.UUID.randomUUID().toString().take(8)}.mov")
+        _export.value = ExportUi.Running(0, frames)
+        viewModelScope.launch {
+            var writer: com.vibetoon.domain.export.MovWriter? = null
+            try {
+                file.parentFile?.mkdirs()
+                val range = exportRange()
+                val sceneAt = buildSceneAt(outFps, symCache = prerenderSymbols(), range = range)
+                val audioStart = range?.start ?: 0
+                val audioLen = range?.length ?: st.durationFrames
+                val audioStatus = if (withAudio) exportAudioStatus() else null
+                val audioSrc = if (audioStatus == null) emptyList() else
+                    prepareExportAudio(audioStatus).takeIf { com.vibetoon.domain.export.AudioMix.audibleIn(it, audioStart, audioLen) }.orEmpty()
+                val rate = if (audioSrc.isEmpty()) 0 else audioEngine.mixSampleRate()
+                val total = if (rate > 0) com.vibetoon.domain.export.AudioMix.sampleCount(frames, outFps, rate) else 0
+                val mov = withContext(Dispatchers.IO) { com.vibetoon.domain.export.MovWriter(file, w, h, outFps, rate) }
+                writer = mov
+                for (i in 0 until frames) {
+                    if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
+                    val scene = withContext(Dispatchers.Default) { sceneAt(i) }
+                    val bytes = captureExportFrame(scene, transparent, w, h, cancel) ?: error("Не удалось снять кадр $i")
+                    withContext(Dispatchers.Default) {
+                        val bmp = android.graphics.Bitmap.createBitmap(captureArgb(bytes, w, h), w, h, android.graphics.Bitmap.Config.ARGB_8888)
+                        val png = try {
+                            java.io.ByteArrayOutputStream(w * h).also { check(bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }.toByteArray()
+                        } finally { bmp.recycle() }
+                        mov.addFrame(png)
+                        if (rate > 0) {
+                            val (from, n) = com.vibetoon.domain.export.AudioMix.frameSamples(i, outFps, rate)
+                            if (n > 0) mov.addAudio(com.vibetoon.domain.export.AudioMix.render(audioSrc, audioStart, st.fps, rate, from, n, total), n)
+                        }
+                    }
+                    _export.value = ExportUi.Running(i + 1, frames)
+                }
+                withContext(Dispatchers.IO) { mov.finish() }
+                writer = null
+                val gallerySaved = withContext(Dispatchers.IO) { saveToGallery(file, "video/quicktime") }
+                val sound = when {
+                    rate > 0 -> "Со звуком: PCM 16 бит, стерео"
+                    audioStatus?.ready == true -> "Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука"
+                    else -> null
+                }
+                val alpha = if (transparent) "MOV с альфа-каналом (PNG без потерь): откройте в After Effects, Premiere, Final Cut или DaVinci Resolve" else null
+                _export.value = ExportUi.Done(file, gallerySaved, exportGpuNote(listOfNotNull(alpha, sound).joinToString("\n").ifEmpty { null }))
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                writer?.abort(); file.delete(); _export.value = ExportUi.Idle
+            } catch (t: Throwable) {
+                Log.e("VT/Export", "mov failed", t)
+                writer?.abort(); file.delete(); _export.value = ExportUi.Failed(t.message ?: "Не удалось записать MOV")
             } finally {
                 withContext(kotlinx.coroutines.NonCancellable) { runCatching { restoreAfterExport() } }
             }
@@ -11066,6 +11138,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val export: StateFlow<ExportUi> = _export.asStateFlow()
     private var exportCancel = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** Размер кадра MOV (спринт 32): пропорции холста, чётные стороны, без выравнивания по 16 - PNG его не требует. */
+    fun exportEvenSize(shortSide: Int): Pair<Int, Int> = ExportMath.size(canvasW, canvasH, shortSide)
+
     /** Размер видео и число кадров для диалога. */
     fun exportInfo(shortSide: Int, fps: Int): Triple<Int, Int, Int> {
         val (w, h) = ExportMath.videoSize(canvasW, canvasH, shortSide)
@@ -11202,13 +11277,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return sceneAtFn
     }
 
-    fun startExport(shortSide: Int, fps: Int, withAudio: Boolean = true) {
+    /** Спринт 32: что реально запишется в MP4 (кодек, размер, частота, пояснения) по кодекам этого устройства. */
+    fun videoPlan(shortSide: Int, fps: Int, codec: com.vibetoon.domain.export.VideoCodec): com.vibetoon.domain.export.VideoPlan =
+        com.vibetoon.domain.export.VideoExportPolicy.plan(canvasW, canvasH, shortSide, fps, codec, com.vibetoon.render.VideoCodecs)
+
+    /** Есть ли на устройстве кодировщик HEVC (для подписи в окне экспорта). */
+    fun hevcAvailable(): Boolean = com.vibetoon.render.VideoCodecs.available(com.vibetoon.domain.export.VideoCodec.HEVC)
+
+    fun startExport(shortSide: Int, fpsRequested: Int, withAudio: Boolean = true, codecRequested: com.vibetoon.domain.export.VideoCodec = com.vibetoon.domain.export.VideoCodec.AVC) {
         val pid = projectId ?: return
         val view = RenderHost.view ?: return
         if (_export.value is ExportUi.Running) return
+        val plan = videoPlan(shortSide, fpsRequested, codecRequested)
+        if (!plan.possible) { _export.value = ExportUi.Failed(plan.notes.firstOrNull() ?: "Не удалось записать видео"); return }
         pause()
         val st = _animation.value.settings
-        val (w, h, frames) = exportInfo(shortSide, fps)
+        val fps = plan.fps
+        val (w0, h0, frames) = exportInfo(plan.shortSide, fps)
+        // размер из плана (он же videoSize), но на всякий случай - тот, что посчитан для числа кадров
+        val w = if (plan.width > 0) plan.width else w0
+        val h = if (plan.height > 0) plan.height else h0
+        val planNote = plan.notes.joinToString("\n").ifEmpty { null }
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
         val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp-${java.util.UUID.randomUUID().toString().take(8)}.mp4")
 
@@ -11230,7 +11319,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val audioProblem = if (audioStatus?.ready == true && audioSrc.isEmpty()) "Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука" else null
                 val compatible = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("compatible_video_export", false)
                 view.exportVideo(
-                    ExportSpec(w, h, fps, frames, file, compatible), bg, sceneAt,
+                    ExportSpec(w, h, fps, frames, file, compatible, plan.codec, plan.rateHint, plan.bitrate), bg, sceneAt,
                     onProgress = { _export.value = ExportUi.Running(it, frames) }, cancel = cancel
                 ) { result ->
                     viewModelScope.launch {
@@ -11238,6 +11327,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         result.onSuccess {
                             try {
                                 var note: String? = audioProblem
+                                val codecNote = "Кодек: {}, {}×{}, {} fps".replaceFirst("{}", plan.codec.label).replaceFirst("{}", "$w").replaceFirst("{}", "$h").replaceFirst("{}", "$fps")
                                 if (audioSrc.isNotEmpty()) {
                                     _export.value = ExportUi.Running(0, 100, "Звук")
                                     val rate = audioEngine.mixSampleRate()
@@ -11255,7 +11345,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                     note = if (added.isSuccess) "Со звуком: AAC, стерео 44,1 кГц" else "Звук добавить не удалось - видео сохранено без звука"
                                 }
                                 val gallerySaved = withContext(Dispatchers.IO) { saveToGallery(file, "video/mp4") }
-                                _export.value = ExportUi.Done(file, gallerySaved, exportGpuNote(note))
+                                _export.value = ExportUi.Done(file, gallerySaved, exportGpuNote(listOfNotNull(codecNote, planNote, note).joinToString("\n")))
                             } catch (t: kotlinx.coroutines.CancellationException) {
                                 _export.value = ExportUi.Idle; throw t
                             } catch (t: Exception) {

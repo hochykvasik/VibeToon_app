@@ -54,7 +54,11 @@ private class NewProjectState(val defaultName: String) {
     var width by mutableStateOf("1920")
     var height by mutableStateOf("1080")
     var fps by mutableIntStateOf(24)
+    /** Спринт 32: своя частота 1–120 (пусто - выбран пресет). */
+    var customFps by mutableStateOf("")
     var background by mutableLongStateOf(0L)
+
+    val fpsValid by derivedStateOf { customFps.isEmpty() || com.vibetoon.domain.anim.FrameRates.parse(customFps) != null }
 
     val sizeValid by derivedStateOf {
         val w = width.toIntOrNull()
@@ -157,14 +161,28 @@ private fun ResolutionFields(form: NewProjectState) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FpsPicker(form: NewProjectState) {
     SectionLabel("Частота кадров")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         for (fps in ProjectMath.FPS_OPTIONS) {
-            FilterChip(selected = form.fps == fps, onClick = { form.fps = fps }, label = { Text("$fps fps") })
+            FilterChip(selected = form.fps == fps && form.customFps.isEmpty(), onClick = { form.fps = fps; form.customFps = "" }, label = { Text("$fps fps", maxLines = 1, softWrap = false) })
         }
     }
+    val custom = com.vibetoon.domain.anim.FrameRates.parse(form.customFps)
+    OutlinedTextField(
+        value = form.customFps,
+        onValueChange = { v ->
+            form.customFps = v.filter { it.isDigit() }.take(3)
+            com.vibetoon.domain.anim.FrameRates.parse(form.customFps)?.let { form.fps = it }
+        },
+        label = { Text("Своя частота (1-120 fps)") },
+        isError = form.customFps.isNotEmpty() && custom == null,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -196,7 +214,7 @@ private fun BackgroundPicker(form: NewProjectState) {
 private fun CreateButton(form: NewProjectState, onCreate: (NewProjectSpec) -> Unit) {
     Button(
         onClick = { onCreate(form.spec()) },
-        enabled = form.sizeValid,
+        enabled = form.sizeValid && form.fpsValid,
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 16.dp)
     ) { Text("Создать") }
 }

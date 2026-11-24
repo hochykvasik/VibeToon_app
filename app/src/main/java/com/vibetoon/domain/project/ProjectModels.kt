@@ -285,7 +285,8 @@ object ProjectMath {
         AspectPreset("1:1", 1, 1),
         AspectPreset("4:3", 4, 3)
     )
-    val FPS_OPTIONS = listOf(24, 30, 60)
+    /** Спринт 32: пресеты частоты нового проекта; можно ввести любое значение 1–120. */
+    val FPS_OPTIONS = com.vibetoon.domain.anim.FrameRates.PROJECT_PRESETS
     const val DEFAULT_SHORT_SIDE = 1080
     const val MIN_SIZE = 64
     const val MAX_SIZE = 4096

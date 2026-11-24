@@ -125,7 +125,7 @@ object ProjectJson {
                 name = root.str("name", "Проект"),
                 width = root.int("width", 1080).coerceAtLeast(1),
                 height = root.int("height", 1080).coerceAtLeast(1),
-                fps = root.int("fps", 24).coerceAtLeast(1),
+                fps = com.vibetoon.domain.anim.FrameRates.clamp(root.int("fps", 24)),   // спринт 32: 1–120, как в редакторе
                 durationFrames = root.int("duration", 120).coerceAtLeast(1),
                 background = parseColor(root.str("background", "#00000000")),
                 createdAt = root.long("createdAt", 0L),

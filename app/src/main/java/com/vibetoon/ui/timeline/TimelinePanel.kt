@@ -1241,37 +1241,47 @@ private fun FrameField(frame: Int, fps: Int, max: Int, onFrame: (Int) -> Unit) {
     )
 }
 
-/** Настройки таймлайна: общая длительность (кадры) и FPS. */
+/** Настройки таймлайна: общая длительность (кадры) и FPS 1–120 (спринт 32: пресеты + любое значение). */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun TimelineSettingsDialog(duration: Int, fps: Int, onApply: (Int, Int) -> Unit, onDismiss: () -> Unit) {
     var frames by remember { mutableStateOf(duration.toString()) }
     var rate by remember { mutableStateOf(fps.toString()) }
-    val d = frames.toIntOrNull()?.coerceIn(1, TimeFormat.MAX_DURATION_FRAMES)
-    val f = rate.toIntOrNull()?.coerceIn(1, TimeFormat.MAX_FPS)
+    val d = frames.trim().toIntOrNull()?.takeIf { it in 1..TimeFormat.MAX_DURATION_FRAMES }
+    val f = com.vibetoon.domain.anim.FrameRates.parse(rate)
+    // частота экрана: при fps выше неё просмотр пропускает кадры (воспроизведение идёт по времени), экспорт - нет
+    val view = androidx.compose.ui.platform.LocalView.current
+    val refresh = remember(view) { runCatching { view.display?.refreshRate }.getOrNull() ?: 60f }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Настройки таймлайна") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 OutlinedTextField(
                     value = frames, onValueChange = { frames = it.filter(Char::isDigit).take(5) },
                     label = { Text("Всего кадров (до ${TimeFormat.MAX_DURATION_FRAMES})") }, singleLine = true,
+                    isError = d == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
                 OutlinedTextField(
                     value = rate, onValueChange = { rate = it.filter(Char::isDigit).take(3) },
                     label = { Text("FPS (1-${TimeFormat.MAX_FPS})") }, singleLine = true,
+                    isError = f == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (o in listOf(12, 24, 30, 60)) {
-                        FilterChip(selected = rate == o.toString(), onClick = { rate = o.toString() }, label = { Text("$o") })
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                    for (o in com.vibetoon.domain.anim.FrameRates.PROJECT_PRESETS) {
+                        FilterChip(selected = rate == o.toString(), onClick = { rate = o.toString() }, label = { Text("$o", maxLines = 1, softWrap = false) })
                     }
                 }
                 Text(
                     if (d != null && f != null) "Длительность: ${TimeFormat.format(d, f)} (мин:сек:кадры)" else "Введите числа",
                     fontSize = 12.sp
                 )
+                if (f != null && com.vibetoon.domain.anim.FrameRates.exceedsDisplay(f, refresh))
+                    Text("Экран показывает до {} кадров в секунду: при просмотре часть кадров пропускается, в экспорт попадают все"
+                        .replace("{}", com.vibetoon.domain.anim.FrameRates.shownPerSecond(f, refresh).toString()),
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                 Text("Ключи остаются на своих номерах кадров.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             }
         },

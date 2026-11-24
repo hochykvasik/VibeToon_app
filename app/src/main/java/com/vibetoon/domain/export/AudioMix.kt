@@ -22,6 +22,15 @@ object AudioMix {
     fun sampleCount(outFrames: Int, outFps: Int, rate: Int): Int =
         (outFrames.toLong() * rate / outFps.coerceAtLeast(1)).toInt().coerceAtLeast(0)
 
+    /**
+     * Спринт 32 (MOV): стерео-сэмплы, которые звучат во время кадра [index] видео - (первый, сколько). Куски кадров
+     * стыкуются без зазоров, и их сумма за [n] кадров ровно [sampleCount] (n, outFps, rate).
+     */
+    fun frameSamples(index: Int, outFps: Int, rate: Int): Pair<Int, Int> {
+        val from = sampleCount(index, outFps, rate)
+        return from to (sampleCount(index + 1, outFps, rate) - from)
+    }
+
     /** Время (мкс) сэмпла [index] при частоте [rate] - метка буфера для кодека. */
     fun ptsUs(index: Long, rate: Int): Long = index * 1_000_000L / rate.coerceAtLeast(1)
 

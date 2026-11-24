@@ -1,8 +1,9 @@
 package com.vibetoon.render
 
 import android.media.MediaCodec
-import android.media.MediaCodecList
 import com.vibetoon.domain.export.VideoPixels
+import com.vibetoon.domain.export.VideoCodec
+import com.vibetoon.domain.export.VideoExportPolicy
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
@@ -13,10 +14,18 @@ import android.opengl.EGLSurface
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Параметры экспорта: размер кадра, частота, число кадров готового видео. */
-data class ExportSpec(val width: Int, val height: Int, val fps: Int, val frames: Int, val file: File, val compatible: Boolean = false) {
-    /** Битрейт H.264: 0.25 бит/пиксель/кадр (720p30 ≈ 6.9 Мбит/с) — без мыла на линиях и заливках. */
-    val bitrate: Int get() = (width.toLong() * height * fps * 25 / 100).coerceIn(4_000_000L, 40_000_000L).toInt()
+/**
+ * Параметры экспорта: размер кадра, частота (1–120), число кадров готового видео; спринт 32 - кодек (H.264/HEVC),
+ * подсказка частоты для кодека ([rateHint], 0 = как [fps]) и предел битрейта кодировщика ([bitrateCap], 0 = нет).
+ */
+data class ExportSpec(
+    val width: Int, val height: Int, val fps: Int, val frames: Int, val file: File, val compatible: Boolean = false,
+    val codec: VideoCodec = VideoCodec.AVC, val rateHint: Int = 0, val bitrateCap: Int = 0
+) {
+    /** Битрейт: H.264 0.25 бит/пиксель/кадр (720p30 ≈ 6.9 Мбит/с), HEVC ~60% - без мыла на линиях и заливках. */
+    val bitrate: Int get() = VideoExportPolicy.bitrate(width, height, fps, codec, bitrateCap.takeIf { it > 0 })
+    /** KEY_FRAME_RATE: не выше заявленного кодеком; метки времени кадров всё равно по [fps]. */
+    val frameRateHint: Int get() = (if (rateHint > 0) rateHint else fps).coerceAtLeast(1)
 }
 
 /** Что экспортёру нужно от рендерера (реализует VtRenderer, всё в GL-потоке). */
@@ -50,7 +59,7 @@ interface FrameSink {
 
 /**
  * Рендер в MP4 быстрее реального времени: кадры рисуются прямо в Surface кодека MediaCodec
- * (H.264), без чтения пикселей в память. Вызывать из GL-потока: текстуры принадлежат его контексту,
+ * (H.264 или HEVC - спринт 32), без чтения пикселей в память. Вызывать из GL-потока: текстуры принадлежат его контексту,
  * на время кадра этот контекст временно переключается на поверхность кодека и сразу возвращается на экран -
  * между кадрами GL-поток свободен (пауза приложения, другие события GL).
  */
@@ -59,29 +68,42 @@ object VideoExporter {
 
     /** null - параметры годятся, иначе текст ошибки. */
     fun validate(spec: ExportSpec): String? =
-        if (spec.width <= 0 || spec.height <= 0 || spec.width % 16 != 0 || spec.height % 16 != 0 || spec.fps <= 0 || spec.frames <= 0)
+        if (spec.width <= 0 || spec.height <= 0 || spec.width % 16 != 0 || spec.height % 16 != 0 || spec.fps !in 1..com.vibetoon.domain.anim.FrameRates.MAX || spec.frames <= 0)
             "Некорректный размер видео" else null
 
     /** Прямая запись в Surface кодека ([yuv] = false) или запасной путь RGBA -> YUV. */
     fun sink(spec: ExportSpec, hooks: ExportHooks, cancel: AtomicBoolean, interrupted: () -> Boolean, yuv: Boolean): FrameSink =
         if (yuv) YuvSink(spec, hooks, cancel, interrupted) else SurfaceSink(spec, hooks, cancel)
 
-    /** Уровень H.264 по разрешению и частоте (High profile): 720p30 -> 4.1, 1080p60 -> 4.2. */
-    private fun avcLevel(width: Int, height: Int, fps: Int): Int {
-        val macroblocks = ((width + 15) / 16) * ((height + 15) / 16)
-        return when {
-            macroblocks * fps > 162_000 -> MediaCodecInfo.CodecProfileLevel.AVCLevel42
-            macroblocks * fps > 81_920 -> MediaCodecInfo.CodecProfileLevel.AVCLevel41
-            macroblocks * fps > 40_960 -> MediaCodecInfo.CodecProfileLevel.AVCLevel4
-            else -> MediaCodecInfo.CodecProfileLevel.AVCLevel31
-        }
+    /** Константа MediaCodecInfo для уровня H.264 из VideoExportPolicy.avcLevel (номер ×10). */
+    private fun avcLevelConstant(id: Int): Int = when (id) {
+        31 -> MediaCodecInfo.CodecProfileLevel.AVCLevel31
+        32 -> MediaCodecInfo.CodecProfileLevel.AVCLevel32
+        40 -> MediaCodecInfo.CodecProfileLevel.AVCLevel4
+        41 -> MediaCodecInfo.CodecProfileLevel.AVCLevel41
+        42 -> MediaCodecInfo.CodecProfileLevel.AVCLevel42
+        50 -> MediaCodecInfo.CodecProfileLevel.AVCLevel5
+        51 -> MediaCodecInfo.CodecProfileLevel.AVCLevel51
+        52 -> MediaCodecInfo.CodecProfileLevel.AVCLevel52
+        // AVCLevel6/61/62 (API 29) - значениями, чтобы не зависеть от уровня API
+        60 -> 0x20000
+        61 -> 0x40000
+        else -> 0x80000
     }
 
-    /** High profile только если кодек его заявляет на нужном уровне; иначе остаётся профиль кодека по умолчанию. */
+    /**
+     * Профиль кодека. H.264: High на нужном уровне (1080p60 -> 4.2, 4K30 -> 5.1, 4K60 -> 5.2), если кодек его заявляет.
+     * HEVC: Main (8 бит), уровень выбирает кодек. Иначе остаются настройки кодека по умолчанию.
+     */
     internal fun highProfile(codec: MediaCodec, format: MediaFormat, spec: ExportSpec) {
         runCatching {
-            val need = avcLevel(spec.width, spec.height, spec.fps)
-            val levels = codec.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).profileLevels
+            val levels = codec.codecInfo.getCapabilitiesForType(spec.codec.mime).profileLevels
+            if (spec.codec == VideoCodec.HEVC) {
+                if (levels.any { it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain })
+                    format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
+                return@runCatching
+            }
+            val need = avcLevelConstant(VideoExportPolicy.avcLevel(spec.width, spec.height, spec.fps, spec.bitrate))
             if (levels.any { it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh && it.level >= need }) {
                 format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
                 format.setInteger(MediaFormat.KEY_LEVEL, need)
@@ -90,14 +112,21 @@ object VideoExporter {
     }
 
     internal fun encoder(spec: ExportSpec, color: Int): MediaCodec {
-        val info = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
-            info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } && runCatching {
-                val caps = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-                color in caps.colorFormats && caps.videoCapabilities.isSizeSupported(spec.width, spec.height)
-            }.getOrDefault(false)
-        } ?: error("Нет совместимого кодека H.264")
-        return MediaCodec.createByCodecName(info.name)
+        val name = VideoCodecs.candidates(spec.codec, spec.width, spec.height, color).firstOrNull()
+            ?: error(if (spec.codec == VideoCodec.HEVC) "Нет совместимого кодека HEVC для {}×{}".fillSize(spec) else "Нет совместимого кодека H.264 для {}×{}".fillSize(spec))
+        return MediaCodec.createByCodecName(name)
     }
+
+    private fun String.fillSize(spec: ExportSpec) = replaceFirst("{}", spec.width.toString()).replaceFirst("{}", spec.height.toString())
+
+    /** Формат кодировщика: битрейт, подсказка частоты, ключевой кадр раз в секунду. */
+    private fun videoFormat(spec: ExportSpec, color: Int): MediaFormat =
+        MediaFormat.createVideoFormat(spec.codec.mime, spec.width, spec.height).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, color)
+            setInteger(MediaFormat.KEY_BIT_RATE, spec.bitrate)
+            setInteger(MediaFormat.KEY_FRAME_RATE, spec.frameRateHint)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+        }
 
     /** Only the actual context config is safe; an unrelated recordable config may be EGL_BAD_MATCH. */
     internal fun createWindowSurface(display: android.opengl.EGLDisplay, context: android.opengl.EGLContext, surface: android.view.Surface): EGLSurface {
@@ -148,12 +177,7 @@ object VideoExporter {
             check(display != EGL14.EGL_NO_DISPLAY && context != EGL14.EGL_NO_CONTEXT) { "Нет активного GL-контекста" }
             spec.file.parentFile?.mkdirs()
             if (spec.file.exists()) spec.file.delete()
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, spec.width, spec.height).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, spec.bitrate)
-                setInteger(MediaFormat.KEY_FRAME_RATE, spec.fps)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            }
+            val format = videoFormat(spec, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             val c = encoder(spec, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             codec = c
             highProfile(c, format, spec)
@@ -238,11 +262,7 @@ object VideoExporter {
             spec.file.delete()
             val c = encoder(spec, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
             codec = c
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, spec.width, spec.height).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-                setInteger(MediaFormat.KEY_BIT_RATE, spec.bitrate)
-                setInteger(MediaFormat.KEY_FRAME_RATE, spec.fps)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            val format = videoFormat(spec, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible).apply {
                 setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT601_NTSC)
                 setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
             }
