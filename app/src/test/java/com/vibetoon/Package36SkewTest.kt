@@ -93,7 +93,7 @@ class Package36SkewTest {
     @Test fun transformBoxDistortAndNumericSkewMapShapes() {
         val shapes = listOf(rect, ellipse)
         val b = VectorWarp.bounds(shapes, setOf(0))!!
-        assertEquals(10.0, b[0]); assertEquals(10.0, b[1]); assertEquals(110.0, b[2]); assertEquals(60.0, b[3])
+        assertEquals(10.0, b[0], 1e-9); assertEquals(10.0, b[1], 1e-9); assertEquals(110.0, b[2], 1e-9); assertEquals(60.0, b[3], 1e-9)
         val box0 = TransformBox.initial(IRect(10, 10, 100, 50))
         // искажение: правый нижний угол уехал на (+20, +10)
         val dist = TransformBox.drag(box0, TransformBox.Handle.C2, TransformBox.Mode.DISTORT, TransformBox.P(110.0, 60.0), TransformBox.P(130.0, 70.0), false)
