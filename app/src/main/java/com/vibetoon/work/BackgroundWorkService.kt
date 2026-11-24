@@ -129,25 +129,32 @@ object BackgroundWork {
         requestNotificationPermission?.invoke()
     }
 
+    /** Перевод без Compose: язык приложения из настроек (как у L()). */
+    private fun tr(ctx: Context, ru: String): String {
+        val saved = ctx.getSharedPreferences("vt_app", Context.MODE_PRIVATE).getString("lang", "")
+        val lang = com.vibetoon.domain.settings.AppLanguage.effective(saved, java.util.Locale.getDefault().language)
+        return runCatching { com.vibetoon.ui.i18n.translate(ctx, lang, ru) }.getOrDefault(ru)
+    }
+
     private fun ensureChannel(ctx: Context) {
         if (Build.VERSION.SDK_INT < 26) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(BackgroundWorkService.CHANNEL_ID) != null) return
         nm.createNotificationChannel(NotificationChannel(BackgroundWorkService.CHANNEL_ID,
-            com.vibetoon.ui.i18n.L("Импорт и экспорт"), NotificationManager.IMPORTANCE_LOW))
+            tr(ctx, "Импорт и экспорт"), NotificationManager.IMPORTANCE_LOW))
     }
 
     internal fun notification(ctx: Context): Notification {
         ensureChannel(ctx)
-        val (title, pct) = active.values.lastOrNull() ?: (com.vibetoon.ui.i18n.L("Импорт и экспорт") to null)
+        val (title, pct) = active.values.lastOrNull() ?: (tr(ctx, "Импорт и экспорт") to null)
         val open = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)?.let {
             PendingIntent.getActivity(ctx, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, BackgroundWorkService.CHANNEL_ID)
             else @Suppress("DEPRECATION") Notification.Builder(ctx)
         b.setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(com.vibetoon.ui.i18n.L(title))
-            .setContentText(com.vibetoon.ui.i18n.L("Работа продолжается в фоне"))
+            .setContentTitle(tr(ctx, title))
+            .setContentText(tr(ctx, "Работа продолжается в фоне"))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
         if (pct != null) b.setProgress(100, pct, false) else b.setProgress(0, 0, true)
