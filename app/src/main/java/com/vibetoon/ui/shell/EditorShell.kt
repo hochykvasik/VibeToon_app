@@ -291,7 +291,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                     onClick = ::toggleFullscreen,
                                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(40.dp)
                                         .clip(CircleShape).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
-                                ) { Icon(Icons.Default.FullscreenExit, "Выйти из полного экрана") }
+                                ) { Icon(Icons.Default.FullscreenExit, com.vibetoon.ui.i18n.L("Выйти из полного экрана")) }
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = warpOn && !full && !toolRowHidden, modifier = Modifier.align(Alignment.TopStart),
                                     enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 },
@@ -570,7 +570,7 @@ private fun TopBar(
 private fun BarIcon(icon: ImageVector, desc: String, enabled: Boolean = true, active: Boolean = false, onClick: () -> Unit) {
     IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(40.dp).coachTarget(desc)) {
         Icon(
-            icon, desc, modifier = Modifier.size(22.dp),
+            icon, com.vibetoon.ui.i18n.L(desc), modifier = Modifier.size(22.dp),
             tint = if (active) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current
         )
     }
@@ -609,7 +609,7 @@ private fun BrushMenu(vm: MainViewModel) {
         Column {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(if (tool == MainViewModel.PaintTool.ERASER) "Ластики" else "Кисти", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.weight(1f))
-                Icon(Icons.Default.Close, "Закрыть", modifier = Modifier.clickable { vm.closeBrushMenu() }.padding(6.dp).size(22.dp))
+                Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Закрыть"), modifier = Modifier.clickable { vm.closeBrushMenu() }.padding(6.dp).size(22.dp))
             }
             androidx.compose.foundation.lazy.LazyColumn {
                 items(items.size) { i ->
@@ -787,7 +787,7 @@ private fun PaintToolRow(vm: MainViewModel, onColor: () -> Unit) {
         com.vibetoon.ui.inspector.ScrubBox("Непр.", p.opacity * 100f, 1f, 100f, { v -> vm.updatePaint { it.copy(opacity = v / 100f) } }, perPx = 0.35f)
         com.vibetoon.ui.inspector.ScrubBox("Жёстк.", p.hardness * 100f, 0f, 100f, { v -> vm.updatePaint { it.copy(hardness = v / 100f) } }, perPx = 0.35f)
         if (!isEraser && p.mode == com.vibetoon.domain.paint.StrokeMode.ACCUMULATE)
-            com.vibetoon.ui.inspector.ScrubBox("Flow", p.flow * 100f, 1f, 100f, { v -> vm.updatePaint { it.copy(flow = v / 100f) } }, perPx = 0.35f)
+            com.vibetoon.ui.inspector.ScrubBox("Поток", p.flow * 100f, 1f, 100f, { v -> vm.updatePaint { it.copy(flow = v / 100f) } }, perPx = 0.35f)
         if (!isEraser) Box(
             Modifier.size(32.dp).clip(CircleShape).background(androidx.compose.ui.graphics.Color(brush.color))
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
@@ -974,7 +974,7 @@ private fun BoneToolRow(vm: MainViewModel) {
                 Text("Привязать (${lasso.size})", fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
             OutlinedButton(onClick = vm::clearLasso, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
-                Icon(Icons.Default.Close, "Сбросить", Modifier.size(16.dp))
+                Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Сбросить"), Modifier.size(16.dp))
             }
         }
         OutlinedButton(onClick = vm::autoBind, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
@@ -1028,7 +1028,7 @@ private fun RailButton(icon: ImageVector, title: String, on: Boolean, onClick: (
             .padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, title, modifier = Modifier.size(20.dp), tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+        Icon(icon, com.vibetoon.ui.i18n.L(title), modifier = Modifier.size(20.dp), tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
         Text(title, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Clip, softWrap = false)
     }
 }
@@ -1108,11 +1108,11 @@ private fun RightPanel(vm: MainViewModel, add: AddActions, color: Long, onColor:
                         .border(BorderStroke(2.dp, MaterialTheme.colorScheme.outline), CircleShape)
                         .clickable { onColor() }
                 )
-                IconButton(onClick = { tab = 0 }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Layers, "Слои", tint = if (tab == 0) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current) }
-                IconButton(onClick = { vm.undo() }, enabled = canUndo && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Undo, "Отменить") }
-                IconButton(onClick = { vm.redo() }, enabled = canRedo && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Redo, "Повторить") }
-                IconButton(onClick = { vm.quickDelete(deleteDrawing) }, enabled = selection.isNotEmpty() && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Удалить") }
-                IconButton(onClick = { vm.selectLayer(null) }, enabled = selection.isNotEmpty(), modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Deselect, "Снять выделение") }
+                IconButton(onClick = { tab = 0 }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Layers, com.vibetoon.ui.i18n.L("Слои"), tint = if (tab == 0) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current) }
+                IconButton(onClick = { vm.undo() }, enabled = canUndo && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Undo, com.vibetoon.ui.i18n.L("Отменить")) }
+                IconButton(onClick = { vm.redo() }, enabled = canRedo && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Redo, com.vibetoon.ui.i18n.L("Повторить")) }
+                IconButton(onClick = { vm.quickDelete(deleteDrawing) }, enabled = selection.isNotEmpty() && !playing, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, com.vibetoon.ui.i18n.L("Удалить")) }
+                IconButton(onClick = { vm.selectLayer(null) }, enabled = selection.isNotEmpty(), modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Deselect, com.vibetoon.ui.i18n.L("Снять выделение")) }
             }
         }
     }
@@ -1173,10 +1173,10 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Слоёв: ${rows.size}", fontSize = 12.sp, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
             IconButton(onClick = { multi = !multi }, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Default.Checklist, "Мультивыбор", tint = if (multi) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                Icon(Icons.Default.Checklist, com.vibetoon.ui.i18n.L("Мультивыбор"), tint = if (multi) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
             }
             Box {
-                IconButton(onClick = { addMenu = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.AddCircle, "Добавить слой") }
+                IconButton(onClick = { addMenu = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.AddCircle, com.vibetoon.ui.i18n.L("Добавить слой")) }
                 DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
                     DropdownMenuItem(text = { Text("Пиксельный") }, onClick = { addMenu = false; vm.addPaintLayer() })
                     DropdownMenuItem(text = { Text("Анимационный (покадровый)") }, onClick = { addMenu = false; vm.addAnimationLayer() })
@@ -1239,9 +1239,9 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.secondaryContainer).padding(horizontal = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Checklist, "Мультивыбор")
+                            Icon(Icons.Default.Checklist, com.vibetoon.ui.i18n.L("Мультивыбор"))
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Icon(Icons.Default.Lock, "Замок"); Icon(Icons.Default.ContentCopy, "Дублировать"); Icon(Icons.Default.Delete, "Удалить")
+                                Icon(Icons.Default.Lock, com.vibetoon.ui.i18n.L("Замок")); Icon(Icons.Default.ContentCopy, com.vibetoon.ui.i18n.L("Дублировать")); Icon(Icons.Default.Delete, com.vibetoon.ui.i18n.L("Удалить"))
                             }
                         }
                     }
@@ -1268,9 +1268,9 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                             .padding(start = (4 + 10 * r.depth).dp, end = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (multi) Icon(if (sel) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, "Выбрать", tint = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), modifier = Modifier.padding(end = 4.dp).size(24.dp).clickable { vm.toggleSelect(l.id) })
+                        if (multi) Icon(if (sel) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, com.vibetoon.ui.i18n.L("Выбрать"), tint = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), modifier = Modifier.padding(end = 4.dp).size(24.dp).clickable { vm.toggleSelect(l.id) })
                         Icon(
-                            if (lprops[l.id]?.visible == false) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Видимость",
+                            if (lprops[l.id]?.visible == false) Icons.Default.VisibilityOff else Icons.Default.Visibility, com.vibetoon.ui.i18n.L("Видимость"),
                             modifier = Modifier.size(20.dp).clickable { vm.toggleVisible(l.id) }
                         )
                         Box(
@@ -1285,12 +1285,12 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                                 while (vm.thumbs[l.id] == null && tries < 40) { vm.requestThumb(l.id); kotlinx.coroutines.delay(800); tries++ }
                             }
                             if (thumb != null) androidx.compose.foundation.Image(
-                                thumb, type, modifier = Modifier.fillMaxSize().thumbnailChecker(com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true), contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                thumb, com.vibetoon.ui.i18n.L(type), modifier = Modifier.fillMaxSize().thumbnailChecker(com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true), contentScale = androidx.compose.ui.layout.ContentScale.Fit
                             ) else Icon(
                                 when (type) {
                                     "Текст" -> Icons.Default.TextFields; "Картинка" -> Icons.Default.Image; "Видео" -> Icons.Default.Videocam
                                     "Группа" -> Icons.Default.Folder; else -> Icons.Default.Layers
-                                }, type, modifier = Modifier.size(16.dp)
+                                }, com.vibetoon.ui.i18n.L(type), modifier = Modifier.size(16.dp)
                             )
                         }
                         Column(Modifier.weight(1f)) {
@@ -1330,7 +1330,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
                             contentAlignment = Alignment.Center
                         ) { Text("≡", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)) }
                         Icon(
-                            if (lprops[l.id]?.locked == true) Icons.Default.Lock else Icons.Default.LockOpen, "Замок",
+                            if (lprops[l.id]?.locked == true) Icons.Default.Lock else Icons.Default.LockOpen, com.vibetoon.ui.i18n.L("Замок"),
                             modifier = Modifier.size(18.dp).clickable { vm.toggleLocked(l.id) }
                         )
                     }
@@ -1409,13 +1409,13 @@ private fun LayerPropsPanel(vm: MainViewModel, id: Int, isGroup: Boolean, all: M
                 FilterChip(
                     selected = p.alphaLock, onClick = { vm.updateLayerProps(id) { it.copy(alphaLock = !it.alphaLock) } },
                     label = { Text("Alpha", fontSize = 11.sp) },
-                    leadingIcon = { Icon(Icons.Default.GridOn, "Замок прозрачности", modifier = Modifier.size(14.dp)) },
+                    leadingIcon = { Icon(Icons.Default.GridOn, com.vibetoon.ui.i18n.L("Замок прозрачности"), modifier = Modifier.size(14.dp)) },
                     modifier = Modifier.height(30.dp)
                 )
                 FilterChip(
                     selected = p.clip, onClick = { vm.updateLayerProps(id) { it.copy(clip = !it.clip) } },
                     label = { Text("Clip", fontSize = 11.sp) },
-                    leadingIcon = { Icon(Icons.Default.SubdirectoryArrowRight, "Обтравочная маска", modifier = Modifier.size(14.dp)) },
+                    leadingIcon = { Icon(Icons.Default.SubdirectoryArrowRight, com.vibetoon.ui.i18n.L("Обтравочная маска"), modifier = Modifier.size(14.dp)) },
                     modifier = Modifier.height(30.dp)
                 )
             }
@@ -1511,7 +1511,7 @@ private fun BoneInspector(vm: MainViewModel, bone: com.vibetoon.domain.project.B
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Кость: ${com.vibetoon.ui.i18n.boneDisplayName(bone.name)}", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            IconButton(onClick = { renaming = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Edit, "Переименовать кость", modifier = Modifier.size(18.dp)) }
+            IconButton(onClick = { renaming = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Edit, com.vibetoon.ui.i18n.L("Переименовать кость"), modifier = Modifier.size(18.dp)) }
         }
         Text("Длина: ${bone.length.toInt()} px", fontSize = 12.sp)
         Text("Родитель: $parentName", fontSize = 12.sp)
@@ -1673,14 +1673,14 @@ private fun AssetRow(
             ) {
                 Box(Modifier.size(76.dp).background(androidx.compose.ui.graphics.Color(0xFFEFEFEF), RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
                     val t = thumb
-                    if (t != null) androidx.compose.foundation.Image(t, e.title, Modifier.size(72.dp))
+                    if (t != null) androidx.compose.foundation.Image(t, com.vibetoon.ui.i18n.L(e.title), Modifier.size(72.dp))
                     else when (e.type) {
                         com.vibetoon.domain.project.AssetCatalog.Type.AUDIO -> Icon(Icons.Default.MusicNote, L("Аудио"), Modifier.size(36.dp))
                         com.vibetoon.domain.project.AssetCatalog.Type.PSD -> Text("PSD", fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         else -> Text("…", fontSize = 12.sp)
                     }
                     if (e.type == com.vibetoon.domain.project.AssetCatalog.Type.VIDEO) Icon(Icons.Default.PlayArrow, L("Видео"), Modifier.align(Alignment.BottomEnd).size(18.dp))
-                    if (inFolder != null) Icon(Icons.Default.Folder, inFolder, Modifier.align(Alignment.TopEnd).size(14.dp))
+                    if (inFolder != null) Icon(Icons.Default.Folder, com.vibetoon.ui.i18n.L(inFolder), Modifier.align(Alignment.TopEnd).size(14.dp))
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         if (folders.names.isEmpty()) DropdownMenuItem(text = { Text("Сначала создайте папку: «+ Папка»") }, onClick = { menu = false }, enabled = false)
                         for (name in folders.names) DropdownMenuItem(

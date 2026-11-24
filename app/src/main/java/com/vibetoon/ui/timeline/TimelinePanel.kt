@@ -301,7 +301,7 @@ fun TimelinePanel(
             TlIcon(Icons.Default.FirstPage, "В начало") { vm.goStart() }
             TlIcon(Icons.Default.ChevronLeft, "Предыдущий кадр") { vm.stepTimeline(-1, stepByFrames) }
             FilledIconButton(onClick = vm::togglePlay, modifier = Modifier.size(40.dp).coachTarget("Играть")) {
-                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Пауза" else "Играть")
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, com.vibetoon.ui.i18n.L(if (playing) "Пауза" else "Играть"))
             }
             TlIcon(Icons.Default.ChevronRight, "Следующий кадр") { vm.stepTimeline(1, stepByFrames) }
             TlIcon(Icons.Default.LastPage, "В конец") { vm.goEnd() }
@@ -1370,7 +1370,7 @@ private fun TlIcon(
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            icon, desc, modifier = Modifier.size(20.dp),
+            icon, com.vibetoon.ui.i18n.L(desc), modifier = Modifier.size(20.dp),
             tint = (if (active) MaterialTheme.colorScheme.primary else LocalContentColor.current).copy(alpha = if (enabled) 1f else 0.38f)
         )
     }

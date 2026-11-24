@@ -125,7 +125,7 @@ class AppSettings(context: Context) {
     }
     fun resetHotkeys() { hotkeys.clear(); val e = p.edit(); for (a in com.vibetoon.domain.HotkeyAction.values()) e.remove("hk_" + a.name); e.apply() }
 
-    val effectiveLang: String get() = lang.ifEmpty { if (Locale.getDefault().language == "ru") "ru" else "en" }
+    val effectiveLang: String get() = com.vibetoon.domain.settings.AppLanguage.effective(lang, Locale.getDefault().language)
 
     fun save() {
         p.edit().putString("lang", lang).putString("theme", theme).putInt("accent", accent).putBoolean("onboarded", onboarded).putBoolean("left", leftHanded).apply()

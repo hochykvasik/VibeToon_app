@@ -92,10 +92,13 @@ private fun findTemplate(s: String): Pair<Int, List<String>>? {
 
 private val resCache = HashMap<String, Resources>()
 
-private fun stringsFor(ctx: Context, lang: String): Resources = resCache.getOrPut(lang) {
-    val cfg = Configuration(ctx.applicationContext.resources.configuration)
-    cfg.setLocale(Locale(lang))
-    ctx.applicationContext.createConfigurationContext(cfg).resources
+// спринт 30: translate вызывается и из фоновых потоков (стандартные имена при импорте), поэтому кэш под замком
+private fun stringsFor(ctx: Context, lang: String): Resources = synchronized(resCache) {
+    resCache.getOrPut(lang) {
+        val cfg = Configuration(ctx.applicationContext.resources.configuration)
+        cfg.setLocale(Locale(lang))
+        ctx.applicationContext.createConfigurationContext(cfg).resources
+    }
 }
 
 /** Контекст с локалью [lang] ("ru" или "en"): ресурсы строк берутся из соответствующей папки values. */

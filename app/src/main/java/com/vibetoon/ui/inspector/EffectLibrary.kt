@@ -67,7 +67,7 @@ fun EffectLibraryDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
         Surface(Modifier.fillMaxSize(), color = Navy) {
             Column(Modifier.fillMaxSize()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.ArrowBack, "Назад", tint = Color.White) }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.ArrowBack, com.vibetoon.ui.i18n.L("Назад"), tint = Color.White) }
                     Text("Библиотека эффектов", color = Color.White, fontSize = 19.sp, modifier = Modifier.padding(start = 4.dp))
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

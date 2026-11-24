@@ -150,13 +150,13 @@ private fun EffectsTab(vm: MainViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${idx + 1}. ${com.vibetoon.ui.i18n.L(def.title)}", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.weight(1f))
                         androidx.compose.material3.IconButton(onClick = { vm.moveEffect(idx, -1) }, enabled = idx > 0, modifier = Modifier.size(32.dp)) {
-                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowUp, "Выше")
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowUp, com.vibetoon.ui.i18n.L("Выше"))
                         }
                         androidx.compose.material3.IconButton(onClick = { vm.moveEffect(idx, 1) }, enabled = idx < layerFx.lastIndex, modifier = Modifier.size(32.dp)) {
-                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowDown, "Ниже")
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowDown, com.vibetoon.ui.i18n.L("Ниже"))
                         }
                         androidx.compose.material3.IconButton(onClick = { vm.removeEffect(idx) }, modifier = Modifier.size(32.dp)) {
-                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, "Удалить эффект")
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, com.vibetoon.ui.i18n.L("Удалить эффект"))
                         }
                     }
                     if (def.colorAt >= 0) {
@@ -314,7 +314,7 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
         else parent?.let { vm.layerName(it) }.orEmpty()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            if (s.count > 1) "Выбрано: ${s.count} (правка применяется ко всем)" else (if (s.isGroup) "Группа: " else "Слой: ") + s.name,
+            if (s.count > 1) "Выбрано: ${s.count} (правка применяется ко всем)" else if (s.isGroup) "Группа: ${s.name}" else "Слой: ${s.name}",
             fontSize = 12.sp, maxLines = 1,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
         )
@@ -333,7 +333,7 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
             FilterChip(
                 selected = uniform,
                 onClick = vm::toggleUniformScale,
-                label = { Icon(if (uniform) Icons.Default.Link else Icons.Default.LinkOff, "Пропорции", Modifier.size(18.dp)) }
+                label = { Icon(if (uniform) Icons.Default.Link else Icons.Default.LinkOff, com.vibetoon.ui.i18n.L("Пропорции"), Modifier.size(18.dp)) }
             )
             NumberField("Scale Y", s.scaleYPct, "%", on, { vm.setProperty(Prop.SCALE_Y, it) }, Modifier.weight(1f), perPx = 0.5f, min = 1f)
             NumberField("Opacity", s.opacityPct, "%", on, { vm.setProperty(Prop.OPACITY, it) }, Modifier.weight(1f), perPx = 0.3f, min = 0f, max = 100f)
@@ -518,7 +518,7 @@ private fun TextTab(t: TextState, fonts: List<FontEntry>, vm: MainViewModel, onI
                 DropdownMenu(expanded = fontMenu, onDismissRequest = { fontMenu = false }) {
                     for (f in fonts) {
                         DropdownMenuItem(
-                            text = { Text(f.title + if (f.imported) "  (свой)" else "") },
+                            text = { Text(if (f.imported) "${f.title}  (свой)" else f.title) },
                             leadingIcon = { if (f.key == t.font) Icon(Icons.Default.Check, null) },
                             onClick = { vm.setFont(f.key); fontMenu = false }
                         )
@@ -711,7 +711,7 @@ private fun NumberField(
 @Composable
 private fun TextFxSection(t: TextState, vm: MainViewModel) {
     val fx = t.fx
-    fun sec(v: Float) = "%.1f с".format(v)
+    fun sec(v: Float) = "${"%.1f".format(v)} с"
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Эффекты текста", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         FilterChip(selected = fx.progress, onClick = { vm.setTextFx { it.copy(progress = !it.progress) } }, label = { Text("Печать (по буквам)") })
@@ -733,8 +733,8 @@ private fun TextFxSection(t: TextState, vm: MainViewModel) {
         if (fx.pathBend != 0f) ScrubSlider("Изгиб дуги", fx.pathBend, -100f..100f, "${fx.pathBend.toInt()}") { v -> vm.setTextFx { it.copy(pathBend = if (v == 0f) 1f else v) } }
         FilterChip(selected = fx.weight, onClick = { vm.setTextFx { it.copy(weight = !it.weight) } }, label = { Text("Толщина шрифта") })
         if (fx.weight) {
-            ScrubSlider("Из", fx.weightFrom.toFloat(), 300f..800f, "${fx.weightFrom}") { v -> vm.setTextFx { it.copy(weightFrom = v.toInt()) } }
-            ScrubSlider("В", fx.weightTo.toFloat(), 300f..800f, "${fx.weightTo}") { v -> vm.setTextFx { it.copy(weightTo = v.toInt()) } }
+            ScrubSlider("От", fx.weightFrom.toFloat(), 300f..800f, "${fx.weightFrom}") { v -> vm.setTextFx { it.copy(weightFrom = v.toInt()) } }
+            ScrubSlider("До", fx.weightTo.toFloat(), 300f..800f, "${fx.weightTo}") { v -> vm.setTextFx { it.copy(weightTo = v.toInt()) } }
             ScrubSlider("Время", fx.weightDur, 0.2f..10f, sec(fx.weightDur)) { v -> vm.setTextFx { it.copy(weightDur = v) } }
         }
         FilterChip(selected = fx.random, onClick = { vm.setTextFx { it.copy(random = !it.random) } }, label = { Text("Рандомизатор символов") })

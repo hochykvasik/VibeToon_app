@@ -197,31 +197,31 @@ fun ProjectsScreen(app: AppViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text("Ваши проекты", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { showNew = true }) { Icon(Icons.Default.Add, "Создать проект") }
+                    IconButton(onClick = { showNew = true }) { Icon(Icons.Default.Add, com.vibetoon.ui.i18n.L("Создать проект")) }
                     if (searchOn) androidx.compose.material3.OutlinedTextField(
                         query, { query = it }, singleLine = true, placeholder = { Text("Поиск") },
                         modifier = Modifier.width(220.dp).height(52.dp)
                     )
-                    IconButton(onClick = { searchOn = !searchOn; if (!searchOn) query = "" }) { Icon(Icons.Default.Search, "Поиск") }
+                    IconButton(onClick = { searchOn = !searchOn; if (!searchOn) query = "" }) { Icon(Icons.Default.Search, com.vibetoon.ui.i18n.L("Поиск")) }
                     Box {
-                        IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.SwapVert, "Сортировка") }
+                        IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.SwapVert, com.vibetoon.ui.i18n.L("Сортировка")) }
                         DropdownMenu(sortMenu, { sortMenu = false }) {
                             for ((s, t) in listOf(com.vibetoon.domain.project.ProjectSort.DATE to "По дате", com.vibetoon.domain.project.ProjectSort.NAME to "По имени", com.vibetoon.domain.project.ProjectSort.SIZE to "По размеру"))
                                 DropdownMenuItem(text = { Text((if (sortBy == s) "✓ " else "") + com.vibetoon.ui.i18n.L(t)) }, onClick = { sortBy = s; sortMenu = false })
                         }
                     }
-                    IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Download, "Импорт") }
+                    IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Download, com.vibetoon.ui.i18n.L("Импорт")) }
                     Box {
-                        IconButton(onClick = { exportMenu = true }) { Icon(Icons.Default.Upload, "Экспорт") }
+                        IconButton(onClick = { exportMenu = true }) { Icon(Icons.Default.Upload, com.vibetoon.ui.i18n.L("Экспорт")) }
                         DropdownMenu(exportMenu, { exportMenu = false }) {
                             if (allProjects.isEmpty()) DropdownMenuItem(text = { Text("Проектов пока нет") }, onClick = { exportMenu = false })
                             for (p in allProjects) DropdownMenuItem(text = { Text("Копия .tsproj: ${p.name}", maxLines = 1) }, onClick = { exportMenu = false; backupFor = p.id; exportLauncher.launch("${p.name}.tsproj") })
                             DropdownMenuItem(text = { Text("Очистить кэш и лишние файлы") }, onClick = { exportMenu = false; app.cleanUp() })
                         }
                     }
-                    IconButton(onClick = { newFolder = true }) { Icon(Icons.Default.CreateNewFolder, "Создать папку") }
-                    IconButton(onClick = { article = TUTORIALS.firstOrNull() }) { Icon(Icons.Default.HelpOutline, "Справка") }
-                    IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Настройки") }
+                    IconButton(onClick = { newFolder = true }) { Icon(Icons.Default.CreateNewFolder, com.vibetoon.ui.i18n.L("Создать папку")) }
+                    IconButton(onClick = { article = TUTORIALS.firstOrNull() }) { Icon(Icons.Default.HelpOutline, com.vibetoon.ui.i18n.L("Справка")) }
+                    IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, com.vibetoon.ui.i18n.L("Настройки")) }
                 }
             }
             LazyVerticalGrid(
@@ -254,7 +254,7 @@ fun ProjectsScreen(app: AppViewModel) {
                         for (f in folderNames) androidx.compose.material3.FilterChip(
                             selected = folder == f, onClick = { folder = if (folder == f) "" else f },
                             label = { Text(f, maxLines = 1) },
-                            trailingIcon = if (folder == f) { { Icon(Icons.Default.Close, "Удалить папку", Modifier.size(16.dp).clickable { app.deleteFolder(f); folder = "" }) } } else null
+                            trailingIcon = if (folder == f) { { Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Удалить папку"), Modifier.size(16.dp).clickable { app.deleteFolder(f); folder = "" }) } } else null
                         )
                     }
                 }
@@ -382,9 +382,9 @@ private fun ProjectCard(
                 Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.secondaryContainer).padding(end = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Edit, "Переименовать")
-                Icon(Icons.Default.ContentCopy, "Дублировать")
-                Icon(Icons.Default.Delete, "Удалить")
+                Icon(Icons.Default.Edit, com.vibetoon.ui.i18n.L("Переименовать"))
+                Icon(Icons.Default.ContentCopy, com.vibetoon.ui.i18n.L("Дублировать"))
+                Icon(Icons.Default.Delete, com.vibetoon.ui.i18n.L("Удалить"))
             }
         }
     ) {
@@ -412,7 +412,7 @@ private fun ProjectCard(
                         )
                     }
                     Box {
-                        IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.MoreVert, "Действия") }
+                        IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.MoreVert, com.vibetoon.ui.i18n.L("Действия")) }
                         DropdownMenu(menu, { menu = false }) {
                             DropdownMenuItem(text = { Text("Переименовать") }, onClick = { menu = false; onRename() })
                             DropdownMenuItem(text = { Text("Дублировать") }, onClick = { menu = false; onDuplicate() })

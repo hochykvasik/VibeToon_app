@@ -97,7 +97,6 @@ Line Boil, кадров (0 - выкл)|Line Boil, frames (0 = off)
 Текст по контуру|Text on path
 Изгиб дуги|Arc bend
 Толщина шрифта|Font weight
-Из|Of
 Рандомизатор символов|Character randomizer
 Время проявления|Reveal time
 Обводка|Outline
@@ -295,9 +294,7 @@ PSD Import Mode: слои как в файле|PSD Import Mode: layers as in fil
 Ключи остаются на своих номерах кадров.|Keys stay on their frame numbers.
 Применить|Apply
 Прошлый запуск завершился ошибкой|The last run ended with an error
-Копировать|Copy
 Кнопка сейчас не видна на экране: откройте нужную панель или режим.|The button is not visible right now: open the right panel or mode.
-Сцена 1|Scene 1
 Поставить на текущий кадр|Place on current frame
 Маркеров пока нет. Перейдите на нужный кадр символа и выберите имя.|No markers yet. Go to a frame of the symbol and pick a name.
 Внешний вид|Appearance

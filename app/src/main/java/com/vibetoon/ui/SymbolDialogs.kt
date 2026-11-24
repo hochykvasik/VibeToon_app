@@ -130,10 +130,10 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
                     },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.DragHandle, "Двигать", Modifier.size(20.dp))
+                    Icon(Icons.Default.DragHandle, com.vibetoon.ui.i18n.L("Двигать"), Modifier.size(20.dp))
                     Text("  Маркеры  кадр ${frame + 1}", fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1)
-                    IconButton({ hidden = true }, Modifier.size(32.dp)) { Icon(Icons.Default.VisibilityOff, "Спрятать к краю", Modifier.size(18.dp)) }
-                    IconButton(onClose, Modifier.size(32.dp)) { Icon(Icons.Default.Close, "Закрыть", Modifier.size(18.dp)) }
+                    IconButton({ hidden = true }, Modifier.size(32.dp)) { Icon(Icons.Default.VisibilityOff, com.vibetoon.ui.i18n.L("Спрятать к краю"), Modifier.size(18.dp)) }
+                    IconButton(onClose, Modifier.size(32.dp)) { Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Закрыть"), Modifier.size(18.dp)) }
                 }
                 Column(Modifier.heightIn(max = 250.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (markers.isEmpty()) Text("У символа нет маркеров", fontSize = 12.sp)
@@ -150,7 +150,7 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
                             ) {
                                 val img = thumbs["$defId:${m.frame}"]
                                 Box(Modifier.size(72.dp).background(Color(0xFFEFEFEF)).thumbnailChecker(com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true), contentAlignment = Alignment.Center) {
-                                    if (img != null) Image(img, m.name, Modifier.size(72.dp)) else Text("…", fontSize = 12.sp)
+                                    if (img != null) Image(img, com.vibetoon.ui.i18n.L(m.name), Modifier.size(72.dp)) else Text("…", fontSize = 12.sp)
                                 }
                                 Text(short[m.name] ?: m.name, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                             }
@@ -187,7 +187,7 @@ fun SymbolTimeTab(vm: MainViewModel, instId: Int) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton({ vm.openMarkerPanel(instId) }, enabled = markers.isNotEmpty()) { Text("Выбрать маркер", fontSize = 12.sp) }
-            OutlinedButton({ vm.addTimeKeyHere(instId) }) { Icon(Icons.Default.Key, "Добавить ключ времени", Modifier.size(16.dp)) }
+            OutlinedButton({ vm.addTimeKeyHere(instId) }) { Icon(Icons.Default.Key, com.vibetoon.ui.i18n.L("Добавить ключ времени"), Modifier.size(16.dp)) }
         }
         if (markers.isEmpty()) Text("У символа нет маркеров. Двойной тап по символу открывает его: кнопка «Маркеры» ставит имя на кадр.", fontSize = 11.sp)
         Text("Ключей: ${keys[instId]?.size ?: 0}. Новый ключ из маркера - Hold: символ мгновенно переключается на форму и держит её до следующего ключа. Без ключей символ стоит на первом кадре.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))

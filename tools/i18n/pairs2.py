@@ -4,7 +4,6 @@ PAIRS2 = """
 Обычная линейка|Straight ruler
 Циркуль|Compass
 Линейка и циркуль работают только на растровом слое|Ruler and compass work only on raster layers
-Градиент|Gradient
 По альфе рисунка|Existing alpha
 Направляющие и градиент работают только на растровом слое|Guides and gradient work only on raster layers
 Градиент недоступен для деформированного слоя или текстуры больше 4 Мп|Gradient is unavailable on deformed layers or textures over 4 MP
@@ -198,9 +197,7 @@ GIF {}×{}, {} кадров|GIF {}×{}, {} frames
 Слой растрирован|Layer rasterized
 Не удалось снять кадр|Could not capture the frame
 Не удалось снять кадр {}|Could not capture frame {}
-Не удалось записать GIF|Could not write the GIF
-Не удалось записать видео|Could not write the video
-FX вкл: правки точек пишутся в ключевые кадры|FX on: point edits go to keyframes
+FX вкл: правки точек пишутся в ключевые кадры|FX on: point edits go to keys
 FX выкл (Bind Pose): правки меняют базовую форму|FX off (Bind Pose): edits change the base shape
 Warp слоя сброшен|Layer warp reset
 Перспектива слоя сброшена|Layer perspective reset
@@ -279,7 +276,6 @@ Animation: кость двигает привязанные слои|Animation: 
 Сначала создайте кости|Create bones first
 Нет свободных слоёв, которые пересекают кости|No free layers intersect the bones
 Автопривязка: слоёв привязано {}|Auto bind: layers bound {}
-Кость {}|Bone {}
 Символ|Symbol
 Пиксели|Pixels
 Нельзя: родитель сам привязан к этому слою|Not allowed: the parent is itself bound to this layer
@@ -325,7 +321,6 @@ Animation: кость двигает привязанные слои|Animation: 
 Пропустить|Skip
 Настройки инструмента «{}»|Tool settings “{}”
 Инструмент «{}»|Tool “{}”
-Символ: {}|Symbol: {}
 Liquify: проведите по картинке · кисть {}|Liquify: drag over the image · brush {}
 Перспектива · FX вкл: углы пишутся в ключи|Perspective · FX on: corners go to keys
 Перспектива · FX выкл: базовая форма|Perspective · FX off: base shape
@@ -387,7 +382,7 @@ Warp · FX выкл: базовая форма|Warp · FX off: base shape
 Любое действие можно отменить.|Any action can be undone.
 Проект сохраняется сам через пару секунд после правки.|The project saves itself a couple of seconds after an edit.
 Как добавить и анимировать текст|How to add and animate text
-Надпись, цвет и ключевые кадры|Caption, color and keyframes
+Надпись, цвет и ключевые кадры|Caption, color and keys
 Добавьте текст|Add text
 Нажмите инструмент «Текст» слева, введите надпись и подтвердите.|Tap the “Text” tool on the left, type the caption and confirm.
 Настройте вид|Adjust the look
@@ -500,12 +495,6 @@ Hold: мгновенное переключение|Hold: instant switching
 Перо|Pen
 Замкнуть|Close
 Убрать точку|Remove point
-Прямоугольник|Rectangle
-Лассо|Lasso
-Смазка|Smudge
-Заливка|Fill
-Выделение|Selection
-Пипетка: коснитесь холста, чтобы взять цвет|Color Picker: tap the canvas to pick a color
 Заливка: коснитесь замкнутой области (порог, расширение и зазор - в панели над холстом)|Fill: tap a closed area (threshold, expand and gap are in the bar above the canvas)
 Выделение: обведите область или коснитесь палочкой; внутри выделения тяните, чтобы перенести|Selection: outline an area or tap with the wand; drag inside the selection to move it
 Смазка: проведите по рисунку слоя-картинки|Smudge: drag across the drawing of an image layer
@@ -544,9 +533,6 @@ PNG-последовательность (ZIP)|PNG sequence (ZIP)
 Сохранять пропорции|Keep proportions
 Допустимо от 64 до 4096 px. Действие нельзя отменить через Undo.|Allowed from 64 to 4096 px. This cannot be undone with Undo.
 Resize масштабирует слои вместе с холстом, Crop оставляет выбранную рамку. Эти действия нельзя отменить через Undo.|Resize scales layers with the canvas, Crop keeps the chosen frame. These actions cannot be undone with Undo.
-Применить|Apply
-Ширина|Width
-Высота|Height
 Резервная копия .tsproj сохранена|Backup .tsproj saved
 Не удалось сохранить копию|Could not save the backup
 Проект импортирован|Project imported
@@ -585,7 +571,6 @@ Transform Layer (null)|Transform Layer (null)
 Нужна физическая клавиатура. Отмена и повтор работают вместе с Ctrl.|A physical keyboard is required. Undo and redo work with Ctrl.
 Общие|General
 Инструменты|Tools
-Импорт|Import
 Экран|Display
 Жесты|Gestures
 Клавиатура|Keyboard
@@ -599,7 +584,7 @@ Transform Layer (null)|Transform Layer (null)
 Вернуть кадр после паузы|Reset Frame After Pause
 Вперёд/назад: кадры (иначе рисунки)|Forward/Backward: frames (otherwise drawings)
 Векторный режим работы|Vector Workflow
-Автодобавление ключей|Auto-Add Keyframes
+Автодобавление ключей|Auto-Add Keys
 Правка опорной точки слоя|Layer Pivot Editing
 Временные опорные точки|Temporary Pivots
 Показывать траекторию движения|Show Motion Path
@@ -622,7 +607,6 @@ Transform Layer (null)|Transform Layer (null)
 Шахматка в миниатюрах|Checker Pattern in Thumbnails
 Видимость маски выделения|Selection Mask Visibility
 Цвета костей|Bones Colors
-Сбросить|Reset
 Рисование пальцем|Finger Drawing
 Поворот холста двумя пальцами|Rotate Canvas 2 Fingers
 Щипок для смены фокуса|Pinch to Refocus
@@ -848,7 +832,7 @@ GL не ответил: восстановление отменено без и�
 Не удалось загрузить новый слой; пиксели не изменены|Could not load the new layer; pixels were not changed
 Не удалось отделить выделение; пиксели не изменены|Could not separate the selection; pixels were not changed
 Невозможно безопасно сохранить масштаб слоя; пиксели не изменены|Cannot safely preserve layer scale; pixels were not changed
-Ключи совпадают после изменения: операция отменена|Keyframes would collide; operation cancelled
+Ключи совпадают после изменения: операция отменена|Keys would collide; operation cancelled
 Слой и его группы должны быть видимы и разблокированы; группы PSD пока не поддерживаются|The layer and its groups must be visible and unlocked; PSD groups are not supported yet
 Перспектива для групп: в разработке|Perspective for groups: coming soon
 Warp для групп: в разработке|Warp for groups: coming soon
@@ -856,7 +840,7 @@ Warp для групп: в разработке|Warp for groups: coming soon
 Остановите воспроизведение перед редактированием эффектов группы|Stop playback before editing group effects
 Групповые эффекты с автоключом пока не поддерживаются|Group effects with auto-key are not supported yet
 Групповые эффекты недоступны: проверьте одинаковость цепочек, ключи, обтравку и блокировки|Group effects unavailable: check matching effect chains, keys, clipping and locks
-Группа: цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка|Group: chains differ or layers, keyframes, clipping or locks are unsupported
+Группа: цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка|Group: chains differ or layers, keys, clipping or locks are unsupported
 Группа: статические эффекты применяются ко всем вложенным слоям; автоключ пока не поддерживается|Group: static effects apply to all nested layers; auto-key is not supported yet
 Группа: ключи эффектов создаются на вложенных слоях; ромба группы пока нет|Group: effect keys are created on child layers; no group diamond yet
 Ключи эффектов на вложенных слоях|Key effects on child layers
@@ -1090,7 +1074,6 @@ PSD проекта уже разложен на слои; вставка дру�
 Отменить импорт - удалить этот проект; остальные проекты не затрагиваются.|Undo import - delete this project; other projects are not affected.
 Открыть|Open
 Отменить импорт|Undo import
-Закрыть|Close
 Импорт не удался|Import failed
 Существующие проекты не изменены.|Existing projects were not changed.
 Выбрать другой файл|Choose another file
@@ -1179,7 +1162,6 @@ PSD «{}» вставлен как покадровый слой: кадров {
 Для PSD, вставленного в текущий проект (+ → «PSD в текущий проект» или библиотека). PSD нового проекта всегда раскладывается слоями как в файле|For a PSD inserted into the current project (+ → “PSD into current project” or the library). A new project’s PSD is always split into layers as in the file
 Слои как в файле|Layers as in file
 Одним слоем|Single layer
-Слои как кадры|Layers as frames
 PSD в текущий проект|PSD into current project
 Не удалось сохранить папки библиотеки|Could not save library folders
 Удалить папку (файлы останутся)|Delete folder (files stay)
@@ -1286,4 +1268,71 @@ Animation Assist: кадры сведены (режимы наложения в�
 Не хватает памяти GPU: часть слоёв временно показана без обновления. Скройте лишние слои - показ восстановится сам|Not enough GPU memory: some layers are temporarily shown without updates. Hide unneeded layers - display will recover by itself
 Картинка слоя больше предела GPU: слой показан без обновления. Уменьшите её размер|The layer image exceeds the GPU limit: the layer is shown without updates. Reduce its size
 Не хватило памяти GPU: часть картинок слоёв в файле могла не обновиться ({})|Not enough GPU memory: some layer images in the file may not have updated ({})
+нет аудиодорожки|no audio track
+Аудио не содержит доступных сэмплов|The audio has no usable samples
+каналов больше двух|more than two channels
+Нужен файл шрифта TTF или OTF|A TTF or OTF font file is required
+Не удалось открыть файл|Could not open the file
+Не удалось прочитать шрифт|Could not read the font
+Не удалось прочитать изображение|Could not read the image
+Не удалось декодировать изображение|Could not decode the image
+Не удалось получить кадр видео|Could not get a video frame
+Пустой звук|Empty audio
+Кодек звука не выдал данных|The audio codec produced no data
+Пустой файл после сборки|Empty file after muxing
+Кодек звука завис|The audio codec stalled
+Кодек звука не сообщил формат|The audio codec did not report its format
+В видео нет дорожки картинки|The video has no picture track
+Не удалось сохранить проект|Could not save the project
+{} (копия)|{} (copy)
+{} копия|{} copy
+{} (звук)|{} (audio)
+Кадр|Frame
+кадр {}|frame {}
+Проект|Project
+Слой|Layer
+Back (перелёт)|Back (overshoot)
+Запуск кодека в фазе {}|Codec started in phase {}
+Кадр {} вне очереди (ожидается {}, фаза {})|Frame {} out of order (expected {}, phase {})
+Завершение до последнего кадра ({}/{})|Finished before the last frame ({}/{})
+Без зерна|No grain
+Скринтон|Screentone
+Бумага|Paper
+Горизонтальные линии|Horizontal lines
+Вертикальные линии|Vertical lines
+Обрыв последовательности юникода|Truncated Unicode escape
+Неверная последовательность юникода|Invalid Unicode escape
+Неверное экранирование: {}|Invalid escape: {}
+Файл GIF обрезан|The GIF file is truncated
+Это не GIF|This is not a GIF
+Слишком большой GIF: {}×{}|GIF is too large: {}×{}
+Опорные точки требуют формат версии 5|Pivot points require format version 5
+Некорректные опорные точки|Invalid pivot points
+Некорректный id пивота|Invalid pivot id
+Некорректная опорная точка|Invalid pivot point
+Некорректная координата пивота|Invalid pivot coordinate
+Прозрачный|Transparent
+Белый|White
+Чёрный|Black
+Серый|Gray
+GL-контекст потерян|GL context lost
+Нет совместимого кодека H.264|No compatible H.264 codec
+Кодек не предоставляет YUV Image|The codec does not provide a YUV Image
+Очищено: кэш {}, лишних файлов {} ({})|Cleaned up: cache {}, orphaned files {} ({})
+Не удалось импортировать|Import failed
+{}. Звук - отдельная дорожка. Проект продлён до конца видео|{}. The sound is on a separate track. Project extended to the end of the video
+Текст добавляется через addText|Text is added via addText
+Камера добавляется через addCameraLayer|Camera is added via addCameraLayer
+Transform Layer создаётся через addNullLayer|Transform Layer is created via addNullLayer
+Группа создаётся через groupSelected|Group is created via groupSelected
+Символ создаётся через createSymbol|Symbol is created via createSymbol
+Не удалось сохранить рисунок|Could not save the drawing
+Ключи времени очищены: символ держит первый кадр|Time keys cleared: the symbol holds its first frame
+Пивот X|Pivot X
+Пивот Y|Pivot Y
+{}  (свой)|{}  (custom)
+{} с|{} s
+Поток|Flow
+Перспектива для группы: нажмите «Включить для группы»|Perspective for group: tap “Enable for group”
+Warp для группы: нажмите «Включить для группы»|Warp for group: tap “Enable for group”
 """

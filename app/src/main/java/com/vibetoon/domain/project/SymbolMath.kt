@@ -139,8 +139,14 @@ object SymbolMath {
         timeAt(keys, global)?.coerceIn(0, maxOf(0, duration - 1)) ?: defaultFrame(global, duration, animated && loop)
     fun withoutKey(keys: List<TimeKey>, frame: Int): List<TimeKey> = keys.filter { it.frame != frame }
 
-    /** Слои [ids] по порядку: слой i виден только на кадрах [i*step, (i+1)*step), на этом кадре стоит маркер с именем слоя (повторы получают номер). */
-    fun framesPlan(ids: List<Int>, names: List<String>, step: Int = 1): FramesPlan {
+    /** Стандартное имя маркера «Кадр N» (русский ключ словаря). */
+    const val DEFAULT_FRAME = "Кадр"
+
+    /**
+     * Слои [ids] по порядку: слой i виден только на кадрах [i*step, (i+1)*step), на этом кадре стоит маркер с именем слоя (повторы получают номер).
+     * [frameName] - имя маркера для слоя без имени (номер с 1); приложение передаёт перевод на текущий язык (спринт 30).
+     */
+    fun framesPlan(ids: List<Int>, names: List<String>, step: Int = 1, frameName: (Int) -> String = { "$DEFAULT_FRAME $it" }): FramesPlan {
         val s = step.coerceAtLeast(1)
         val used = HashSet<String>()
         val clips = ArrayList<Triple<Int, Int, Int>>()
@@ -148,7 +154,7 @@ object SymbolMath {
         ids.forEachIndexed { i, id ->
             val f = i * s
             clips += Triple(id, f, f + s)
-            var n = names.getOrNull(i)?.trim().orEmpty().ifEmpty { "Кадр ${i + 1}" }
+            var n = names.getOrNull(i)?.trim().orEmpty().ifEmpty { frameName(i + 1) }
             if (!used.add(n)) { var k = 2; while (!used.add("$n $k")) k++; n = "$n $k" }
             markers += FrameMarker(f, n)
         }

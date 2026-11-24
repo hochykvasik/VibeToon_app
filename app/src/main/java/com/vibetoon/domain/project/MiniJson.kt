@@ -142,11 +142,11 @@ object MiniJson {
                             'r' -> sb.append('\r')
                             't' -> sb.append('\t')
                             'u' -> {
-                                if (pos + 4 > s.length) fail("Обрыв \\u")
-                                sb.append(s.substring(pos, pos + 4).toIntOrNull(16)?.toChar() ?: fail("Неверный \\u"))
+                                if (pos + 4 > s.length) fail("Обрыв последовательности юникода")
+                                sb.append(s.substring(pos, pos + 4).toIntOrNull(16)?.toChar() ?: fail("Неверная последовательность юникода"))
                                 pos += 4
                             }
-                            else -> fail("Неверное экранирование \\$e")
+                            else -> fail("Неверное экранирование: $e")
                         }
                     }
                     else -> sb.append(c)

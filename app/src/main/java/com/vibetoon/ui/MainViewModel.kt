@@ -210,6 +210,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Проект: размер холста, fps и фон берутся из него; PSD вписывается в холст ----
     private val projects = ProjectRepository(app)
+    /** Спринт 30: стандартное имя нового объекта на текущем языке приложения (переводится один раз, при создании). */
+    private fun dn(ru: String): String = com.vibetoon.ui.i18n.defaultName(getApplication<Application>(), ru)
     private var projectId: String? = null
     private var meta: ProjectMeta? = null
     private var psdRef: PsdRef? = null
@@ -813,7 +815,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val pl = com.vibetoon.domain.project.PsdLayerExtras.placement(e, t, fit.a, fit.tx, fit.ty)
                     val id = nextMediaId()
                     val proto = MediaItem(
-                        id, MediaKind.TEXT, info.name.ifBlank { "Текст" }, "",
+                        id, MediaKind.TEXT, info.name.ifBlank { dn("Текст") }, "",
                         text = t.text, textColor = t.color ?: 0xFF000000L,
                         textSize = pl.size.coerceIn(TextRenderer.MIN_SIZE, TextRenderer.MAX_SIZE), textAlign = t.align
                     )
@@ -996,11 +998,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // картинка -> определение символа (группа с одним слоем), экземпляр на сцену
                 val gid = nextMediaId()
                 val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
-                media += MediaItem(gid, MediaKind.GROUP, "Символ $n", "", symDur = 1)
+                media += MediaItem(gid, MediaKind.GROUP, dn("Символ $n"), "", symDur = 1)
                 regroup = regroup + (item.id to gid)
                 media += item
                 val iid = nextMediaId()
-                media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid)
+                media += MediaItem(iid, MediaKind.SYMBOL, dn("Символ $n"), "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid)
                 rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
                 _state.value = UiState.Message("Импортировано как символ «Символ $n»: двойной тап открывает редактирование")
             } catch (t: kotlinx.coroutines.CancellationException) { throw t }
@@ -1079,19 +1081,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val aid = nextMediaId()   // идентификаторы монотонны: не совпадёт со слоем кадров
                     val fileName = "m${aid}_${java.util.UUID.randomUUID()}.mp4"
                     val dest = projects.mediaFile(pid, fileName)
-                    runCatching { src.copyTo(dest, overwrite = true); written += dest; MediaItem(aid, MediaKind.AUDIO, "${name.substringBeforeLast('.')} (звук)", "assets/$fileName", durationMs = dur) }.getOrNull()
+                    runCatching { src.copyTo(dest, overwrite = true); written += dest; MediaItem(aid, MediaKind.AUDIO, dn("${name.substringBeforeLast('.')} (звук)"), "assets/$fileName", durationMs = dur) }.getOrNull()
                 }
                 checkpoint("add", force = true)
-                val title = name.substringBeforeLast('.').ifBlank { "Видео" }
+                val title = name.substringBeforeLast('.').ifBlank { dn("Видео") }
                 val layer = item.copy(name = title, cells = if (cells.size > 1) cells else emptyList())
                 val total = plan.frames
                 val gid = nextMediaId()
                 val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
-                media += MediaItem(gid, MediaKind.GROUP, "Символ $n", "", symDur = total)
+                media += MediaItem(gid, MediaKind.GROUP, dn("Символ $n"), "", symDur = total)
                 regroup = regroup + (layer.id to gid)
                 media += layer
                 val iid = nextMediaId()
-                media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
+                media += MediaItem(iid, MediaKind.SYMBOL, dn("Символ $n"), "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
                 if (audio != null) media += audio
                 // проект короче видео - продлевается, чтобы символ проигрался целиком
                 val st = _animation.value.settings
@@ -1103,10 +1105,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 inserted = true
                 rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
-                _state.value = UiState.Message(buildString {
-                    append(if (plan.cut) "Видео обрезано до ${cells.size} кадров (больше за раз не импортируется)" else "Видео (${cells.size} кадров) импортировано как символ «Символ $n»: крутится по кругу")
-                    if (audio != null) append(". Звук - отдельная дорожка")
-                    if (extend) append(". Проект продлён до конца видео")
+                // спринт 30: сообщение - целая фраза-шаблон из словаря, а не склейка кусков
+                val base = if (plan.cut) "Видео обрезано до ${cells.size} кадров (больше за раз не импортируется)" else "Видео (${cells.size} кадров) импортировано как символ «Символ $n»: крутится по кругу"
+                _state.value = UiState.Message(when {
+                    audio != null && extend -> "$base. Звук - отдельная дорожка. Проект продлён до конца видео"
+                    audio != null -> "$base. Звук - отдельная дорожка"
+                    extend -> "$base. Проект продлён до конца видео"
+                    else -> base
                 })
             } catch (t: kotlinx.coroutines.CancellationException) { throw t }
             catch (t: Throwable) {
@@ -1159,11 +1164,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (asSymbol) {
                     val gid = nextMediaId()
                     val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
-                    media += MediaItem(gid, MediaKind.GROUP, "Символ $n", "", symDur = frames)
+                    media += MediaItem(gid, MediaKind.GROUP, dn("Символ $n"), "", symDur = frames)
                     regroup = regroup + (layer.id to gid)
                     media += layer
                     val iid = nextMediaId()
-                    media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
+                    media += MediaItem(iid, MediaKind.SYMBOL, dn("Символ $n"), "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
                     inserted = true
                     rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
                     _state.value = UiState.Message(if (cut) "Секвенция обрезана до $frames кадров (больше за раз не импортируется)" else "Секвенция ($frames кадров) импортирована как символ «Символ $n»")
@@ -1256,11 +1261,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (asSymbol && cells.size > 1) {
                     val gid = nextMediaId()
                     val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
-                    media += MediaItem(gid, MediaKind.GROUP, "Символ $n", "", symDur = total)
+                    media += MediaItem(gid, MediaKind.GROUP, dn("Символ $n"), "", symDur = total)
                     regroup = regroup + (layer.id to gid)
                     media += layer
                     val iid = nextMediaId()
-                    media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
+                    media += MediaItem(iid, MediaKind.SYMBOL, dn("Символ $n"), "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid, symLoop = true)
                     inserted = true
                     rebuildLayers(); pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
                     _state.value = UiState.Message(if (cut) "GIF обрезан до ${cells.size} кадров (больше за раз не импортируется)" else "GIF (${cells.size} кадров) импортирован как символ «Символ $n»: крутится по кругу")
@@ -1320,7 +1325,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 checkpoint("add", force = true)   // один снимок откатывает и слой, и продление проекта
                 // длинный звук: проект продлевается до его конца (не дольше предела хронометража)
-                var note = ""
+                var extended = 0   // 1 - проект продлён до конца звука, 2 - до максимума (конец звука не поместился)
                 if (item.kind == MediaKind.AUDIO) {
                     val st = _animation.value.settings
                     val need = ProjectMath.framesFor(item.durationMs, st.fps)
@@ -1328,7 +1333,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val d = need.coerceAtMost(TimeFormat.MAX_DURATION_FRAMES)
                         meta = meta?.copy(durationFrames = d)
                         _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, d))
-                        note = if (need > d) ". Проект продлён до максимума, конец звука не поместился" else ". Проект продлён до конца звука"
+                        extended = if (need > d) 2 else 1
                     }
                 }
                 if (item.kind == MediaKind.AUDIO) {
@@ -1347,7 +1352,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (!drawn) throw IllegalStateException("Волна не появилась на таймлайне: откройте дорожку; импортированный файл сохранён")
                 }
                 if (item.kind == MediaKind.AUDIO) _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Ready(item.name)
-                _state.value = UiState.Message("Добавлено: ${item.name}$note")
+                _state.value = UiState.Message(when (extended) {
+                    2 -> "Добавлено: ${item.name}. Проект продлён до максимума, конец звука не поместился"
+                    1 -> "Добавлено: ${item.name}. Проект продлён до конца звука"
+                    else -> "Добавлено: ${item.name}"
+                })
             } catch (t: kotlinx.coroutines.CancellationException) {
                 throw t
             } catch (t: Throwable) {
@@ -1601,7 +1610,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 try {
                                     val path = writePng(pid, "m${mid}_$uniq.png", bmp, written)
                                     RenderNative.uploadBitmapIfCurrent(mid, bmp, tickets.getValue(mid))
-                                    out[n.psdId] = MediaItem(mid, MediaKind.IMAGE, n.name.ifBlank { "Слой" }, path, bmp.width, bmp.height,
+                                    out[n.psdId] = MediaItem(mid, MediaKind.IMAGE, n.name.ifBlank { dn("Слой") }, path, bmp.width, bmp.height,
                                         fx + n.x * s, fy + n.y * s, n.w * s, n.h * s)
                                 } finally { bmp.recycle() }
                             }
@@ -1618,7 +1627,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         for (n in nodes) {
                             if (n.psdId !in present) continue
                             val mid = ids.getValue(n.psdId)
-                            media += items[n.psdId] ?: MediaItem(mid, MediaKind.GROUP, n.name.ifBlank { "Группа" }, "")
+                            media += items[n.psdId] ?: MediaItem(mid, MediaKind.GROUP, n.name.ifBlank { dn("Группа") }, "")
                             links += mid to (if (n.parent < 0) rootId else ids.getValue(n.parent))
                             val p = com.vibetoon.domain.model.LayerProps(
                                 opacity = n.opacity.coerceIn(0f, 1f),
@@ -1797,7 +1806,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (cameraIdNow() >= 0) { _state.value = UiState.Message("Камера уже есть: выберите её в списке слоёв"); return }
         val id = nextMediaId()
         checkpoint("add", force = true)
-        media += MediaItem(id, MediaKind.CAMERA, "Камера", "", 0, 0, 0f, 0f, canvasW.toFloat(), canvasH.toFloat())
+        media += MediaItem(id, MediaKind.CAMERA, dn("Камера"), "", 0, 0, 0f, 0f, canvasW.toFloat(), canvasH.toFloat())
         rebuildLayers()
         pushScene()
         selectLayer(id)
@@ -1824,8 +1833,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pid = projectId ?: return
         val id = nextMediaId()
         val proto = MediaItem(
-            id, MediaKind.TEXT, "Текст", "",
-            text = text.ifBlank { "Текст" },
+            id, MediaKind.TEXT, dn("Текст"), "",
+            text = text.ifBlank { dn("Текст") },
             textSize = (canvasH * 0.1f).coerceIn(TextRenderer.MIN_SIZE, TextRenderer.MAX_SIZE)
         )
         val ticket = RenderNative.textureUploadTicket(id)
@@ -3317,7 +3326,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (item == null || !item.isVisual) { _state.value = UiState.Message("Дублировать можно картинки, видео, текст и рисунки"); return }
         checkpoint("dup", force = true)
         val newId = nextMediaId()
-        var copy = item.copy(id = newId, name = item.name + " копия")
+        var copy = item.copy(id = newId, name = dn("${item.name} копия"))
         if (!item.isText && item.file.isNotEmpty()) {
             val ext = item.file.substringAfterLast('.', "png")
             val src = projects.fileOf(pid, item.file)
@@ -3395,7 +3404,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val newId = nextMediaId()
             val file = "m$newId.png"
             withContext(Dispatchers.IO) { writeLayerPng(bytes, projects.mediaFile(pid, file)) }
-            val item = MediaItem(newId, MediaKind.IMAGE, info.name + " копия", "assets/$file", w, h, info.x.toFloat(), info.y.toFloat(), info.width.toFloat(), info.height.toFloat())
+            val item = MediaItem(newId, MediaKind.IMAGE, dn("${info.name} копия"), "assets/$file", w, h, info.x.toFloat(), info.y.toFloat(), info.width.toFloat(), info.height.toFloat())
             checkpoint("add", force = true)
             media += item
             layerProps[src]?.let { setProps(layerProps + (newId to it.copy(name = null))) }
@@ -4184,7 +4193,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val single = sel.singleOrNull()?.let { s -> media.firstOrNull { it.id == s && it.kind == MediaKind.GROUP } }
         // «Слои как кадры»: выбранные слои по порядку снизу вверх (только обычные слои, не группы)
         val frameLeaves = if (asFrames && single == null) sel.filter { id -> layers.any { it.id == id && it.kind == LayerKind.LAYER } }.sortedBy { id -> layers.indexOfFirst { it.id == id } } else emptyList()
-        val plan = if (frameLeaves.size >= 2) SymbolMath.framesPlan(frameLeaves, frameLeaves.map { id -> layers.first { it.id == id }.name }) else null
+        val plan = if (frameLeaves.size >= 2) SymbolMath.framesPlan(frameLeaves, frameLeaves.map { id -> layers.first { it.id == id }.name }, frameName = { "${dn(SymbolMath.DEFAULT_FRAME)} $it" }) else null
         val gid: Int
         if (single != null) gid = single.id
         else {
@@ -4197,12 +4206,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val n = media.count { it.kind == MediaKind.GROUP && it.symDur > 0 } + 1
         val gi = media.indexOfFirst { it.id == gid }
         if (gi < 0) return
-        media[gi] = media[gi].copy(name = "Символ $n", symDur = plan?.duration ?: computeSymbolDuration(gid), markers = plan?.markers ?: emptyList())
+        media[gi] = media[gi].copy(name = dn("Символ $n"), symDur = plan?.duration ?: computeSymbolDuration(gid), markers = plan?.markers ?: emptyList())
         plan?.clips?.forEach { (id, s, e) -> storeClip(id, Clip(s, e)) }   // слой виден только на своём кадре
         val iid = nextMediaId()
         // Новый экземпляр - без ключей времени и без цикла: на всех кадрах первая форма (Hold), пока пользователь сам
         // не выберет маркер. Выделение ключей сбрасывается - операции ключей не задевают новый экземпляр.
-        media += MediaItem(iid, MediaKind.SYMBOL, "Символ $n", "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid,
+        media += MediaItem(iid, MediaKind.SYMBOL, dn("Символ $n"), "", x = 0f, y = 0f, w = canvasW.toFloat(), h = canvasH.toFloat(), symRef = gid,
             timeKeys = emptyList(), symLoop = false)
         // Пакет 9: экземпляр встаёт в ту же группу, где лежали выбранные слои (рот - в папке головы), и получает общий
         // эффект группы («Тряска»): двигается и трясётся вместе с головой при просмотре, Play и экспорте
@@ -4879,7 +4888,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 projects.mediaFile(pid, file).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
                 bmp.recycle()
             }
-            val item = MediaItem(newId, MediaKind.IMAGE, "Слияние (${leaf.size})", "assets/$file", w, h, 0f, 0f, canvasW.toFloat(), canvasH.toFloat())
+            val item = MediaItem(newId, MediaKind.IMAGE, dn("Слияние (${leaf.size})"), "assets/$file", w, h, 0f, 0f, canvasW.toFloat(), canvasH.toFloat())
             checkpoint("merge", force = true)
             // место слитого слоя: там, где стоял самый нижний из сливаемых слоёв-медиа (иначе - над всеми медиа)
             val insertAt = media.indexOfFirst { it.id in leaf }.let { if (it < 0) media.size else it }
@@ -4932,7 +4941,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         checkpoint("group", force = true)
         val count = media.count { it.kind == MediaKind.GROUP } + 1
         val before = layers
-        media += MediaItem(gid, MediaKind.GROUP, "Группа $count", "")
+        media += MediaItem(gid, MediaKind.GROUP, dn("Группа $count"), "")
         regroup = regroup.filter { it.first !in ids && it.first != gid } + ids.map { it to gid } + (if (topParent >= 0) listOf(gid to topParent) else emptyList())
         rebuildLayers()
         // пакет 25: внутри группы - прежний видимый порядок (PSD и медиа вперемешку), группа - на месте верхнего слоя
@@ -6646,7 +6655,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val bw = (canvasW * scale).toInt().coerceAtLeast(1)
         val bh = (canvasH * scale).toInt().coerceAtLeast(1)
         val id = nextMediaId()
-        val count = media.count { it.name.startsWith(prefix) } + 1
+        val shown = dn(prefix)   // спринт 30: «Слой 2» / «Layer 2» на языке приложения; счёт учитывает оба варианта
+        val count = media.count { it.name.startsWith(prefix) || it.name.startsWith(shown) } + 1
         val ticket = RenderNative.textureUploadTicket(id)
         viewModelScope.launch {
             try {
@@ -6658,7 +6668,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val ok = RenderNative.uploadBitmapIfCurrent(id, bmp, ticket)
                     bmp.recycle()
                     if (!ok) error("Не удалось создать слой в графике")
-                    MediaItem(id, MediaKind.IMAGE, "$prefix $count", "assets/$fileName", bw, bh, 0f, 0f, canvasW.toFloat(), canvasH.toFloat(),
+                    MediaItem(id, MediaKind.IMAGE, "$shown $count", "assets/$fileName", bw, bh, 0f, 0f, canvasW.toFloat(), canvasH.toFloat(),
                         cells = if (animated) listOf(FrameCell(0, "assets/$fileName")) else emptyList(), vector = vector, background = atBottom)
                 }
                 if (projectId != pid || closing) return@launch
@@ -6701,7 +6711,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val id = nextMediaId()
         val n = media.count { it.kind == MediaKind.GROUP && it.symDur == 0 } + 1
         checkpoint("group", force = true)
-        media += MediaItem(id, MediaKind.GROUP, "Группа $n", "")
+        media += MediaItem(id, MediaKind.GROUP, dn("Группа $n"), "")
         rebuildLayers(); pushScene(); selectLayer(id); markDirty()
         _state.value = UiState.Message("Пустая группа «Группа $n»: перетащите в неё слои ручкой ≡")
     }

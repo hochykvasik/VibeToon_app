@@ -42,6 +42,11 @@ jobs:
           /tmp/vibetoon-texture-budget-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
+      - name: Check RU/EN dictionary
+        run: |
+          python3 tools/i18n/check_pairs.py
+          python3 tools/i18n/gen.py
+          git diff --exit-code -- app/src/main/res/values/strings.xml app/src/main/res/values-en/strings.xml app/src/main/java/com/vibetoon/ui/i18n/I18nTable.kt
       - name: Run unit tests
         run: |
           set -o pipefail

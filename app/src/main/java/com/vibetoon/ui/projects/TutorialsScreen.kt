@@ -275,7 +275,7 @@ fun TutorialDetailScreen(t: Tutorial, onClose: () -> Unit, onShowInEditor: (() -
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth().height(52.dp).background(t.color.copy(alpha = 0.18f)).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onClose) { Icon(Icons.Default.ArrowBack, "Назад") }
+                IconButton(onClick = onClose) { Icon(Icons.Default.ArrowBack, com.vibetoon.ui.i18n.L("Назад")) }
                 Text(t.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
             Row(Modifier.fillMaxSize().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {

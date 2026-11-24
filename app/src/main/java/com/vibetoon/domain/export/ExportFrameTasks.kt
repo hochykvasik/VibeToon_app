@@ -67,14 +67,14 @@ class ExportTaskMachine(val frames: Int, startMode: Mode = Mode.SURFACE, private
 
     /** Кодек открыт. */
     fun started() {
-        check(phase == Phase.NOT_STARTED) { "started в фазе $phase" }
+        check(phase == Phase.NOT_STARTED) { "Запуск кодека в фазе $phase" }
         phase = Phase.RUNNING
         next = 0
     }
 
     /** Кадр [index] записан; возвращает прогресс (число записанных кадров). */
     fun frameDone(index: Int): Int {
-        check(phase == Phase.RUNNING && index == next) { "кадр $index вне очереди (ждём $next, фаза $phase)" }
+        check(phase == Phase.RUNNING && index == next) { "Кадр $index вне очереди (ожидается $next, фаза $phase)" }
         next++
         return next
     }
@@ -83,7 +83,7 @@ class ExportTaskMachine(val frames: Int, startMode: Mode = Mode.SURFACE, private
     fun frameInterrupted() { if (phase == Phase.RUNNING) interrupted++ }
 
     fun finished() {
-        check(phase == Phase.RUNNING && next == frames) { "finish до последнего кадра ($next/$frames)" }
+        check(phase == Phase.RUNNING && next == frames) { "Завершение до последнего кадра ($next/$frames)" }
         phase = Phase.DONE
     }
 

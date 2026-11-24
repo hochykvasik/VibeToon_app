@@ -33,7 +33,7 @@ object SceneMath {
             val start = maxOf(s.start, prevEnd, 0)
             val end = minOf(s.end, duration)
             if (end <= start || !ids.add(s.id)) continue
-            out += s.copy(start = start, end = end, name = cleanName(s.name).ifEmpty { "Сцена ${out.size + 1}" })
+            out += s.copy(start = start, end = end, name = cleanName(s.name).ifEmpty { "$DEFAULT_PREFIX ${out.size + 1}" })
             prevEnd = end
             if (out.size >= MAX_SCENES) break
         }
@@ -47,11 +47,14 @@ object SceneMath {
 
     fun nextId(scenes: List<SceneRange>): Int = (scenes.maxOfOrNull { it.id } ?: 0) + 1
 
+    /** Стандартное имя хранится по-русски («Сцена N»), в интерфейсе переводится при показе (ScenesUi.sceneDisplayName). */
+    const val DEFAULT_PREFIX = "Сцена"
+
     /** Имя «Сцена N», не занятое другими сценами. */
     fun defaultName(scenes: List<SceneRange>): String {
         var n = scenes.size + 1
-        while (scenes.any { it.name == "Сцена $n" }) n++
-        return "Сцена $n"
+        while (scenes.any { it.name == "$DEFAULT_PREFIX $n" }) n++
+        return "$DEFAULT_PREFIX $n"
     }
 
     /**
@@ -63,7 +66,7 @@ object SceneMath {
     fun add(scenes: List<SceneRange>, duration: Int, length: Int): Added? {
         val cur = normalize(scenes, duration)
         if (cur.size >= MAX_SCENES || length <= 0) return null
-        val base = if (cur.isEmpty()) listOf(SceneRange(1, "Сцена 1", 0, duration)) else cur
+        val base = if (cur.isEmpty()) listOf(SceneRange(1, "$DEFAULT_PREFIX 1", 0, duration)) else cur
         val start = maxOf(base.last().end, if (cur.isEmpty()) duration else 0)
         val id = nextId(base)
         val added = SceneRange(id, defaultName(base), start, start + length)
@@ -76,7 +79,7 @@ object SceneMath {
      * Без сцен - таймлайн делится на «Сцена 1» и «Сцена 2». Разрез на первом кадре сцены невозможен (null).
      */
     fun split(scenes: List<SceneRange>, duration: Int, frame: Int): List<SceneRange>? {
-        val cur = normalize(scenes, duration).ifEmpty { listOf(SceneRange(1, "Сцена 1", 0, duration)) }
+        val cur = normalize(scenes, duration).ifEmpty { listOf(SceneRange(1, "$DEFAULT_PREFIX 1", 0, duration)) }
         if (cur.size >= MAX_SCENES) return null
         val s = at(cur, frame) ?: return null
         if (frame <= s.start || frame >= s.end) return null

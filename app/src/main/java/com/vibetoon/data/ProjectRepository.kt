@@ -19,6 +19,7 @@ private const val TAG = "VT/Project"
  * (во временный файл, затем переименование), поэтому обрыв записи не портит проект.
  */
 class ProjectRepository(context: Context) {
+    private val appContext: Context = context.applicationContext
     private val root = File(context.filesDir, "projects").apply { mkdirs() }
 
     private fun dir(id: String) = File(root, id)
@@ -55,7 +56,7 @@ class ProjectRepository(context: Context) {
         val now = System.currentTimeMillis()
         val meta = ProjectMeta(
             id = UUID.randomUUID().toString().take(8),
-            name = spec.name.ifBlank { "Новый проект" },
+            name = spec.name.ifBlank { com.vibetoon.ui.i18n.defaultName(appContext, "Новый проект") },
             width = spec.width,
             height = spec.height,
             fps = spec.fps,
@@ -135,7 +136,7 @@ class ProjectRepository(context: Context) {
         val now = System.currentTimeMillis()
         src.copyRecursively(dir(newId), overwrite = true)
         File(dir(newId), "project.json.tmp").delete()
-        save(data.copy(meta = data.meta.copy(id = newId, name = data.meta.name + " (копия)", createdAt = now, updatedAt = now)))
+        save(data.copy(meta = data.meta.copy(id = newId, name = com.vibetoon.ui.i18n.defaultName(appContext, "${data.meta.name} (копия)"), createdAt = now, updatedAt = now)))
         return newId
     }
 
