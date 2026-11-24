@@ -163,7 +163,8 @@ class TextRenderer(private val fonts: FontRegistry) {
         for ((li, line) in geometry.withIndex()) {
             val rtl = TextBidi.paragraphRtl(dir, line)
             val units = TextBidi.visualUnits(line, rtl)
-            val widths = FloatArray(units.size) { ui -> paint.measureText(line, units[ui].range.first, units[ui].range.last + 1) }
+            // спринт 40: невидимые знаки направления (LRM/RLM, изоляты LRI…PDI, встраивания) не рисуются и не занимают места
+            val widths = FloatArray(units.size) { ui -> if (TextBidi.isControlUnit(line, units[ui].range)) 0f else paint.measureText(line, units[ui].range.first, units[ui].range.last + 1) }
             // строка без RTL - позиции как раньше, по ширине начала строки (с кернингом)
             val plain = units.all { it.level == 0 }
             val lineW = if (plain) paint.measureText(line) else widths.sum()
@@ -175,6 +176,7 @@ class TextRenderer(private val fonts: FontRegistry) {
                 val gw = widths[ui]
                 val center = startX + (if (plain) paint.measureText(line, 0, u.range.first) else before) + gw / 2f
                 before += gw
+                if (TextBidi.isControlUnit(line, u.range)) continue
                 // счёт букв для тряски идёт по логическому порядку, как и раньше (первая введённая буква - первая)
                 val gi = glyph + u.range.first
                 val visible = u.range.count { maskLine?.getOrNull(it) != '\u0000' }

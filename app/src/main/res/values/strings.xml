@@ -1755,7 +1755,6 @@
     <string name="ui_a_finger_or_a_pen_without_a_pressure">Палец или перо без датчика нажима рисуют с нажимом 100 %</string>
     <string name="ui_pen_tilt">Наклон пера: {}°</string>
     <string name="ui_pen_tilt_no_data">Наклон пера: нет данных</string>
-    <string name="ui_pen_tilt_is_only_displayed_for_now_a">Наклон пера пока только показывается и не меняет кисть (в разработке)</string>
     <string name="ui_stabilization">Стабилизация: {}</string>
     <string name="ui_stabilization_2">Стабилизация</string>
     <string name="ui_1_nearly_raw_stroke_10_strong_smooth">1 - почти сырой штрих, 10 - сильное сглаживание для чистого лайнарта. При отпускании хвост линии догоняет перо, конец не теряется. Работает с кистью, ластиком, направляющими и симметрией</string>
@@ -1970,4 +1969,23 @@
     <string name="ui_palettes_imported_colors">Импортировано палитр: {}, цветов: {}</string>
     <string name="ui_palettes_imported_colors_skipped">Импортировано палитр: {}, цветов: {}, пропущено: {}</string>
     <string name="ui_palettes_imported_did_not_fit_50_max">Импортировано палитр: {}, не поместилось: {} (не больше 50)</string>
+    <string name="ui_pen_tilt_2">Наклон пера</string>
+    <string name="ui_no_effect">Не влияет</string>
+    <string name="ui_thickness">Толщина</string>
+    <string name="ui_shading">Штриховка</string>
+    <string name="ui_flat_nib">Плоское перо</string>
+    <string name="ui_tilt_strength">Сила наклона: {} %</string>
+    <string name="ui_tilt_strength_2">Сила наклона</string>
+    <string name="ui_thickness_a_tilted_pen_draws_wider_s">Толщина - наклонённое перо рисует шире; Штриховка - шире и прозрачнее, как карандаш боком; Плоское перо - штамп сплющивается и поворачивается по направлению пера. Действует на кисть, ластик и векторные кисти, кроме «Ровная»</string>
+    <string name="ui_no_tilt_sensor_the_brush_draws_uncha">Датчика наклона нет: кисть рисует без изменений</string>
+    <string name="ui_pen_tilt_does_not_affect_the_brush_c">Наклон пера {}°: не влияет на кисть (выберите режим ниже)</string>
+    <string name="ui_pen_tilt_thickness">Наклон пера {}° → толщина ×{}</string>
+    <string name="ui_pen_tilt_shading_thickness_density">Наклон пера {}° → штриховка: толщина ×{}, плотность {} %</string>
+    <string name="ui_pen_tilt_stamp_flattened_to_and_turn">Наклон пера {}° → штамп сплющен до {} % и повёрнут по перу</string>
+    <string name="ui_uniform">Ровная</string>
+    <string name="ui_by_pressure">По нажиму</string>
+    <string name="ui_ink">Тушь</string>
+    <string name="ui_calligraphy">Каллиграфия</string>
+    <string name="ui_layer_dragging_is_off_while_searchin">Перетаскивание слоёв выключено во время поиска и фильтра</string>
+    <string name="ui_drag_layer">Перетащить слой</string>
 </resources>

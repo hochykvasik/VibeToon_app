@@ -31,6 +31,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.layout.onSizeChanged
 import com.vibetoon.ui.dragEdgeAutoScroll
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -896,6 +899,12 @@ private fun PaintToolRow(vm: MainViewModel, onColor: () -> Unit) {
                 com.vibetoon.domain.vector.VecKind.RECT to "Прямоугольник", com.vibetoon.domain.vector.VecKind.ELLIPSE to "Эллипс"
             )) androidx.compose.material3.FilterChip(selected = vk == k, onClick = { vm.setVecKind(k) }, label = { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) })
             androidx.compose.material3.FilterChip(selected = vf, onClick = { vm.toggleVecFill() }, label = { Text("Заливка", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+            // спринт 40: векторные кисти - толщина штриха «Путь» по нажиму/наклону, тушь с сужением, каллиграфия
+            if (vk == com.vibetoon.domain.vector.VecKind.PATH) {
+                val vb by vm.vecBrush.collectAsStateWithLifecycle()
+                for (style in com.vibetoon.domain.vector.VectorBrush.Style.values())
+                    androidx.compose.material3.FilterChip(selected = vb == style, onClick = { vm.setVecBrush(style) }, label = { Text(style.ru, fontSize = 12.sp, maxLines = 1, softWrap = false) })
+            }
             OutlinedButton(onClick = vm::removeLastVector, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
                 Text("Убрать последнюю", fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
@@ -1532,6 +1541,8 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
  * Спринт 39: вид панели слоёв «Список» - компактные строки без миниатюр, поиск по имени, фильтры по типу,
  * папки (свернуть/развернуть все), маски (вкл/инверсия прямо в строке), слои-пути (сколько слоёв на пути) и
  * кости внутри слоя костей (тап выбирает кость). Порядок меняется стрелками у выбранного слоя или через меню.
+ * Спринт 40: и перетаскиванием за ручку ≡ (LayerListDrag): бросок на группу - внутрь, на слой - на его место, у края
+ * список прокручивается сам; при поиске/фильтре ручки нет.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1565,6 +1576,25 @@ private fun LayerListBody(
     }
     val searching = com.vibetoon.domain.model.LayerListView.active(filter, query)
     val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+    // спринт 40: перетаскивание за ручку ≡ (строка слоя 32 dp, кости 30 dp), автопрокрутка у края списка
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val dens = androidx.compose.ui.platform.LocalDensity.current
+    val layerRowPx = with(dens) { 32.dp.toPx() }
+    val boneRowPx = with(dens) { 30.dp.toPx() }
+    val listEdgePx = with(dens) { 48.dp.toPx() }
+    val listStepPx = with(dens) { 16.dp.toPx() }
+    var listDragId by remember { mutableStateOf<Int?>(null) }
+    var listDragDy by remember { mutableStateOf(0f) }
+    var listDragStart by remember { mutableStateOf(-1) }
+    val shownNow = androidx.compose.runtime.rememberUpdatedState(shown)
+    val listDragScope = androidx.compose.runtime.rememberCoroutineScope()
+    val listTarget by remember(layerRowPx, boneRowPx) {
+        androidx.compose.runtime.derivedStateOf {
+            val id = listDragId ?: return@derivedStateOf -1
+            val es = shownNow.value.map { it.entry }
+            com.vibetoon.domain.model.LayerListDrag.dropTarget(es, es.map { if (it.bone) boneRowPx else layerRowPx }, listDragStart, listDragDy, id) ?: -1
+        }
+    }
     Column(modifier) {
         androidx.compose.material3.OutlinedTextField(
             value = query, onValueChange = { query = it.take(60) }, singleLine = true,
@@ -1587,12 +1617,17 @@ private fun LayerListBody(
             if (searching) "Ничего не найдено: измените поиск или фильтр" else "Слоёв пока нет. Нажмите «+» вверху, чтобы добавить PSD, картинку, видео или текст.",
             fontSize = 12.sp, modifier = Modifier.padding(12.dp), color = dim
         )
-        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+        if (searching) Text("Перетаскивание слоёв выключено во время поиска и фильтра", fontSize = 10.sp, color = dim, modifier = Modifier.padding(horizontal = 12.dp))
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState) {
             items(shown.size, key = { i -> (if (shown[i].entry.bone) "b" else "l") + shown[i].entry.id }) { i ->
                 val sh = shown[i]
                 val e = sh.entry
                 val sel = e.id in selection
+                val isListDrag = !e.bone && listDragId == e.id
+                val isListTarget = !e.bone && listDragId != null && listTarget == e.id
                 val rowColor = when {
+                    isListTarget && e.isGroup -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
+                    isListTarget -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f)
                     sel -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
                     else -> androidx.compose.ui.graphics.Color.Transparent
                 }
@@ -1611,9 +1646,12 @@ private fun LayerListBody(
                 val l = infoById[e.id] ?: rows.firstOrNull { it.layer.id == e.id }?.layer ?: return@items
                 val lp = lprops[e.id]
                 val type = vm.layerType(e.id)
-                Box {
+                Box(Modifier.zIndex(if (isListDrag) 1f else 0f)) {
                     Row(
-                        Modifier.fillMaxWidth().height(32.dp).background(rowColor)
+                        Modifier.fillMaxWidth().height(32.dp)
+                            .graphicsLayer { translationY = if (isListDrag) listDragDy else 0f; alpha = if (isListDrag) 0.7f else 1f }
+                            .background(if (isListDrag) MaterialTheme.colorScheme.surface else androidx.compose.ui.graphics.Color.Transparent)
+                            .background(rowColor)
                             .combinedClickable(
                                 onClick = { if (multi) vm.toggleSelect(e.id) else vm.selectLayer(e.id) },
                                 onLongClick = { onMenu(e.id) }
@@ -1668,6 +1706,40 @@ private fun LayerListBody(
                             if (lp?.locked == true) Icons.Default.Lock else Icons.Default.LockOpen, com.vibetoon.ui.i18n.L("Замок"),
                             modifier = Modifier.size(28.dp).clickable { vm.toggleLocked(e.id) }.padding(5.dp)
                         )
+                        // спринт 40: ручка ≡ - перетаскивание слоя (как в виде «Миниатюры»): бросок на группу - внутрь, на слой - на его место
+                        val dragDesc = com.vibetoon.ui.i18n.L("Перетащить слой")
+                        if (com.vibetoon.domain.model.LayerListDrag.canDrag(e, searching, multi)) Box(
+                            Modifier.width(32.dp).fillMaxHeight().semantics { contentDescription = dragDesc }.pointerInput(e.id) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    down.consume()
+                                    val start = shownNow.value.indexOfFirst { !it.entry.bone && it.entry.id == e.id }
+                                    if (start < 0) return@awaitEachGesture
+                                    listDragId = e.id; listDragDy = 0f; listDragStart = start
+                                    val rowTop = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == start }?.offset?.toFloat() ?: 0f
+                                    val downY = down.position.y
+                                    var scrolled = 0f
+                                    val auto = listDragScope.launch {
+                                        while (true) {
+                                            kotlinx.coroutines.delay(16)
+                                            val pos = rowTop + downY + listDragDy - scrolled
+                                            val v = com.vibetoon.domain.input.EdgeAutoScroll.velocity(pos, listState.layoutInfo.viewportSize.height, listEdgePx, listStepPx,
+                                                listState.canScrollBackward, listState.canScrollForward)
+                                            if (v != 0f) {
+                                                val used = listState.scrollBy(v)
+                                                if (used != 0f) { scrolled += used; listDragDy += used }
+                                            }
+                                        }
+                                    }
+                                    val lifted = try { drag(down.id) { ch -> listDragDy += ch.positionChange().y; ch.consume() } } finally { auto.cancel() }
+                                    val es = shownNow.value.map { it.entry }
+                                    val target = com.vibetoon.domain.model.LayerListDrag.dropTarget(es, es.map { if (it.bone) boneRowPx else layerRowPx }, start, listDragDy, e.id)
+                                    listDragId = null; listDragDy = 0f; listDragStart = -1
+                                    if (lifted && target != null) vm.dropLayer(e.id, target)
+                                }
+                            },
+                            contentAlignment = Alignment.Center
+                        ) { Text("≡", fontSize = 18.sp, color = dim) }
                     }
                     LayerContextMenu(vm, l, menuFor == e.id, selection, stub, onClose = { onMenu(null) }, onMulti = onMulti, onRename = onRename, onSymbolMode = onSymbolMode)
                 }

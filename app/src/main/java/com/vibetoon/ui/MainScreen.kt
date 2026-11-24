@@ -573,6 +573,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                         var lastP = com.vibetoon.domain.input.StylusSample.pressure(down.pressure, stylus)
                         var lastPos = down.position
                         val screenDensity = this@pointerInput.density
+                        // спринт 40: наклон и направление пера идут в кисть (режим наклона в настройках «Стилус»)
+                        if (stylus) vm.paintTilt(stylusTracker.tiltRadians, stylusTracker.orientationRadians, first = true)
                         if (vm.paintDown(down.position.x, down.position.y, lastP)) {
                             down.consume()
                             var cancelled = false
@@ -586,6 +588,7 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                                     break
                                 }
                                 val pm = com.vibetoon.domain.input.StylusSample.pressure(c.pressure, stylus, lastP)
+                                if (stylus) vm.paintTilt(stylusTracker.tiltRadians, stylusTracker.orientationRadians)
                                 val hp = com.vibetoon.domain.input.StylusSample.historical(stylusTracker.historyFor(c.uptimeMillis), lastP, pm, c.historical.size, stylus)
                                 c.historical.forEachIndexed { i, h -> vm.paintMove(h.position.x, h.position.y, hp[i]) }
                                 vm.paintMove(c.position.x, c.position.y, pm)

@@ -28,7 +28,11 @@ data class VectorShape(
      */
     val handles: List<Float> = emptyList(),
     /** Пакет 21: независимые ручки узла (по флагу на узел; пусто - все ручки связаны, вторая напротив первой). */
-    val freeHandles: List<Boolean> = emptyList()
+    val freeHandles: List<Boolean> = emptyList(),
+    /** Спринт 40: векторная кисть - множитель толщины на каждый узел пути (пусто - ровная линия), см. [VectorBrush]. */
+    val widths: List<Float> = emptyList(),
+    /** Спринт 40: стиль векторной кисти (VectorBrush.Style.id; пусто - ровная). */
+    val brush: String = ""
 )
 
 /** Чистая математика векторного слоя (без Android): отбор точек жеста, сборка примитива, границы. */
@@ -286,7 +290,8 @@ object VectorBezier {
         val pts = s.pts.toMutableList(); pts.removeAt(k * 2 + 1); pts.removeAt(k * 2)
         val h = if (s.handles.size == s.pts.size * 2) s.handles.toMutableList().also { l -> repeat(4) { l.removeAt(k * 4) } } else emptyList()
         val f = if (s.freeHandles.size == s.pts.size / 2) s.freeHandles.toMutableList().also { it.removeAt(k) } else emptyList()
-        return pack(s.copy(pts = pts, freeHandles = f), h, f)
+        val w = VectorBrush.withoutNode(s.widths, s.pts.size / 2, k)   // спринт 40: толщина узла уходит вместе с ним
+        return pack(s.copy(pts = pts, freeHandles = f, widths = w), h, f)
     }
 
     /**

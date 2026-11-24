@@ -350,6 +350,9 @@ object ProjectJson {
         if (v.parts.isNotEmpty()) mm["parts"] = v.parts.map { vectorJson(it) }
         if (v.handles.isNotEmpty()) mm["h"] = v.handles.map { f -> f.toDouble() }
         if (v.freeHandles.isNotEmpty()) mm["fh"] = v.freeHandles.map { b -> if (b) 1 else 0 }
+        // спринт 40: векторная кисть - толщина по узлам и стиль
+        if (v.widths.isNotEmpty()) mm["vw"] = v.widths.map { f -> (Math.round(f * 1000.0) / 1000.0) }
+        if (v.brush.isNotEmpty()) mm["vb"] = v.brush
     }
 
     /** Чтение фигуры; неизвестный вид, мало точек или BOOL без двух частей - фигура пропускается. */
@@ -370,7 +373,11 @@ object ProjectJson {
             (m["w"] as? Number)?.toFloat() ?: 8f, m["n"] as? String ?: "", op, parts,
             handles,
             (m["fh"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt()?.let { b -> b != 0 } }
-                .takeIf { handles.isNotEmpty() && it.size == pts.size / 2 && it.any { b -> b } } ?: emptyList()
+                .takeIf { handles.isNotEmpty() && it.size == pts.size / 2 && it.any { b -> b } } ?: emptyList(),
+            // спринт 40: толщины векторной кисти - только у пути и только по одной на узел, иначе ровная линия
+            (m["vw"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toFloat()?.takeIf { f -> f.isFinite() && f > 0f }?.coerceAtMost(com.vibetoon.domain.vector.VectorBrush.MAX_FACTOR) }
+                .takeIf { kind == com.vibetoon.domain.vector.VecKind.PATH && it.size == pts.size / 2 } ?: emptyList(),
+            (m["vb"] as? String)?.takeIf { s -> com.vibetoon.domain.vector.VectorBrush.Style.values().any { it.id == s } } ?: ""
         )
     }
 

@@ -1431,7 +1431,6 @@ HEVC: файл примерно вдвое меньше при том же ка�
 Палец или перо без датчика нажима рисуют с нажимом 100 %|A finger or a pen without a pressure sensor draws at 100 % pressure
 Наклон пера: {}°|Pen tilt: {}°
 Наклон пера: нет данных|Pen tilt: no data
-Наклон пера пока только показывается и не меняет кисть (в разработке)|Pen tilt is only displayed for now and does not change the brush (in development)
 Стабилизация: {}|Stabilization: {}
 Стабилизация|Stabilization
 1 - почти сырой штрих, 10 - сильное сглаживание для чистого лайнарта. При отпускании хвост линии догоняет перо, конец не теряется. Работает с кистью, ластиком, направляющими и симметрией|1 - nearly raw stroke, 10 - strong smoothing for clean lineart. On release the line tail catches up with the pen, so the ending is not lost. Works with the brush, eraser, guides and symmetry
@@ -1646,4 +1645,23 @@ Out of Pegs: соседние рисунки стоят там, где слой 
 Импортировано палитр: {}, цветов: {}|Palettes imported: {}, colors: {}
 Импортировано палитр: {}, цветов: {}, пропущено: {}|Palettes imported: {}, colors: {}, skipped: {}
 Импортировано палитр: {}, не поместилось: {} (не больше 50)|Palettes imported: {}, did not fit: {} (50 max)
+Наклон пера|Pen tilt
+Не влияет|No effect
+Толщина|Thickness
+Штриховка|Shading
+Плоское перо|Flat nib
+Сила наклона: {} %|Tilt strength: {} %
+Сила наклона|Tilt strength
+Толщина - наклонённое перо рисует шире; Штриховка - шире и прозрачнее, как карандаш боком; Плоское перо - штамп сплющивается и поворачивается по направлению пера. Действует на кисть, ластик и векторные кисти, кроме «Ровная»|Thickness: a tilted pen draws wider; Shading: wider and lighter, like a pencil on its side; Flat nib: the stamp flattens and turns with the pen direction. Works for the brush, the eraser and vector brushes except “Uniform”
+Датчика наклона нет: кисть рисует без изменений|No tilt sensor: the brush draws unchanged
+Наклон пера {}°: не влияет на кисть (выберите режим ниже)|Pen tilt {}°: does not affect the brush (choose a mode below)
+Наклон пера {}° → толщина ×{}|Pen tilt {}° → thickness ×{}
+Наклон пера {}° → штриховка: толщина ×{}, плотность {} %|Pen tilt {}° → shading: thickness ×{}, density {} %
+Наклон пера {}° → штамп сплющен до {} % и повёрнут по перу|Pen tilt {}° → stamp flattened to {} % and turned with the pen
+Ровная|Uniform
+По нажиму|By pressure
+Тушь|Ink
+Каллиграфия|Calligraphy
+Перетаскивание слоёв выключено во время поиска и фильтра|Layer dragging is off while searching or filtering
+Перетащить слой|Drag layer
 """

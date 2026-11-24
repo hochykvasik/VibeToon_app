@@ -598,7 +598,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pause()
         arapMemo.clear()
         clearSelection(); penCancel(); _rasterTool.value = null
-        _loop.value = true; _magnet.value = false; vecLayer = -1; vecPts.clear(); vecGen.clear()
+        _loop.value = true; _magnet.value = false; vecLayer = -1; vecPts.clear(); vecPressures.clear(); vecGen.clear()
         markerThumbJobs.values.toList().forEach { it.cancel() }; markerThumbJobs.clear()
         _markerThumbs.value = emptyMap()
         resetForms(dropTextures = true)
@@ -6946,9 +6946,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _customBrushes.value = list
     }
 
+    /** Последняя записанная самим редактором строка своих кистей (слушатель настроек не перечитывает собственную запись). */
+    private var ownBrushesJson: String? = null
+
     private fun storeCustomBrushes(list: List<BrushPreset>) {
         _customBrushes.value = list
-        appPrefs().edit().putString(com.vibetoon.domain.paint.BrushExchange.PREF_KEY, com.vibetoon.domain.paint.BrushExchange.encode(list)).apply()
+        val json = com.vibetoon.domain.paint.BrushExchange.encode(list)
+        ownBrushesJson = json
+        appPrefs().edit().putString(com.vibetoon.domain.paint.BrushExchange.PREF_KEY, json).apply()
     }
 
     /** Пресет по id: встроенный или свой (для подписи кнопки кистей). */
@@ -7091,10 +7096,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_paintTool.value == PaintTool.ERASER) _paintTool.value = restore
     }
 
+    // Спринт 40: наклон пера меняет кисть (TiltMath): толщина, штриховка или плоское перо
+    private var tiltSettings = com.vibetoon.domain.input.TiltMath.Settings()
+    private var tiltNorm = Float.NaN
+    private var tiltOrientation = Float.NaN
+
+    /** Наклон и направление пера текущего события (StylusTracker); [first] - начало штриха (сброс сглаживания). */
+    fun paintTilt(tiltRadians: Float, orientationRadians: Float, first: Boolean = false) {
+        val t = com.vibetoon.domain.input.TiltMath.norm(tiltRadians)
+        tiltNorm = if (first) t else com.vibetoon.domain.input.TiltMath.smooth(tiltNorm, t)
+        if (orientationRadians.isFinite()) tiltOrientation = orientationRadians
+    }
+
+    /** Наклон действует только на штрих пером с включённым режимом; палец и мышь - без изменений. */
+    private fun tiltActive(): Boolean = strokeStylus && tiltSettings.active && tiltNorm.isFinite()
+
+    /** Множитель радиуса для текущего наклона (векторная кисть «По нажиму» тоже его учитывает). */
+    private fun tiltSizeFactor(): Float = if (tiltActive()) com.vibetoon.domain.input.TiltMath.sizeFactor(tiltSettings, tiltNorm) else 1f
+
+    /** Передаёт текущий наклон штамповщику (и зеркальным штрихам симметрии - без поворота). */
+    private fun applyTilt(st: DabStroker?) {
+        if (st == null) return
+        if (!tiltActive()) { st.setTilt(1f, 1f, Float.NaN); return }
+        val ts = tiltSettings
+        st.setTilt(com.vibetoon.domain.input.TiltMath.sizeFactor(ts, tiltNorm), com.vibetoon.domain.input.TiltMath.flowFactor(ts, tiltNorm),
+            com.vibetoon.domain.input.TiltMath.angle(ts, tiltOrientation, Math.toRadians(camera.rotDeg.toDouble()).toFloat()))
+        for (m in mirrorStrokers) m.setTilt(com.vibetoon.domain.input.TiltMath.sizeFactor(ts, tiltNorm), com.vibetoon.domain.input.TiltMath.flowFactor(ts, tiltNorm), Float.NaN)
+    }
+
+    /** Плоское перо: штамп сплющивается по наклону в начале штриха (форма штампа задаётся на весь штрих). */
+    private fun tiltParams(p: BrushParams): BrushParams =
+        if (tiltActive() && tiltSettings.mode == com.vibetoon.domain.input.TiltMath.Mode.ANGLE)
+            p.copy(roundness = com.vibetoon.domain.input.TiltMath.roundness(tiltSettings, tiltNorm, p.roundness)) else p
+
     /** Начало штриха: нажим проходит через кривую, точка - через стабилизатор (до направляющих и симметрии). */
     fun paintDown(sx: Float, sy: Float, pressure: Float): Boolean {
         val prefs = runCatching { stylusPrefs() }.getOrNull()
         strokeStylus = stylusDown
+        tiltSettings = com.vibetoon.domain.input.TiltMath.settings(prefs?.getInt(com.vibetoon.domain.input.TiltMath.PREF_MODE, 0) ?: 0,
+            prefs?.getInt(com.vibetoon.domain.input.TiltMath.PREF_STRENGTH, com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH) ?: com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH)
+        if (!strokeStylus) { tiltNorm = Float.NaN; tiltOrientation = Float.NaN }
         strokeCurve = com.vibetoon.domain.input.PressureCurve.decode(prefs?.getString("pressure_curve", null))
         val level = prefs?.getInt("stabilization", com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL) ?: com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL
         val density = getApplication<Application>().resources.displayMetrics.density
@@ -7215,7 +7256,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (isLockedId(vid)) { lockedNotice(); return false }
             if (_paintTool.value == PaintTool.ERASER) { _state.value = UiState.Message("На векторном слое ластика нет: «Убрать последнюю» удаляет примитив"); return false }
-            return vectorDown(vid, sx, sy)
+            return vectorDown(vid, sx, sy, pressure)
         }
         val id = ensurePixelTarget() ?: run {
             _state.value = UiState.Message("Рисовать можно на слое-картинке: выберите его или создайте «Новый слой»")
@@ -7235,7 +7276,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val q = scene?.selectionQuads?.get(id) ?: return false
         val view = RenderHost.view ?: return false
         val p = unitOf(q, toCanvas(sx, sy)) ?: return false
-        val params = paintParams()
+        val params = tiltParams(paintParams())   // спринт 40: плоское перо сплющивает штамп по наклону
         strokeLayer = id
         strokeSize = size
         clearShapeAssist()
@@ -7272,9 +7313,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 kotlin.math.hypot(stepAt.first - c0.first, stepAt.second - c0.second))
             guideStroke = gs
             mirrorStrokers = List(gs.count - 1) { DabStroker(params) }
+            applyTilt(st)
             emitGuided(gs.begin(com.vibetoon.domain.paint.DrawingGuides.Point(c0.first, c0.second)), q, size, pressure)
-        } else if (!_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF)
+        } else if (!_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF) {
+            applyTilt(st)
             sendDabs(st.begin(p.first * size[0], p.second * size[1], pressure))
+        }
         updatePaintCursor(sx, sy, q, params)
         swallowTap = true
         return true
@@ -7287,8 +7331,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _guides.value = com.vibetoon.domain.paint.DrawingGuides.moveHandle(_guides.value, handle, com.vibetoon.domain.paint.DrawingGuides.Point(c.first, c.second))
             return
         }
-        if (vecLayer >= 0) { vectorMove(sx, sy); return }
+        if (vecLayer >= 0) { vectorMove(sx, sy, pressure); return }
         val st = stroker ?: return
+        applyTilt(st)
         val q = scene?.selectionQuads?.get(strokeLayer) ?: return
         val p = unitOf(q, toCanvas(sx, sy)) ?: return
         if (rulerQuad != null) {
@@ -7681,6 +7726,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _vecFill = MutableStateFlow(false)
     val vecFill: StateFlow<Boolean> = _vecFill.asStateFlow()
     fun setVecKind(k: com.vibetoon.domain.vector.VecKind) { _vecKind.value = k }
+    /** Спринт 40: векторная кисть для «Путь» (ровная, по нажиму, тушь, каллиграфия); выбор хранится в vt_app. */
+    private val _vecBrush = MutableStateFlow(com.vibetoon.domain.vector.VectorBrush.Style.of(
+        runCatching { getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getString(com.vibetoon.domain.vector.VectorBrush.PREF, null) }.getOrNull()))
+    val vecBrush: StateFlow<com.vibetoon.domain.vector.VectorBrush.Style> = _vecBrush.asStateFlow()
+    fun setVecBrush(style: com.vibetoon.domain.vector.VectorBrush.Style) {
+        _vecBrush.value = style
+        runCatching { getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).edit().putString(com.vibetoon.domain.vector.VectorBrush.PREF, style.id).apply() }
+    }
+
+    /**
+     * Спринт 40: «Импорт копии» настроек пишет в vt_app, пока редактор открыт. Слушатель сразу обновляет вид панели слоёв
+     * («Миниатюры»/«Список»), векторную кисть и свои кисти - без повторного открытия редактора.
+     */
+    private val appPrefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key -> onAppPrefChanged(key) }
+    init { runCatching { appPrefs().registerOnSharedPreferenceChangeListener(appPrefsListener) } }
+
+    private fun onAppPrefChanged(key: String?) {
+        val p = runCatching { appPrefs() }.getOrNull() ?: return
+        if (key == null || key == com.vibetoon.domain.model.LayerListView.PREF_KEY) {
+            val list = com.vibetoon.domain.model.LayerListView.isList(p.getString(com.vibetoon.domain.model.LayerListView.PREF_KEY, null))
+            if (_layersList.value != list) { _layersList.value = list; rebuildRows() }
+        }
+        if (key == null || key == com.vibetoon.domain.vector.VectorBrush.PREF) {
+            val vb = com.vibetoon.domain.vector.VectorBrush.Style.of(p.getString(com.vibetoon.domain.vector.VectorBrush.PREF, null))
+            if (_vecBrush.value != vb) _vecBrush.value = vb
+        }
+        if ((key == null || key == com.vibetoon.domain.paint.BrushExchange.PREF_KEY) && customBrushesLoaded &&
+            p.getString(com.vibetoon.domain.paint.BrushExchange.PREF_KEY, null) != ownBrushesJson) reloadCustomBrushes()
+    }
     fun toggleVecFill() { _vecFill.value = !_vecFill.value }
 
     fun isVectorLayer(id: Int) = media.any { it.id == id && it.vector }
@@ -7690,29 +7764,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private var vecLayer = -1
     private val vecPts = ArrayList<Float>()
+    /** Нажим (после кривой, с наклоном) по точкам жеста - для векторной кисти. */
+    private val vecPressures = ArrayList<Float>()
     private var vecPreviewAt = 0L
     private val vecGen = HashMap<Int, Int>()
 
     private fun vecStroke(): Long = (brush.value.color.toInt() or (0xFF shl 24)).toLong() and 0xFFFFFFFFL
 
-    private fun vectorDown(id: Int, sx: Float, sy: Float): Boolean {
+    /** Штрих-примитив жеста: «Путь» - через векторную кисть (толщина по узлам), остальные виды - как раньше. */
+    private fun vecShape(): com.vibetoon.domain.vector.VectorShape? {
+        val fill = if (_vecFill.value) vecStroke() and 0x00FFFFFFL or 0x66000000L else 0L
+        return if (_vecKind.value == com.vibetoon.domain.vector.VecKind.PATH)
+            com.vibetoon.domain.vector.VectorBrush.stroke(_vecBrush.value, vecPts.toList(), vecPressures.toList(), vecStroke(), fill, brush.value.size)
+        else com.vibetoon.domain.vector.VectorMath.fromGesture(_vecKind.value, vecPts.toList(), vecStroke(), fill, brush.value.size)
+    }
+
+    private fun vectorDown(id: Int, sx: Float, sy: Float, pressure: Float = 1f): Boolean {
         val q = scene?.selectionQuads?.get(id) ?: return false
         val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         vecLayer = id
         vecPts.clear(); vecPts += p.first * canvasW; vecPts += p.second * canvasH
+        vecPressures.clear(); vecPressures += pressure * tiltSizeFactor()
         swallowTap = true
         return true
     }
 
-    private fun vectorMove(sx: Float, sy: Float) {
+    private fun vectorMove(sx: Float, sy: Float, pressure: Float = 1f) {
         val q = scene?.selectionQuads?.get(vecLayer) ?: return
         val p = unitOf(q, toCanvas(sx, sy)) ?: return
         vecPts += p.first * canvasW; vecPts += p.second * canvasH
+        vecPressures += pressure * tiltSizeFactor()
         val now = SystemClock.uptimeMillis()
         if (now - vecPreviewAt < 70) return
         vecPreviewAt = now
         val m = media.firstOrNull { it.id == vecLayer } ?: return
-        val tmp = com.vibetoon.domain.vector.VectorMath.fromGesture(_vecKind.value, vecPts.toList(), vecStroke(), if (_vecFill.value) vecStroke() and 0x00FFFFFFL or 0x66000000L else 0L, brush.value.size)
+        val tmp = vecShape()
         renderVector(m, save = false, extra = tmp)   // резиновая линия: примитив виден во время жеста
     }
 
@@ -7720,17 +7806,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val id = vecLayer
         vecLayer = -1
         val m = media.firstOrNull { it.id == id } ?: return
-        val shape = com.vibetoon.domain.vector.VectorMath.fromGesture(
-            _vecKind.value, vecPts.toList(), vecStroke(), if (_vecFill.value) vecStroke() and 0x00FFFFFFL or 0x66000000L else 0L, brush.value.size
-        )
-        vecPts.clear()
+        val shape = vecShape()   // спринт 40: векторная кисть; правка идёт в Undo через setVectors -> checkpoint
+        vecPts.clear(); vecPressures.clear()
         if (shape == null) { renderVector(m, save = false); return }   // тап без движения: убрать резиновую линию
         setVectors(id, com.vibetoon.domain.vector.VectorMath.withShape(m.vectors, shape))
     }
 
     private fun vectorCancel() {
         val id = vecLayer
-        vecLayer = -1; vecPts.clear()
+        vecLayer = -1; vecPts.clear(); vecPressures.clear()
         media.firstOrNull { it.id == id }?.let { renderVector(it, save = false) }
     }
 
@@ -12666,6 +12750,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun safeName(n: String) = n.replace(Regex("""[^\p{L}\p{N}_-]+"""), "_").trim('_').ifEmpty { "video" }.take(40)
 
     override fun onCleared() {
+        runCatching { appPrefs().unregisterOnSharedPreferenceChangeListener(appPrefsListener) }
         pause()
         audioEngine.release()
         videoThumbs.release()

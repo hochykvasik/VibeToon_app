@@ -144,6 +144,7 @@ fun StylusSettingsSection(st: AppSettings) {
     var testRaw by remember { mutableStateOf<Float?>(null) }
     var testStylus by remember { mutableStateOf(true) }
     var tilt by remember { mutableStateOf<Int?>(null) }
+    var tiltRad by remember { mutableStateOf(Float.NaN) }
     val tracker = remember { com.vibetoon.ui.StylusTracker() }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -177,6 +178,7 @@ fun StylusSettingsSection(st: AppSettings) {
                         var last = StylusSample.pressure(down.pressure, stylus)
                         testRaw = last
                         tilt = if (stylus) StylusSample.tiltDegrees(tracker.tiltRadians) else null
+                        tiltRad = if (stylus) tracker.tiltRadians else Float.NaN
                         while (true) {
                             val ev = awaitPointerEvent()
                             val c = ev.changes.firstOrNull { it.id == down.id } ?: break
@@ -184,7 +186,7 @@ fun StylusSettingsSection(st: AppSettings) {
                             stylus = c.type == PointerType.Stylus || c.type == PointerType.Eraser
                             last = StylusSample.pressure(c.pressure, stylus, last)
                             testRaw = last
-                            if (stylus) tilt = StylusSample.tiltDegrees(tracker.tiltRadians)
+                            if (stylus) { tilt = StylusSample.tiltDegrees(tracker.tiltRadians); tiltRad = tracker.tiltRadians }
                             c.consume()
                         }
                     }
@@ -198,9 +200,30 @@ fun StylusSettingsSection(st: AppSettings) {
             val mapped = if (testStylus) curve.map(raw).coerceIn(StylusSample.MIN_PRESSURE, 1f) else 1f
             Text("Нажим пера: ${Math.round(raw * 100)} % → кисть: ${Math.round(mapped * 100)} %", fontSize = 12.sp)
             if (!testStylus) Text("Палец или перо без датчика нажима рисуют с нажимом 100 %", fontSize = 11.sp, color = muted)
-            else { val t = tilt; Text(if (t != null) "Наклон пера: $t°" else "Наклон пера: нет данных", fontSize = 11.sp, color = muted) }
+            else {
+                val t = tilt; Text(if (t != null) "Наклон пера: $t°" else "Наклон пера: нет данных", fontSize = 11.sp, color = muted)
+                // спринт 40: что наклон сделает с кистью при текущем режиме
+                if (t != null) Text(com.vibetoon.domain.input.TiltMath.describe(com.vibetoon.domain.input.TiltMath.settings(st.stylusTilt, st.stylusTiltStrength), tiltRad), fontSize = 11.sp)
+            }
         }
-        Text("Наклон пера пока только показывается и не меняет кисть (в разработке)", fontSize = 11.sp, color = muted)
+        // спринт 40: наклон пера меняет кисть (толщина, штриховка, плоское перо); палец и перо без датчика - без изменений
+        Text("Наклон пера", fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            com.vibetoon.domain.input.TiltMath.Mode.values().forEach { m ->
+                FilterChip(selected = st.stylusTilt == m.id, onClick = { st.stylusTilt = m.id; st.saveStylus() }, label = { Text(m.ru, fontSize = 12.sp) })
+            }
+        }
+        if (st.stylusTilt != com.vibetoon.domain.input.TiltMath.Mode.OFF.id) {
+            Text("Сила наклона: ${st.stylusTiltStrength} %", fontSize = 12.sp)
+            val tiltDesc = L("Сила наклона")
+            Slider(
+                value = st.stylusTiltStrength.toFloat(), valueRange = 0f..100f,
+                onValueChange = { st.stylusTiltStrength = Math.round(it).coerceIn(0, 100) },
+                onValueChangeFinished = { st.saveStylus() },
+                modifier = Modifier.semantics { contentDescription = tiltDesc }
+            )
+        }
+        Text("Толщина - наклонённое перо рисует шире; Штриховка - шире и прозрачнее, как карандаш боком; Плоское перо - штамп сплющивается и поворачивается по направлению пера. Действует на кисть, ластик и векторные кисти, кроме «Ровная»", fontSize = 11.sp, color = muted)
 
         Text("Стабилизация: ${st.stabilization}", fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
         val stabDesc = L("Стабилизация")

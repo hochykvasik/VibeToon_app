@@ -1755,7 +1755,6 @@
     <string name="ui_a_finger_or_a_pen_without_a_pressure">A finger or a pen without a pressure sensor draws at 100 % pressure</string>
     <string name="ui_pen_tilt">Pen tilt: {}°</string>
     <string name="ui_pen_tilt_no_data">Pen tilt: no data</string>
-    <string name="ui_pen_tilt_is_only_displayed_for_now_a">Pen tilt is only displayed for now and does not change the brush (in development)</string>
     <string name="ui_stabilization">Stabilization: {}</string>
     <string name="ui_stabilization_2">Stabilization</string>
     <string name="ui_1_nearly_raw_stroke_10_strong_smooth">1 - nearly raw stroke, 10 - strong smoothing for clean lineart. On release the line tail catches up with the pen, so the ending is not lost. Works with the brush, eraser, guides and symmetry</string>
@@ -1970,4 +1969,23 @@
     <string name="ui_palettes_imported_colors">Palettes imported: {}, colors: {}</string>
     <string name="ui_palettes_imported_colors_skipped">Palettes imported: {}, colors: {}, skipped: {}</string>
     <string name="ui_palettes_imported_did_not_fit_50_max">Palettes imported: {}, did not fit: {} (50 max)</string>
+    <string name="ui_pen_tilt_2">Pen tilt</string>
+    <string name="ui_no_effect">No effect</string>
+    <string name="ui_thickness">Thickness</string>
+    <string name="ui_shading">Shading</string>
+    <string name="ui_flat_nib">Flat nib</string>
+    <string name="ui_tilt_strength">Tilt strength: {} %</string>
+    <string name="ui_tilt_strength_2">Tilt strength</string>
+    <string name="ui_thickness_a_tilted_pen_draws_wider_s">Thickness: a tilted pen draws wider; Shading: wider and lighter, like a pencil on its side; Flat nib: the stamp flattens and turns with the pen direction. Works for the brush, the eraser and vector brushes except “Uniform”</string>
+    <string name="ui_no_tilt_sensor_the_brush_draws_uncha">No tilt sensor: the brush draws unchanged</string>
+    <string name="ui_pen_tilt_does_not_affect_the_brush_c">Pen tilt {}°: does not affect the brush (choose a mode below)</string>
+    <string name="ui_pen_tilt_thickness">Pen tilt {}° → thickness ×{}</string>
+    <string name="ui_pen_tilt_shading_thickness_density">Pen tilt {}° → shading: thickness ×{}, density {} %</string>
+    <string name="ui_pen_tilt_stamp_flattened_to_and_turn">Pen tilt {}° → stamp flattened to {} % and turned with the pen</string>
+    <string name="ui_uniform">Uniform</string>
+    <string name="ui_by_pressure">By pressure</string>
+    <string name="ui_ink">Ink</string>
+    <string name="ui_calligraphy">Calligraphy</string>
+    <string name="ui_layer_dragging_is_off_while_searchin">Layer dragging is off while searching or filtering</string>
+    <string name="ui_drag_layer">Drag layer</string>
 </resources>

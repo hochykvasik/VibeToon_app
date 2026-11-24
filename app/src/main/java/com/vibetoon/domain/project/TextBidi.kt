@@ -8,7 +8,7 @@ package com.vibetoon.domain.project
  * - Выравнивание в модели физическое: 0 - слева, 1 - по центру, 2 - справа. StaticLayout выравнивает относительно
  *   направления абзаца (NORMAL/OPPOSITE), поэтому [layoutAlign] переводит одно в другое.
  * - Для текстовых эффектов буквы рисуются по одной: [visualUnits] даёт порядок «единиц» слева направо
- *   (упрощённый Unicode Bidi: уровни, нейтральные символы, цифры, зеркальные скобки). Арабские буквы,
+ *   (спринт 40: полноценный Unicode Bidi в [UnicodeBidi] - числа с разделителями, парные скобки, изоляты, L1; зеркалирование L4). Арабские буквы,
  *   которые соединяются между собой, рисуются одной единицей (словом), чтобы не терялись формы букв.
  */
 object TextBidi {
@@ -33,16 +33,11 @@ object TextBidi {
 
     fun isRtlChar(c: Char): Boolean = kindOf(c.code) == Kind.R
 
-    /** Направление первой сильной буквы: true - RTL, false - LTR, null - сильных букв нет (цифры, знаки). */
-    fun firstStrongRtl(text: CharSequence): Boolean? {
-        var i = 0
-        while (i < text.length) {
-            val cp = Character.codePointAt(text, i)
-            when (kindOf(cp)) { Kind.R -> return true; Kind.L -> return false; else -> Unit }
-            i += Character.charCount(cp)
-        }
-        return null
-    }
+    /**
+     * Направление первой сильной буквы: true - RTL, false - LTR, null - сильных букв нет (цифры, знаки).
+     * Спринт 40 (правило P2): текст внутри изолятов LRI/RLI/FSI…PDI не влияет на направление абзаца; LRM/RLM учитываются.
+     */
+    fun firstStrongRtl(text: CharSequence): Boolean? = UnicodeBidi.firstStrongRtl(text)
 
     /** Направление абзаца (строки между Enter): для [AUTO] - по первой сильной букве, без букв - слева направо. */
     fun paragraphRtl(dir: Int, paragraph: CharSequence): Boolean = when (coerce(dir)) {
@@ -82,49 +77,12 @@ object TextBidi {
         return 2 - a
     }
 
-    /** Уровни вложенности (чётный - LTR, нечётный - RTL) для каждого char строки, упрощённый UBA (правила W, N, I). */
-    fun levels(line: CharSequence, rtlBase: Boolean): IntArray {
-        val n = line.length
-        val kinds = Array(n) { Kind.NEUTRAL }
-        var i = 0
-        while (i < n) {
-            val cp = Character.codePointAt(line, i)
-            val k = kindOf(cp)
-            val cc = Character.charCount(cp)
-            for (j in i until minOf(n, i + cc)) kinds[j] = k
-            i += cc
-        }
-        // W7: цифры после сильной L (или в начале LTR-абзаца) ведут себя как L
-        var lastStrongL = !rtlBase
-        for (j in 0 until n) {
-            when (kinds[j]) {
-                Kind.L -> lastStrongL = true
-                Kind.R -> lastStrongL = false
-                Kind.DIGIT -> if (lastStrongL) kinds[j] = Kind.L
-                else -> Unit
-            }
-        }
-        // N1/N2: нейтральные между одинаковыми сильными берут их направление (цифры = R), иначе - направление абзаца
-        fun strongOf(k: Kind): Kind? = when (k) { Kind.L -> Kind.L; Kind.R, Kind.DIGIT -> Kind.R; else -> null }
-        val base = if (rtlBase) Kind.R else Kind.L
-        var j = 0
-        while (j < n) {
-            if (kinds[j] != Kind.NEUTRAL) { j++; continue }
-            var e = j
-            while (e < n && kinds[e] == Kind.NEUTRAL) e++
-            val before = if (j == 0) base else strongOf(kinds[j - 1]) ?: base
-            val after = if (e >= n) base else strongOf(kinds[e]) ?: base
-            val res = if (before == after) before else base
-            for (q in j until e) kinds[q] = if (res == Kind.R) Kind.NEUTRAL_R else Kind.NEUTRAL_L
-            j = e
-        }
-        val baseLevel = if (rtlBase) 1 else 0
-        return IntArray(n) { q ->
-            val k = kinds[q]
-            if (baseLevel == 0) when (k) { Kind.R, Kind.NEUTRAL_R -> 1; Kind.DIGIT -> 2; else -> 0 }
-            else when (k) { Kind.L, Kind.NEUTRAL_L, Kind.DIGIT -> 2; else -> 1 }
-        }
-    }
+    /**
+     * Уровни вложенности (чётный - LTR, нечётный - RTL) для каждого char строки. Спринт 40: полноценный UBA
+     * ([UnicodeBidi]): числа с разделителями (1,5 / 10-20 / 25% / $5), арабские цифры, парные скобки (N0),
+     * изоляты LRI/RLI/FSI/PDI, встраивания LRE/RLE/LRO/RLO/PDF и хвостовые пробелы (L1).
+     */
+    fun levels(line: CharSequence, rtlBase: Boolean): IntArray = UnicodeBidi.levels(line, rtlBase)
 
     /** Логические единицы рисования строки: суррогатные пары и комбинируемые знаки - вместе с буквой, связанные арабские буквы - словом. */
     fun units(line: CharSequence): List<IntRange> {
@@ -135,6 +93,7 @@ object TextBidi {
             val start = i
             var cp = Character.codePointAt(line, i)
             i += Character.charCount(cp)
+            if (isFormatControl(cp)) { out += start until i; continue }   // спринт 40: невидимый знак направления - своя пустая единица
             if (isJoining(cp)) {
                 while (i < n) {
                     cp = Character.codePointAt(line, i)
@@ -190,10 +149,25 @@ object TextBidi {
         return sb.toString()
     }
 
-    private val MIRRORS = mapOf('(' to ')', ')' to '(', '[' to ']', ']' to '[', '{' to '}', '}' to '{', '<' to '>', '>' to '<', '«' to '»', '»' to '«', '‹' to '›', '›' to '‹')
+    private val MIRROR_PAIRS = listOf('(' to ')', '[' to ']', '{' to '}', '<' to '>', '«' to '»', '‹' to '›',
+        '\u2045' to '\u2046', '\u207D' to '\u207E', '\u208D' to '\u208E', '\u2208' to '\u220B', '\u2264' to '\u2265',
+        '\u226A' to '\u226B', '\u2282' to '\u2283', '\u2286' to '\u2287', '\u2308' to '\u2309', '\u230A' to '\u230B',
+        '\u2329' to '\u232A', '\u2768' to '\u2769', '\u276A' to '\u276B', '\u276C' to '\u276D', '\u276E' to '\u276F',
+        '\u2770' to '\u2771', '\u2772' to '\u2773', '\u2774' to '\u2775', '\u27E6' to '\u27E7', '\u27E8' to '\u27E9',
+        '\u27EA' to '\u27EB', '\u3008' to '\u3009', '\u300A' to '\u300B', '\u3010' to '\u3011', '\u3014' to '\u3015',
+        '\u3016' to '\u3017', '\u3018' to '\u3019', '\u301A' to '\u301B', '\uFF08' to '\uFF09', '\uFF1C' to '\uFF1E',
+        '\uFF3B' to '\uFF3D', '\uFF5B' to '\uFF5D', '\uFF5F' to '\uFF60', '\uFF62' to '\uFF63')
+    private val MIRRORS: Map<Char, Char> = MIRROR_PAIRS.flatMap { (a, b) -> listOf(a to b, b to a) }.toMap()
 
     /** Зеркальная пара скобки для символа внутри RTL (правило L4). */
     fun mirror(c: Char): Char = MIRRORS[c] ?: c
+
+    /** Невидимые знаки направления (LRM/RLM/ALM, LRE…RLO/PDF, LRI…PDI): влияют на порядок, но не рисуются. */
+    fun isFormatControl(cp: Int): Boolean = cp == 0x200E || cp == 0x200F || cp == 0x061C || cp in 0x202A..0x202E || cp in 0x2066..0x2069
+
+    /** Единица - невидимый знак направления (эффекты пропускают её, ширина 0). */
+    fun isControlUnit(line: CharSequence, range: IntRange): Boolean =
+        range.first in line.indices && range.last - range.first < 2 && isFormatControl(Character.codePointAt(line, range.first))
 
     /** Арабская письменность (буквы соединяются - рисуем словом). */
     fun isJoining(cp: Int): Boolean =

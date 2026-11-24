@@ -31,7 +31,7 @@ object VectorRaster {
         val p = s.pts
         if (s.kind == VecKind.BOOL) { boolPath(s, 0)?.let { draw(it) }; return }   // пакет 18
         when (s.kind) {
-            VecKind.PATH -> draw(smooth(p))
+            VecKind.PATH -> if (com.vibetoon.domain.vector.VectorBrush.hasWidths(s)) brushStroke(cv, s, fillPaint, strokePaint) else draw(smooth(p))
             VecKind.POLY -> strokePaint?.let { cv.drawPath(if (VectorBezier.hasHandles(s)) bezier(s) else poly(p, false), it) }
             VecKind.POLYGON -> draw(if (VectorBezier.hasHandles(s)) bezier(s) else poly(p, true))
             VecKind.LINE -> strokePaint?.let { cv.drawLine(p[0], p[1], p[p.size - 2], p[p.size - 1], it) }
@@ -51,6 +51,20 @@ object VectorRaster {
                 }
             }
         }
+    }
+
+    /** Спринт 40: штрих векторной кисти - заливка контура переменной толщины цветом обводки (заливка фигуры - под ним). */
+    private fun brushStroke(cv: Canvas, s: VectorShape, fillPaint: Paint?, strokePaint: Paint?) {
+        fillPaint?.let { cv.drawPath(smooth(s.pts).apply { close() }, it) }
+        val sp = strokePaint ?: return
+        val o = com.vibetoon.domain.vector.VectorBrush.outline(s)
+        if (o.size < 6) return
+        val path = Path().apply { fillType = Path.FillType.WINDING }
+        path.moveTo(o[0], o[1])
+        var i = 2
+        while (i + 1 < o.size) { path.lineTo(o[i], o[i + 1]); i += 2 }
+        path.close()
+        cv.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = sp.color })
     }
 
     /** Контур площади фигуры для булевых операций (линии и ломаные - null). */
