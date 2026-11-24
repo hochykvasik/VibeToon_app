@@ -913,7 +913,7 @@ Hold - резкая смена формы. Плавно/Линейно - кад�
 Цикл без ключей (внутренняя анимация по кругу)|Loop without keys (inner animation repeats)
 кадр 1 (Hold)|frame 1 (Hold)
 по кругу (цикл)|looping
-Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {}|Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}, cached {}
+Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {} · групп из кэша {}|Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}, cached {} · groups cached {}
 «{}» с кадра {} (Hold)|“{}” from frame {} (Hold)
 Маркеры не сдвинуты: на целевом кадре слоя «{}» уже есть другой рисунок|Markers not moved: layer “{}” already has another drawing on the target frame
 Маркеры отзеркалены: формы поменялись местами вместе с ними|Markers mirrored: their forms swapped places with them
@@ -1226,4 +1226,9 @@ PSD в текущий проект|PSD into current project
 Маска по слою|Mask to Layer
 Выкл|Off
 Вкл|On
+Контекст GL потерян, пока приложение было свёрнуто - экспорт прерван|The GL context was lost while the app was in the background - export interrupted
+Ошибка экспорта|Export error
+Пустой отрезок|Empty range
+Кодек не открыт|The codec is not open
+Некорректный размер видео|Invalid video size
 """

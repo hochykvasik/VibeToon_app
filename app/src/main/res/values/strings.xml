@@ -1222,7 +1222,7 @@
     <string name="ui_loop_without_keys_inner_animation_re">Цикл без ключей (внутренняя анимация по кругу)</string>
     <string name="ui_frame_1_hold">кадр 1 (Hold)</string>
     <string name="ui_looping">по кругу (цикл)</string>
-    <string name="ui_frame_ui_avg_p95_ms_gl_ms_slow_layer">Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {}</string>
+    <string name="ui_frame_ui_avg_p95_ms_gl_ms_slow_layer">Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {} · групп из кэша {}</string>
     <string name="ui_from_frame_hold">«{}» с кадра {} (Hold)</string>
     <string name="ui_markers_not_moved_layer_already_has_">Маркеры не сдвинуты: на целевом кадре слоя «{}» уже есть другой рисунок</string>
     <string name="ui_markers_mirrored_their_forms_swapped">Маркеры отзеркалены: формы поменялись местами вместе с ними</string>
@@ -1533,4 +1533,9 @@
     <string name="ui_mask_to_layer">Маска по слою</string>
     <string name="ui_off">Выкл</string>
     <string name="ui_on">Вкл</string>
+    <string name="ui_the_gl_context_was_lost_while_the_ap">Контекст GL потерян, пока приложение было свёрнуто - экспорт прерван</string>
+    <string name="ui_export_error">Ошибка экспорта</string>
+    <string name="ui_empty_range">Пустой отрезок</string>
+    <string name="ui_the_codec_is_not_open">Кодек не открыт</string>
+    <string name="ui_invalid_video_size">Некорректный размер видео</string>
 </resources>

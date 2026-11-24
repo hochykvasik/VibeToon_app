@@ -13,6 +13,7 @@
 
 #include "render/LayerBounds.h"
 #include "render/MaskPolicy.h"
+#include "render/GroupCachePolicy.h"
 
 namespace vt {
 
@@ -26,6 +27,7 @@ struct FrameStats {
     int fxPasses = 0;     // проходов эффектов
     int fxCached = 0;     // слоёв с эффектами, взятых из кэша (движение камеры)
     int missing = 0;      // видимых слоёв без загруженной текстуры (снимок символа ещё рано делать)
+    int groupCached = 0;  // пакет 27: групп, наложенных из FBO-кэша поддерева (без перерисовки содержимого)
 };
 
 // Флаги снимка captureFrame.
@@ -178,7 +180,26 @@ private:
         GLuint parentFbo;
         Fbo fbo;
         int flags = 0;
+        // пакет 27: кэш поддерева группы
+        bool cacheable = false;
+        bool keep = false;
+        uint64_t cacheKey = 0;
+        uint64_t hash = 0;
+        int missingBefore = 0;
     };
+    // Пакет 27: сохранённый FBO поддерева группы (см. GroupCachePolicy.h).
+    struct GroupEntry {
+        groupcache::State st;
+        Fbo fbo;
+    };
+    bool groupCacheEnabled() const;
+    uint64_t subtreeHash(size_t begin, size_t end, int& layers, bool& hasMask) const;
+    uint64_t texHash(uint64_t h, int layerId) const;
+    uint64_t groupKey(int groupId);              // id группы + номер её появления в кадре (одинаковые id не путаются)
+    int groupKeptCount() const;
+    void dropGroupCache();                       // удалить все FBO кэша групп (смена размера, экспорт, release)
+    void gcGroupCache();                         // после кадра: освободить записи групп, не понадобившихся в этом кадре
+    void touchTex(int layerId) { ++texGen_[layerId]; }
 
     void restoreCanvasScissor();
     void uploadPending();                        // не более kUploadBytesPerFrame за кадр
@@ -316,6 +337,10 @@ private:
     size_t textureBytes_ = 0;
     std::unordered_map<int, FxEntry> fxCache_;
     size_t fxCacheBytes_ = 0;
+    std::unordered_map<uint64_t, GroupEntry> groupCache_;
+    std::unordered_map<int, int> groupOcc_;      // появлений id группы в текущем кадре
+    std::unordered_map<int, uint32_t> texGen_;   // версия содержимого текстуры слоя (правка на месте, замена, загрузка)
+    uint32_t texSalt_ = 0;                       // смена всех текстур разом (новый контекст, смена проекта)
     uint64_t epoch_ = 1;                         // любая смена сцены/текстур/размера делает кэш эффектов устаревшим
     bool interactive_ = false;
     std::vector<Item> scene_;

@@ -454,13 +454,14 @@ Java_com_vibetoon_nativebridge_RenderNative_drawFrame(JNIEnv*, jobject, jlong h)
     return R(h)->drawFrame() ? JNI_TRUE : JNI_FALSE;
 }
 
-// Метрики последнего кадра: [нарисовано, отсечено, эффектов в рамке, проходов эффектов]
+// Метрики последнего кадра: [нарисовано, отсечено, эффектов в рамке, проходов эффектов, эффектов из кэша,
+// без текстуры, групп из кэша поддерева (пакет 27)]
 JNIEXPORT jintArray JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_frameStats(JNIEnv* env, jobject, jlong h) {
     const vt::FrameStats& s = R(h)->lastStats();
-    const jint v[6] = {s.drawn, s.culled, s.scissoredFx, s.fxPasses, s.fxCached, s.missing};
-    jintArray out = env->NewIntArray(6);
-    if (out) env->SetIntArrayRegion(out, 0, 6, v);
+    const jint v[7] = {s.drawn, s.culled, s.scissoredFx, s.fxPasses, s.fxCached, s.missing, s.groupCached};
+    jintArray out = env->NewIntArray(7);
+    if (out) env->SetIntArrayRegion(out, 0, 7, v);
     return out;
 }
 

@@ -262,6 +262,7 @@ void Renderer::paintDrawDabs(int mode, const float color[3], const BrushPreset& 
 
 bool Renderer::paintBegin(int layerId, int mode, float opacity, bool alphaLock, float r, float g, float b, const BrushPreset& preset, const uint8_t* grain) {
     bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
     const auto t = textures_.find(layerId);
     if (t == textures_.end() || t->second.w <= 0 || t->second.h <= 0 || !vbo_) return false;
     if (paintActive_) {  // прерванный штрих (потеря касания и т.п.): слой возвращается к состоянию до него
@@ -342,6 +343,7 @@ void Renderer::paintBake(int x, int y, int w, int h) {
 
 void Renderer::paintDabs(const float* dabs, int count) {
     bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(paintLayer_);   // пакет 27: и кэш групп с этим слоем
     if (!paintActive_ || !dabs || count <= 0) return;
     GlSave save;
     glBindFramebuffer(GL_FRAMEBUFFER, strokeFbo_);
@@ -366,6 +368,7 @@ void Renderer::paintDabs(const float* dabs, int count) {
 
 bool Renderer::paintGradient(int layerId, const float* g) {
     bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
     if (!paintActive_ || layerId != paintLayer_ || !g || paintMode_ == 2) return false;
     for (int i = 0; i < 10; ++i) if (!std::isfinite(g[i])) return false;
     if (!validGradientGesture(g[6], g[7], g[8], g[9])) return false;
@@ -394,6 +397,7 @@ bool Renderer::paintGradient(int layerId, const float* g) {
 
 bool Renderer::paintEnd(bool commit, std::vector<uint8_t>& out) {
     bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(paintLayer_);   // пакет 27: и кэш групп с этим слоем
     if (!paintActive_) return false;
     paintActive_ = false;
     const int x = pbx0_, y = pby0_, w = pbx1_ - pbx0_, h = pby1_ - pby0_;
@@ -431,6 +435,7 @@ bool Renderer::paintEnd(bool commit, std::vector<uint8_t>& out) {
 
 bool Renderer::paintEndAsync(int layerId) {
     bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
     if (!paintActive_) return false;
     paintActive_ = false;
     const int x = pbx0_, y = pby0_, w = pbx1_ - pbx0_, h = pby1_ - pby0_;
@@ -495,6 +500,7 @@ int Renderer::paintPoll(std::vector<uint8_t>& out) {
 
 bool Renderer::paintRestore(int layerId, int x, int y, int w, int h, const uint8_t* rgba) {
     bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
     const auto t = textures_.find(layerId);
     if (t == textures_.end() || !rgba) return false;
     Tex& tex = t->second;

@@ -12,4 +12,6 @@ object RenderMetrics {
     @Volatile var scissoredFx = 0
     @Volatile var fxPasses = 0
     @Volatile var fxCached = 0
+    /** Пакет 27: групп, наложенных из FBO-кэша поддерева. */
+    @Volatile var groupCached = 0
 }

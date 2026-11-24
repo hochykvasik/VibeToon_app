@@ -11,6 +11,7 @@
 #include "render/GlState.h"
 #include "render/CanvasClipPolicy.h"
 #include "render/FxCachePolicy.h"
+#include "render/GroupCachePolicy.h"
 #include "render/FrameTargetPolicy.h"
 #include "render/TexAlias.h"
 #include "render/UploadQueue.h"
@@ -459,6 +460,9 @@ int Renderer::initGL() {
     shadowTex_.clear();
     fxCache_.clear();
     fxCacheBytes_ = 0;
+    groupCache_.clear();   // FBO прошлого контекста недействительны (не удаляем - их id уже чужие)
+    texGen_.clear();
+    ++texSalt_;
     bumpEpoch();
     textureBytes_ = 0;
     fboPool_.clear();
@@ -962,6 +966,7 @@ void Renderer::clearTextures() {
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
     textureBytes_ = 0;
+    ++texSalt_;
     clearShadows();
     dropFxCache();
     bumpEpoch();
@@ -1032,6 +1037,7 @@ void Renderer::setTextureAliases(const int* ids, const int* prim, const int* fal
 void Renderer::dropTextures(const int* ids, int n) {
     for (int i = 0; i < n; ++i) {
         droppedTex_.insert(ids[i]);
+        touchTex(ids[i]);
         const auto t = textures_.find(ids[i]);
         if (t == textures_.end()) continue;
         glDeleteTextures(1, &t->second.id);
@@ -1086,6 +1092,7 @@ int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, i
         return -6;
     }
     queueGuard.invalidateLayer(layerId);
+    touchTex(layerId);
     bumpEpoch();
     const GLuint oldId = old->second.id;
     textureBytes_ -= old->second.bytes;
@@ -1155,6 +1162,7 @@ void Renderer::uploadPending() {
         textureBytes_ += bytes;
         uploaded += up.rgba.size();
         dropFxEntry(up.layerId);
+        touchTex(up.layerId);
         bumpEpoch();
         up = PendingUpload();  // освобождаем CPU-буфер сразу
     }
@@ -1239,6 +1247,7 @@ Renderer::Fbo Renderer::acquireFbo() {
 void Renderer::releaseFbo(const Fbo& f) { fboPool_.push_back(f); }
 
 void Renderer::releaseTargets() {
+    dropGroupCache();   // FBO кэша групп - экранного размера, как и пул
     for (const Fbo& f : fboPool_) {
         glDeleteFramebuffers(1, &f.fbo);
         glDeleteTextures(1, &f.tex);
@@ -1688,6 +1697,115 @@ void Renderer::compositeFbo(const Fbo& f, float opacity, int blend) {
     drawTexture(f.tex, kFullscreen, opacity, blend, false);
 }
 
+// ---------------------------------------------------------------- пакет 27: кэш поддеревьев групп
+
+bool Renderer::groupCacheEnabled() const {
+    // Снимки (символы, миниатюры, GIF/PNG) рисуются один раз и своим размером - кэш не нужен и не должен их касаться.
+    return !useShadows_ && !paintActive_ && (screenFbo_ == 0 || exportToSurface_);
+}
+
+uint64_t Renderer::texHash(uint64_t h, int layerId) const {
+    const auto t = textures_.find(layerId);
+    if (t == textures_.end()) h = groupcache::mixInt(h, -1);
+    else {
+        h = groupcache::mix(h, t->second.id);
+        h = groupcache::mixInt(h, t->second.w);
+        h = groupcache::mixInt(h, t->second.h);
+    }
+    const auto g = texGen_.find(layerId);
+    return groupcache::mix(h, g == texGen_.end() ? 0u : g->second);
+}
+
+uint64_t Renderer::subtreeHash(size_t begin, size_t end, int& layers, bool& hasMask) const {
+    using namespace groupcache;
+    layers = 0;
+    hasMask = false;
+    uint64_t h = kFnvBasis;
+    h = mixInt(h, width_); h = mixInt(h, height_);
+    h = mixInt(h, canvasW_); h = mixInt(h, canvasH_);
+    float va[6];
+    viewAffine(va);
+    h = mixFloats(h, va, 6);
+    h = mixInt(h, canvasScissorOn_ ? 1 : 0);
+    if (canvasScissorOn_) {
+        const float sc[4] = {canvasScissor_.x0, canvasScissor_.y0, canvasScissor_.x1, canvasScissor_.y1};
+        h = mixFloats(h, sc, 4);
+    }
+    h = mixInt(h, (interactive_ ? 1 : 0) | (exportMode_ ? 2 : 0));
+    h = mix(h, texSalt_);
+    for (size_t k = begin + 1; k < end && k < scene_.size(); ++k) {
+        const Item& it = scene_[k];
+        h = mixInt(h, it.op); h = mixInt(h, it.layerId); h = mixInt(h, it.blend); h = mixInt(h, it.flags);
+        h = mixFloats(h, it.m, 6);
+        h = mixFloat(h, it.opacity);
+        if (it.flags & (kFlagMaskSrc | kFlagMasked)) hasMask = true;
+        if (it.op != kLayer) continue;
+        ++layers;
+        const int id = it.layerId;
+        h = texHash(h, id);
+        if (!aliases_.empty()) {
+            const auto a = aliases_.find(id);
+            if (a != aliases_.end()) {
+                h = mixInt(h, a->second.primary); h = mixInt(h, a->second.fallback);
+                h = mixFloats(h, a->second.pr, 4); h = mixFloats(h, a->second.fr, 4);
+                if (a->second.primary >= 0) h = texHash(h, a->second.primary);
+                if (a->second.fallback >= 0) h = texHash(h, a->second.fallback);
+            }
+        }
+        const auto w = warps_.find(id);
+        if (w != warps_.end()) h = mixFloats(h, w->second.data(), w->second.size());
+        const auto m = meshes_.find(id);
+        if (m != meshes_.end()) {
+            h = mixFloats(h, m->second.verts.data(), m->second.verts.size());
+            h = mix(h, m->second.idx.size());
+            for (GLushort ix : m->second.idx) h = mixInt(h, ix);
+        }
+        const auto p = persps_.find(id);
+        if (p != persps_.end()) h = mixFloats(h, p->second.data(), p->second.size());
+        const auto t = turbs_.find(id);
+        if (t != turbs_.end()) h = mixFloats(h, t->second.data(), t->second.size());
+        const auto e = effects_.find(id);
+        if (e != effects_.end()) {
+            h = mix(h, e->second.size());
+            for (const auto& fx : e->second) h = mixFloats(h, fx.data(), fx.size());
+        }
+    }
+    return h;
+}
+
+uint64_t Renderer::groupKey(int groupId) {
+    const int n = groupOcc_[groupId]++;
+    return (static_cast<uint64_t>(static_cast<uint32_t>(groupId)) << 32) | static_cast<uint32_t>(n);
+}
+
+int Renderer::groupKeptCount() const {
+    int n = 0;
+    for (const auto& kv : groupCache_) if (kv.second.st.hasCache) ++n;
+    return n;
+}
+
+void Renderer::dropGroupCache() {
+    for (auto& kv : groupCache_) {
+        if (!kv.second.st.hasCache) continue;
+        if (kv.second.fbo.fbo) glDeleteFramebuffers(1, &kv.second.fbo.fbo);
+        if (kv.second.fbo.tex) glDeleteTextures(1, &kv.second.fbo.tex);
+    }
+    groupCache_.clear();
+}
+
+void Renderer::gcGroupCache() {
+    for (auto it = groupCache_.begin(); it != groupCache_.end();) {
+        GroupEntry& g = it->second;
+        if (g.st.used) { g.st.used = false; ++it; continue; }
+        if (g.st.hasCache) {
+            // FBO экранного размера - обратно в пул; другого размера (не должно быть) - удаляем
+            if (g.st.w == width_ && g.st.h == height_) releaseFbo(g.fbo);
+            else { glDeleteFramebuffers(1, &g.fbo.fbo); glDeleteTextures(1, &g.fbo.tex); }
+        }
+        it = groupCache_.erase(it);
+    }
+}
+
 bool Renderer::drawFrame() {
     uploadPending();
 
@@ -1740,6 +1858,8 @@ bool Renderer::drawFrame() {
         canvasScissorOn_ = false;
     }
     stats_ = FrameStats{};
+    groupOcc_.clear();
+    const bool groupCacheOn = groupCacheEnabled();
 
     // Обход потока операций снизу вверх.
     std::vector<Frame> stack;
@@ -1753,6 +1873,43 @@ bool Renderer::drawFrame() {
             const int mflags = it.flags & (kFlagMaskSrc | kFlagMasked);
             const bool isolated = maskpolicy::isolated(mflags, it.blend == kNormal || it.blend == kPass, it.opacity);
             Frame f{isolated, it.opacity, it.blend, curFbo_, {}, mflags};
+            // ключ - у каждой группы, чтобы номера появлений одинаковых id не зависели от того, что взято из кэша
+            const uint64_t key = groupCacheOn ? groupKey(it.layerId) : 0;
+            if (isolated && groupCacheOn) {
+                // Пакет 27: неизменное поддерево берётся из сохранённого FBO, содержимое не перерисовывается.
+                size_t e = i;
+                for (int depth = 0; e < n; ++e) {
+                    if (scene_[e].op == kBeginGroup) ++depth;
+                    else if (scene_[e].op == kEndGroup && --depth == 0) break;
+                }
+                int layers = 0;
+                bool hasMask = false;
+                const uint64_t hash = e < n ? subtreeHash(i, e, layers, hasMask) : 0;
+                if (e < n && groupcache::eligible(true, isolated, mflags, hasMask, layers)) {
+                    GroupEntry& g = groupCache_[key];
+                    const bool canKeep = g.st.hasCache || groupKeptCount() < groupcache::maxEntries(width_, height_);
+                    const groupcache::Action act = groupcache::decide(g.st, hash, width_, height_, canKeep);
+                    if (act == groupcache::Action::Reuse) {
+                        groupcache::reused(g.st);
+                        // вложенные группы тоже «нужны» (их записи не освобождаются), номера появлений id - как при рисовании
+                        for (size_t k = i + 1; k < e; ++k) {
+                            if (scene_[k].op != kBeginGroup) continue;
+                            const auto nested = groupCache_.find(groupKey(scene_[k].layerId));
+                            if (nested != groupCache_.end()) nested->second.st.used = true;
+                        }
+                        restoreCanvasScissor();
+                        compositeFbo(g.fbo, it.opacity, it.blend);
+                        ++stats_.groupCached;
+                        i = e;
+                        continue;
+                    }
+                    f.cacheable = true;
+                    f.keep = act == groupcache::Action::DrawAndKeep;
+                    f.cacheKey = key;
+                    f.hash = hash;
+                    f.missingBefore = stats_.missing;
+                }
+            }
             if (isolated) f.fbo = acquireFbo();  // делает FBO текущей целью
             stack.push_back(f);
 
@@ -1773,7 +1930,20 @@ bool Renderer::drawFrame() {
                 }
                 bindTarget(f.parentFbo);
                 compositeFbo(f.fbo, f.opacity, f.blend);
-                releaseFbo(f.fbo);
+                bool kept = false;
+                if (f.cacheable) {
+                    const auto g = groupCache_.find(f.cacheKey);
+                    if (g != groupCache_.end()) {
+                        // недогруженные текстуры внутри - картинка неполная, не сохраняем
+                        // бюджет проверяется и здесь: несколько групп кадра могли решить «сохранить» одновременно
+                        const bool keep = f.keep && stats_.missing == f.missingBefore &&
+                                          (g->second.st.hasCache || groupKeptCount() < groupcache::maxEntries(width_, height_));
+                        if (g->second.st.hasCache) { releaseFbo(g->second.fbo); g->second.fbo = Fbo{}; }   // устаревший FBO
+                        groupcache::drawn(g->second.st, f.hash, width_, height_, keep);
+                        if (keep) { g->second.fbo = f.fbo; kept = true; }
+                    }
+                }
+                if (!kept) releaseFbo(f.fbo);
             }
 
         } else {  // kLayer
@@ -1826,6 +1996,7 @@ bool Renderer::drawFrame() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // рамка выделения может выходить за холст
     if (!exportMode_) gcFxCache();
+    if (groupCacheOn) gcGroupCache();
     if (!exportMode_) drawSelection();
     glBindVertexArray(0);
     checkGl("drawFrame");
@@ -1842,6 +2013,7 @@ int Renderer::readPixel(int x, int y) const {
 }
 
 void Renderer::release() {
+    dropGroupCache();
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
     clearShadows();

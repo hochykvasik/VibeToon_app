@@ -42,6 +42,9 @@ class VtRenderer(
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         if (disposed) return
+        // Пакет 27: контекст пересоздан посреди экспорта - его FBO и поверхность кодека недействительны.
+        deferredViewport = null
+        exportJob?.contextLost()
         // Контекст мог быть потерян: старый рендерер освобождаем и создаём заново.
         if (handle != 0L) RenderNative.destroy(handle)
         handle = RenderNative.create()
@@ -55,11 +58,21 @@ class VtRenderer(
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         if (disposed || handle == 0L) return
+        if (exportJob != null) { deferredViewport = width to height; return }   // вид экспорта не меняем
         RenderNative.setViewport(handle, width, height)
     }
 
     override fun onDrawFrame(gl: GL10?) {
         if (disposed || handle == 0L) return
+        if (exportJob != null) {
+            // Идёт экспорт: рендерер в виде экспорта, кадр редактора не рисуем (окно закрыто диалогом экспорта).
+            // Кадр сюда попадает только при пересоздании/смене размера окна - заливаем фоном редактора, без мусора.
+            android.opengl.GLES30.glBindFramebuffer(android.opengl.GLES30.GL_FRAMEBUFFER, 0)
+            android.opengl.GLES30.glDisable(android.opengl.GLES30.GL_SCISSOR_TEST)
+            android.opengl.GLES30.glClearColor(0.2f, 0.2f, 0.22f, 1f)
+            android.opengl.GLES30.glClear(android.opengl.GLES30.GL_COLOR_BUFFER_BIT)
+            return
+        }
         takeScene()?.let { lastScene = it; applyScene(it) }
         val p = frameParams()
         RenderNative.setCamera(handle, p.camera.zoom, p.camera.panX, p.camera.panY, p.camera.rotDeg, p.camera.flipX, p.camera.flipY)
@@ -73,6 +86,7 @@ class VtRenderer(
             RenderNative.frameStats(handle)?.let { st ->
                 if (st.size >= 4) { RenderMetrics.drawn = st[0]; RenderMetrics.culled = st[1]; RenderMetrics.scissoredFx = st[2]; RenderMetrics.fxPasses = st[3] }
                 if (st.size >= 5) RenderMetrics.fxCached = st[4]
+                if (st.size >= 7) RenderMetrics.groupCached = st[6]
             }
         }
         sampleReq?.let { (x, y, cb) -> sampleReq = null; cb(RenderNative.readPixel(handle, x, y)) }
@@ -83,7 +97,7 @@ class VtRenderer(
 
     /** Снимок кадра: при [scene] != null временно подставляет её, потом возвращает прежнюю. Только из GL-потока. */
     fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int = 0): ByteArray? {
-        if (handle == 0L) return null
+        if (handle == 0L || exportJob != null) return null   // посреди экспорта MP4 сцена и вид заняты им
         if (scene != null) applyScene(scene)
         RenderNative.setBackground(handle, scene?.backgroundOverride ?: background)
         val r = RenderNative.captureFrame(handle, width, height, transparent, flags)
@@ -138,42 +152,65 @@ class VtRenderer(
     /** Только из GL-потока. */
     fun dropTextures(ids: IntArray) { if (handle != 0L && ids.isNotEmpty()) RenderNative.dropTextures(handle, ids) }
 
-    /** Экспорт в MP4. Только из GL-потока. [sceneAt] строит сцену кадра готового видео. */
-    fun exportVideo(
-        spec: ExportSpec, background: Int, sceneAt: (Int) -> SceneData,
-        onProgress: (Int) -> Unit, cancel: java.util.concurrent.atomic.AtomicBoolean
-    ): Result<Unit> {
-        if (handle == 0L) return Result.failure(IllegalStateException("Рендерер не готов"))
-        val hooks = object : ExportHooks {
-            override fun begin(width: Int, height: Int) {
-                RenderNative.beginExport(handle, width, height)
-                RenderNative.setBackground(handle, background)
-                RenderNative.setSelection(handle, null)
-            }
+    // ---- пакет 27: экспорт MP4 покадровыми задачами GL-потока ----
+    private var exportJob: Mp4ExportJob? = null
+    /** Размер окна, пришедший посреди экспорта: применяется после него (вид экспорта не трогаем). */
+    private var deferredViewport: Pair<Int, Int>? = null
+    val exportRunning: Boolean get() = exportJob != null
 
-            override fun readFrame(index: Int, width: Int, height: Int): ByteArray? {
-                val s = sceneAt(index)
-                applyScene(s)
-                RenderNative.setBackground(handle, s.backgroundOverride ?: background)
-                RenderNative.setSelection(handle, null)
-                return RenderNative.captureFrame(handle, width, height, false, 0)
-            }
-
-            override fun drawFrame(index: Int) {
-                val s = sceneAt(index)
-                applyScene(s)
-                RenderNative.setBackground(handle, s.backgroundOverride ?: background)   // пакет 24: переход через цвет
-                // пока в очереди есть загрузки текстур, кадр рисуется повторно (лимит от зависания)
-                var guard = 0
-                while (RenderNative.drawFrame(handle) && guard++ < 500 && !cancel.get()) { /* ждём все текстуры */ }
-            }
-
-            override fun end() {
-                RenderNative.endExport(handle)
-                lastScene?.let { applyScene(it) }
-            }
+    /** Начинает экспорт MP4 (только из GL-потока). Дальше VtGLSurfaceView вызывает [exportStep] по задаче на кадр. */
+    fun startExport(
+        spec: ExportSpec, background: Int, sceneAt: (Int) -> SceneData, onProgress: (Int) -> Unit,
+        cancel: java.util.concurrent.atomic.AtomicBoolean, interrupted: () -> Boolean, onDone: (Result<Unit>) -> Unit
+    ) {
+        if (handle == 0L || exportJob != null) { onDone(Result.failure(IllegalStateException("Рендерер не готов"))); return }
+        exportJob = Mp4ExportJob(spec, sceneAt, onProgress, cancel, { r -> finishExport(); onDone(r) }) { job, yuv ->
+            VideoExporter.sink(spec, exportHooks(job, background, interrupted), cancel, interrupted, yuv)
         }
-        return VideoExporter.encode(spec, hooks, onProgress, cancel)
+    }
+
+    /** Одна задача экспорта. true - сразу ставить следующую. */
+    fun exportStep(paused: Boolean): Boolean = exportJob?.step(paused) ?: false
+
+    private fun finishExport() {
+        exportJob = null
+        deferredViewport?.let { (w, h) -> if (handle != 0L) RenderNative.setViewport(handle, w, h) }
+        deferredViewport = null
+    }
+
+    private fun exportHooks(job: Mp4ExportJob, background: Int, interrupted: () -> Boolean) = object : ExportHooks {
+        override fun begin(width: Int, height: Int) {
+            RenderNative.beginExport(handle, width, height)
+            RenderNative.setBackground(handle, background)
+            RenderNative.setSelection(handle, null)
+        }
+
+        override fun readFrame(index: Int, width: Int, height: Int): ByteArray? {
+            if (interrupted()) return null
+            val s = job.prefetch.get(index)
+            applyScene(s)
+            RenderNative.setBackground(handle, s.backgroundOverride ?: background)
+            RenderNative.setSelection(handle, null)
+            return RenderNative.captureFrame(handle, width, height, false, 0)
+        }
+
+        override fun drawFrame(index: Int): Boolean {
+            val s = job.prefetch.get(index)
+            applyScene(s)
+            RenderNative.setBackground(handle, s.backgroundOverride ?: background)   // пакет 24: переход через цвет
+            // пока в очереди есть загрузки текстур, кадр рисуется повторно (лимит от зависания); пауза/отмена прерывают
+            // кадр - он не уходит в кодек и будет нарисован заново
+            var guard = 0
+            while (RenderNative.drawFrame(handle) && guard++ < 500) {
+                if (job.cancel.get() || interrupted()) return false
+            }
+            return true
+        }
+
+        override fun end() {
+            RenderNative.endExport(handle)
+            lastScene?.let { applyScene(it) }
+        }
     }
 
     /** Вызывать из GL-потока (через queueEvent). */
@@ -198,14 +235,34 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     @Volatile var surfacePaused = false
         private set
 
+    // ---- пакет 27: экспорт MP4 по задаче GL-потока на кадр ----
+    private val exportLock = Any()
+    /** Цепочка задач экспорта остановлена на паузе и ждёт возврата приложения (под [exportLock]). */
+    private var exportParked = false
+    /** Идёт экспорт: кадры редактора не запрашиваются (рендерер в виде экспорта); в конце кадр редактора запрашивается сам. */
+    @Volatile private var exportActive = false
+
     override fun onPause() {
-        surfacePaused = true
+        // Флаг до super.onPause: очередная задача экспорта увидит паузу и «запаркуется», очередь GL опустеет и
+        // GLSurfaceView подтвердит паузу через один кадр, а не после всего экспорта (раньше экспорт приходилось отменять).
+        synchronized(exportLock) { surfacePaused = true }
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
-        surfacePaused = false
+        val kick: Boolean
+        synchronized(exportLock) {
+            surfacePaused = false
+            kick = exportParked
+            exportParked = false
+        }
+        if (kick) queueEvent { exportTask() }   // экспорт продолжается с того же кадра
+    }
+
+    override fun requestRender() {
+        if (exportActive) return
+        super.requestRender()
     }
 
     /** View инициализирована не сразу: загрузка проекта ждёт реального создания GL-контекста. */
@@ -400,17 +457,41 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
         queueEvent { callback(vtRenderer.hitTest(x, y)) }
     }
 
-    /** Запускает экспорт в GL-потоке; [onDone] вызывается оттуда же. */
+    /**
+     * Запускает экспорт MP4: по задаче GL-потока на кадр (пакет 27). Между кадрами поток свободен: пауза приложения
+     * останавливает экспорт на текущем кадре, возврат продолжает его. [onProgress] и [onDone] вызываются из GL-потока.
+     */
     fun exportVideo(
         spec: ExportSpec, background: Int, sceneAt: (Int) -> SceneData,
         onProgress: (Int) -> Unit, cancel: java.util.concurrent.atomic.AtomicBoolean, onDone: (Result<Unit>) -> Unit
     ) {
+        exportActive = true
         queueEvent {
-            if (surfacePaused) cancel.set(true)   // экспорт стартовал уже после сворачивания - не держим поток
-            val r = vtRenderer.exportVideo(spec, background, sceneAt, onProgress, cancel)
-            onDone(r)
-            requestRender()
+            vtRenderer.startExport(spec, background, sceneAt, onProgress, cancel, { surfacePaused }) { r ->
+                exportActive = false
+                onDone(r)
+                super.requestRender()   // кадр редактора после экспорта
+            }
+            exportTask()
         }
+    }
+
+    /** Одна задача экспорта (GL-поток); ставит следующую или паркует цепочку на паузе. */
+    private fun exportTask() {
+        val paused = synchronized(exportLock) { surfacePaused }
+        if (vtRenderer.exportStep(paused)) { queueEvent { exportTask() }; return }
+        if (!vtRenderer.exportRunning) return
+        // Задача ничего не сделала (пауза): ждём onResume; если он уже прошёл - продолжаем сразу.
+        val resumeNow = synchronized(exportLock) {
+            if (surfacePaused) { exportParked = true; false } else true
+        }
+        if (resumeNow) queueEvent { exportTask() }
+    }
+
+    /** Отмена экспорта, пока цепочка запаркована (приложение свёрнуто): одна задача освободит кодек. */
+    fun kickExport() {
+        val kick = synchronized(exportLock) { exportParked.also { exportParked = false } }
+        if (kick) queueEvent { exportTask() }
     }
 
     /** Удаляет текстуры форм символов в GL-потоке. */

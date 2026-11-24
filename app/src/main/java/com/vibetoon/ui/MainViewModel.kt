@@ -712,7 +712,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onAppPaused() {
         appBackground = true
         pause()
-        cancelExport()
+        // Пакет 27: экспорт не отменяется - MP4 паркуется на текущем кадре в GL-потоке, GIF/PNG ждут возврата.
         if (stroker != null || vecLayer >= 0) paintUp()
         viewModelScope.launch {
             kotlinx.coroutines.delay(250)
@@ -4821,7 +4821,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     for (i in 0 until frames) {
                         if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
                         val scene = withContext(Dispatchers.Default) { sceneAt(i) }
-                        val bytes = captureNow(scene, transparent, w, h) ?: error("Не удалось снять кадр $i")
+                        val bytes = captureExportFrame(scene, transparent, w, h, cancel) ?: error("Не удалось снять кадр $i")
                         withContext(Dispatchers.Default) { enc.addFrame(captureArgb(bytes, w, h)) }
                         _export.value = ExportUi.Running(i + 1, frames)
                     }
@@ -4861,7 +4861,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         for (i in 0 until frames) {
                             if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
                             val scene = withContext(Dispatchers.Default) { sceneAt(i) }
-                            val bytes = captureNow(scene, transparent, w, h) ?: error("Не удалось снять кадр $i")
+                            val bytes = captureExportFrame(scene, transparent, w, h, cancel) ?: error("Не удалось снять кадр $i")
                             withContext(Dispatchers.Default) {
                                 val bmp = android.graphics.Bitmap.createBitmap(captureArgb(bytes, w, h), w, h, android.graphics.Bitmap.Config.ARGB_8888)
                                 try {
@@ -10614,7 +10614,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         fun f1(v: Float) = String.format(java.util.Locale.US, "%.1f", v)
         // Строка-шаблон с {}: панель переводится через L() как остальные сообщения.
         _perfHud.value = "Кадр (UI): ср ${f1(frameTimer.average())} / p95 ${f1(frameTimer.percentile(0.95f))} мс · GL: ${f1(drawTimer.average())} мс · " +
-            "медленных ${(frameTimer.overBudget(budget) * 100).toInt()}% · слоёв ${m.drawn}, вне экрана ${m.culled} · FX в рамке ${m.scissoredFx}, проходов ${m.fxPasses}, из кэша ${m.fxCached}"
+            "медленных ${(frameTimer.overBudget(budget) * 100).toInt()}% · слоёв ${m.drawn}, вне экрана ${m.culled} · FX в рамке ${m.scissoredFx}, проходов ${m.fxPasses}, из кэша ${m.fxCached} · групп из кэша ${m.groupCached}"
     }
 
     private val videoFrames = com.vibetoon.data.VideoFrames { RenderHost.view?.requestRender() }
@@ -11032,7 +11032,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return src
     }
 
-    fun cancelExport() { exportCancel.set(true) }
+    fun cancelExport() {
+        exportCancel.set(true)
+        RenderHost.view?.kickExport()   // экспорт MP4 мог быть запаркован на паузе: задача отмены освободит кодек
+    }
+
+    /**
+     * Пакет 27: кадр GIF/PNG-экспорта. Пока приложение свёрнуто, снимок не делается (поверхность GL снята) - ждём
+     * возврата и снимаем тот же кадр; null при активном приложении - настоящая ошибка снимка.
+     */
+    private suspend fun captureExportFrame(scene: SceneData?, transparent: Boolean, w: Int, h: Int, cancel: java.util.concurrent.atomic.AtomicBoolean): ByteArray? {
+        while (true) {
+            while (appBackground) {
+                if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
+                kotlinx.coroutines.delay(200)
+            }
+            if (cancel.get()) throw java.util.concurrent.CancellationException("cancel")
+            val bytes = captureNow(scene, transparent, w, h)
+            if (bytes != null || !appBackground) return bytes
+        }
+    }
     fun dismissExport() { if (_export.value !is ExportUi.Running) _export.value = ExportUi.Idle }
 
     private fun safeName(n: String) = n.replace(Regex("""[^\p{L}\p{N}_-]+"""), "_").trim('_').ifEmpty { "video" }.take(40)
