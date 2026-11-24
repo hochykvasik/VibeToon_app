@@ -19,7 +19,6 @@ private const val TAG = "VT/Project"
  * (во временный файл, затем переименование), поэтому обрыв записи не портит проект.
  */
 class ProjectRepository(context: Context) {
-    private val appContext: Context = context.applicationContext
     private val root = File(context.filesDir, "projects").apply { mkdirs() }
 
     private fun dir(id: String) = File(root, id)
