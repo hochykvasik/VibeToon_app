@@ -481,6 +481,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             psdRef = data.psd
             canvasW = data.meta.width
             canvasH = data.meta.height
+            restoreGuides()
             base.putAll(data.base)
             deletedPsd = data.deleted
             _clips.value = data.clips
@@ -5447,7 +5448,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (id >= limit) tr else com.vibetoon.domain.anim.AnimationTrack(tr.layerId, tr.keys.map { k -> k.copy(dx = m.dx(k.dx), dy = m.dy(k.dy)) })
         })
         _bones.value = _bones.value.map { b -> b.copy(hx = m.x(b.hx), hy = m.y(b.hy), tx = m.x(b.tx), ty = m.y(b.ty)) }
+        _guides.value = com.vibetoon.domain.paint.DrawingGuides.rescale(_guides.value, canvasW, canvasH, newW, newH)
         canvasW = newW; canvasH = newH
+        saveGuides()
         meta = meta?.copy(width = newW, height = newH)
         if (psdRef != null) fit = ProjectMath.fit(psdW, psdH, canvasW, canvasH)
         resetCamera()
@@ -6180,6 +6183,66 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     private fun clearRulerGesture() { _rulerGuide.value = emptyList(); rulerQuad = null; rulerCamera = null; rulerParams = null }
 
+    // ---- Sprint 33: направляющие рисования (изометрия, перспектива 1/2/3, эллипс) и симметрия ----
+    private val _guides = MutableStateFlow(com.vibetoon.domain.paint.DrawingGuides.State())
+    /** Направляющие в координатах холста: только редактор, в экспорт и проект не попадают. */
+    val guides: StateFlow<com.vibetoon.domain.paint.DrawingGuides.State> = _guides.asStateFlow()
+    private val _guideEdit = MutableStateFlow(false)
+    /** «Править направляющие»: касание ручки тянет точку схода/центр/радиус вместо мазка. */
+    val guideEdit: StateFlow<Boolean> = _guideEdit.asStateFlow()
+    private var guideStroke: com.vibetoon.domain.paint.DrawingGuides.Stroke? = null
+    private var mirrorStrokers: List<DabStroker> = emptyList()
+    private var guideDrag: com.vibetoon.domain.paint.DrawingGuides.Handle? = null
+
+    private fun guidePrefs() = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+    private fun saveGuides() {
+        runCatching { guidePrefs().edit().putString("drawing_guides", com.vibetoon.domain.paint.DrawingGuides.encode(_guides.value, canvasW, canvasH)).apply() }
+    }
+    /** При открытии проекта: направляющие из настроек, пропорционально перенесённые на текущий холст. */
+    private fun restoreGuides() {
+        val decoded = runCatching { com.vibetoon.domain.paint.DrawingGuides.decode(guidePrefs().getString("drawing_guides", null)) }.getOrNull()
+        _guides.value = if (decoded == null) com.vibetoon.domain.paint.DrawingGuides.State()
+            else com.vibetoon.domain.paint.DrawingGuides.rescale(decoded.state, decoded.width, decoded.height, canvasW, canvasH)
+        _guideEdit.value = false
+    }
+    private fun guidesChanged(next: com.vibetoon.domain.paint.DrawingGuides.State) {
+        if (stroker != null) paintCancel()
+        guideDrag = null
+        _guides.value = next
+        if (!next.active) _guideEdit.value = false
+        saveGuides()
+    }
+    fun setGuideKind(kind: com.vibetoon.domain.paint.DrawingGuides.Kind) =
+        guidesChanged(com.vibetoon.domain.paint.DrawingGuides.withKind(_guides.value, kind, canvasW, canvasH))
+    fun setSymmetry(symmetry: com.vibetoon.domain.paint.DrawingGuides.Symmetry) =
+        guidesChanged(com.vibetoon.domain.paint.DrawingGuides.withSymmetry(_guides.value, symmetry, canvasW, canvasH))
+    fun setRadialCount(count: Int) {
+        if (count == _guides.value.radial) return
+        guidesChanged(com.vibetoon.domain.paint.DrawingGuides.withRadial(_guides.value, count))
+    }
+    fun toggleGuideSnap() = guidesChanged(_guides.value.copy(snap = !_guides.value.snap))
+    fun toggleGuideEdit() { _guideEdit.value = !_guideEdit.value && _guides.value.active }
+    /** Геометрия по умолчанию для текущего вида и центр симметрии в центре холста. */
+    fun resetGuides() {
+        val g = _guides.value
+        val kind = com.vibetoon.domain.paint.DrawingGuides.withKind(g, g.kind, canvasW, canvasH)
+        val sym = if (g.symmetry == com.vibetoon.domain.paint.DrawingGuides.Symmetry.OFF) kind
+            else com.vibetoon.domain.paint.DrawingGuides.withSymmetry(kind.copy(symmetry = com.vibetoon.domain.paint.DrawingGuides.Symmetry.OFF), g.symmetry, canvasW, canvasH)
+        guidesChanged(sym)
+    }
+
+    /** Точки штриха с направляющими (холст) -> штампы исходного и зеркальных штрихов в пикселях слоя. */
+    private fun emitGuided(points: List<List<com.vibetoon.domain.paint.DrawingGuides.Point>>, q: FloatArray, size: IntArray, pressure: Float) {
+        val main = stroker ?: return
+        points.forEachIndexed { i, list ->
+            val st = if (i == 0) main else mirrorStrokers.getOrNull(i - 1)
+            if (st != null) for (pt in list) {
+                val u = unitOf(q, pt.x to pt.y) ?: continue
+                sendDabs(st.add(u.first * size[0], u.second * size[1], pressure))
+            }
+        }
+    }
+
     private var stroker: DabStroker? = null
     private var strokeLayer = -1
     private var strokeSize = intArrayOf(0, 0)
@@ -6408,6 +6471,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun paintDown(sx: Float, sy: Float, pressure: Float): Boolean {
         swallowTap = false
         if (_paintTool.value == null || _playing.value) return false
+        guideDrag = null
+        if (_guideEdit.value && _guides.value.active) {
+            val c0 = toCanvas(sx, sy)
+            val c1 = toCanvas(sx + 28f * getApplication<Application>().resources.displayMetrics.density, sy)
+            val radius = kotlin.math.hypot(c1.first - c0.first, c1.second - c0.second)
+            val handle = com.vibetoon.domain.paint.DrawingGuides.hit(_guides.value, com.vibetoon.domain.paint.DrawingGuides.Point(c0.first, c0.second), radius)
+            if (handle != null) { guideDrag = handle; swallowTap = true; return true }
+        }
         selectedVectorId()?.let { vid ->
             if (_gradientMode.value || _rulerMode.value != com.vibetoon.domain.paint.RulerPath.Mode.OFF) {
                 _state.value = UiState.Message("Направляющие и градиент работают только на растровом слое"); return false
@@ -6439,12 +6510,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         strokeSize = size
         clearShapeAssist()
         clearRulerGesture()
+        guideStroke = null; mirrorStrokers = emptyList()
+        val guideState = _guides.value
+        val guided = !_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF &&
+            (guideState.snapping || guideState.symmetry != com.vibetoon.domain.paint.DrawingGuides.Symmetry.OFF)
         if (_gradientMode.value || _rulerMode.value != com.vibetoon.domain.paint.RulerPath.Mode.OFF) {
             rulerQuad = q.copyOf(); rulerCamera = camera; rulerViewW = viewW; rulerViewH = viewH
             rulerParams = params; rulerPressure = pressure
             _rulerGuide.value = listOf(sx, sy, sx, sy)
         }
-        if (!_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF && _paintTool.value == PaintTool.BRUSH && getApplication<Application>()
+        if (!guided && !_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF && _paintTool.value == PaintTool.BRUSH && getApplication<Application>()
                 .getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("shape_assist", false)) {
             assistPoints = arrayListOf(com.vibetoon.domain.paint.ShapeAssist.Point(sx, sy, pressure))
             assistAnchorX = sx; assistAnchorY = sy; assistLastMove = SystemClock.uptimeMillis()
@@ -6458,7 +6533,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ((c shr 16) and 0xFF) / 255f, ((c shr 8) and 0xFF) / 255f, (c and 0xFF) / 255f, params.shape.gl, params.hardness,
             params.grain.gl, params.grainMode.gl, params.grainScale, params.grainContrast, params.roundness, params.curve, GrainMath.texture(params.grain)
         ) { }
-        if (!_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF)
+        if (guided) {
+            // Sprint 33: притяжение к направляющей и зеркальные штрихи в одной операции Undo
+            val density = getApplication<Application>().resources.displayMetrics.density
+            val c0 = toCanvas(sx, sy); val lockAt = toCanvas(sx + 12f * density, sy); val stepAt = toCanvas(sx + 2f, sy)
+            val gs = com.vibetoon.domain.paint.DrawingGuides.Stroke(guideState,
+                kotlin.math.hypot(lockAt.first - c0.first, lockAt.second - c0.second),
+                kotlin.math.hypot(stepAt.first - c0.first, stepAt.second - c0.second))
+            guideStroke = gs
+            mirrorStrokers = List(gs.count - 1) { DabStroker(params) }
+            emitGuided(gs.begin(com.vibetoon.domain.paint.DrawingGuides.Point(c0.first, c0.second)), q, size, pressure)
+        } else if (!_gradientMode.value && _rulerMode.value == com.vibetoon.domain.paint.RulerPath.Mode.OFF)
             sendDabs(st.begin(p.first * size[0], p.second * size[1], pressure))
         updatePaintCursor(sx, sy, q, params)
         swallowTap = true
@@ -6467,6 +6552,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Следующая (в том числе историческая) точка штриха. */
     fun paintMove(sx: Float, sy: Float, pressure: Float) {
+        guideDrag?.let { handle ->
+            val c = toCanvas(sx, sy)
+            _guides.value = com.vibetoon.domain.paint.DrawingGuides.moveHandle(_guides.value, handle, com.vibetoon.domain.paint.DrawingGuides.Point(c.first, c.second))
+            return
+        }
         if (vecLayer >= 0) { vectorMove(sx, sy); return }
         val st = stroker ?: return
         val q = scene?.selectionQuads?.get(strokeLayer) ?: return
@@ -6476,6 +6566,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (g.size == 4) _rulerGuide.value = listOf(g[0], g[1], sx, sy)
             return
         }
+        guideStroke?.let { gs ->
+            val c = toCanvas(sx, sy)
+            emitGuided(gs.move(com.vibetoon.domain.paint.DrawingGuides.Point(c.first, c.second)), q, strokeSize, pressure)
+            updatePaintCursor(sx, sy, q, paintParams())
+            return
+        }
         recordShapePoint(sx, sy, pressure)
         sendDabs(st.add(p.first * strokeSize[0], p.second * strokeSize[1], pressure))
         updatePaintCursor(sx, sy, q, paintParams())
@@ -6483,6 +6579,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Конец штриха: слой запекается, "до" и "после" уходят в Undo (сжатие в фоне), слой помечается на сохранение. */
     fun paintUp() {
+        if (guideDrag != null) { guideDrag = null; saveGuides(); return }
         if (vecLayer >= 0) { vectorUp(); return }
         val original = stroker ?: return
         val layer = strokeLayer
@@ -6523,6 +6620,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val p = point!!; sendDabs(st.add(p.first * strokeSize[0], p.second * strokeSize[1], rulerPressure))
             }
             sendDabs(st.end())
+            // Sprint 33: симметрия повторяет и линию/круг линейки
+            val symmetry = _guides.value
+            if (symmetry.symmetry != com.vibetoon.domain.paint.DrawingGuides.Symmetry.OFF && path != null) {
+                val images = path.map { point -> val c = toCanvas(point.x, point.y); com.vibetoon.domain.paint.DrawingGuides.mirrorImages(symmetry, com.vibetoon.domain.paint.DrawingGuides.Point(c.first, c.second)) }
+                for (k in 1 until com.vibetoon.domain.paint.DrawingGuides.mirrorCount(symmetry)) {
+                    val mirror = DabStroker(params)
+                    for (image in images) {
+                        val pt = image.getOrNull(k) ?: continue
+                        val u = unitOf(q, pt.x to pt.y) ?: continue
+                        sendDabs(mirror.add(u.first * strokeSize[0], u.second * strokeSize[1], rulerPressure))
+                    }
+                    sendDabs(mirror.end())
+                }
+            }
             clearRulerGesture(); clearShapeAssist(); stroker = null; _paintCursor.value = null
             val cellAtStroke = cellShown[layer]
             view!!.paintEndSoft(layer) { bytes ->
@@ -6542,6 +6653,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _paintCursor.value = null
         val cellAtStroke = cellShown[layer]
         sendDabs(st.end())
+        for (mirror in mirrorStrokers) sendDabs(mirror.end())
+        mirrorStrokers = emptyList(); guideStroke = null
         RenderHost.view?.paintEndSoft(layer) { bytes ->
             if (bytes != null) viewModelScope.launch(Dispatchers.Default) {
                 val op = PaintOp.parse(layer, bytes) ?: return@launch
@@ -6555,9 +6668,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Штрих прерван (второй палец, смена инструмента): слой возвращается к состоянию до штриха. */
     fun paintCancel() {
+        if (guideDrag != null) { guideDrag = null; saveGuides(); return }
         if (vecLayer >= 0) { vectorCancel(); return }
         if (stroker == null) return
         stroker = null
+        guideStroke = null; mirrorStrokers = emptyList()
         clearShapeAssist()
         clearRulerGesture()
         _paintCursor.value = null
@@ -7055,6 +7170,96 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setSmudgeParams(f: (SmudgeParams) -> SmudgeParams) { _smudgeParams.value = f(_smudgeParams.value) }
     fun setSelMode(m: SelMode) { if (m != _selMode.value) cancelPendingLasso(); _selMode.value = m }
 
+    // ---- Sprint 33: сочетание выделений, «Выделить всё», расширение/сужение, рамка трансформации ----
+    private val _selCombine = MutableStateFlow(com.vibetoon.domain.raster.SelectionOps.Combine.REPLACE)
+    /** Как новый контур сочетается с текущим выделением (заменить, добавить, вычесть, пересечь). */
+    val selCombine: StateFlow<com.vibetoon.domain.raster.SelectionOps.Combine> = _selCombine.asStateFlow()
+    fun setSelCombine(c: com.vibetoon.domain.raster.SelectionOps.Combine) { _selCombine.value = c }
+
+    private var selBox: com.vibetoon.domain.raster.TransformBox.Box? = null
+    private var selBoxStart: com.vibetoon.domain.raster.TransformBox.Box? = null
+    private var selBoxFrom: com.vibetoon.domain.raster.TransformBox.P? = null
+    private var selBoxHandle: com.vibetoon.domain.raster.TransformBox.Handle? = null
+    private val _selTransform = MutableStateFlow<FloatArray?>(null)
+    /** Рамка трансформации на экране: 4 угла (по часовой от левого верхнего) и опорная точка - 10 чисел; null - рамки нет. */
+    val selTransform: StateFlow<FloatArray?> = _selTransform.asStateFlow()
+    private val _selTransformMode = MutableStateFlow(com.vibetoon.domain.raster.TransformBox.Mode.FREE)
+    val selTransformMode: StateFlow<com.vibetoon.domain.raster.TransformBox.Mode> = _selTransformMode.asStateFlow()
+    private val _selTransformProportional = MutableStateFlow(false)
+    val selTransformProportional: StateFlow<Boolean> = _selTransformProportional.asStateFlow()
+
+    fun beginSelectionTransform() {
+        val s = sel ?: return
+        if (_pendingLasso.value || _selectionExtractBusy.value || _playing.value) return
+        val b = com.vibetoon.domain.raster.RasterMath.bounds(s.mask, s.w, s.h) ?: return
+        selBox = com.vibetoon.domain.raster.TransformBox.initial(b); selBoxStart = null; selBoxHandle = null
+        _state.value = UiState.Message("Трансформ: углы и стороны меняют размер, наклон или искажение; внутри рамки - перенос, снаружи - поворот; «Применить» переносит пиксели")
+        refreshSelOverlay()
+    }
+    fun cancelSelectionTransform() {
+        selBox = null; selBoxStart = null; selBoxFrom = null; selBoxHandle = null
+        _selTransform.value = null
+        if (rasterMode == 7) rasterMode = 0
+    }
+    fun setSelTransformMode(m: com.vibetoon.domain.raster.TransformBox.Mode) { _selTransformMode.value = m }
+    fun toggleSelTransformProportional() { _selTransformProportional.value = !_selTransformProportional.value }
+    /** Опорная точка по сетке 3x3 рамки (0..2 по каждой оси). */
+    fun setSelTransformAnchor(ax: Int, ay: Int) {
+        val b = selBox ?: return
+        selBox = com.vibetoon.domain.raster.TransformBox.withAnchor(b, ax, ay); refreshSelOverlay()
+    }
+    /** Числовой ввод поверх текущей рамки относительно опоры. */
+    fun applySelTransformNumeric(n: com.vibetoon.domain.raster.TransformBox.Numeric) {
+        val b = selBox ?: return
+        val r = com.vibetoon.domain.raster.TransformBox.numeric(b, n)
+        if (r == null || !com.vibetoon.domain.raster.TransformBox.valid(r)) { _state.value = UiState.Message("Недопустимые значения трансформации"); return }
+        selBox = r; refreshSelOverlay()
+    }
+    /** Переносит пиксели в рамку одной операцией Undo; при ошибке рамка остаётся для правки. */
+    fun applySelectionTransform() {
+        val s = sel ?: return
+        val b = selBox ?: return
+        if (_selectionExtractBusy.value) { _state.value = UiState.Message("Подождите завершения операции"); return }
+        if (!com.vibetoon.domain.raster.TransformBox.valid(b)) { _state.value = UiState.Message("Рамка вырождена, перекручена или слишком мала/велика: исправьте её или отмените"); return }
+        if (com.vibetoon.domain.raster.TransformBox.isIdentity(b)) { cancelSelectionTransform(); return }
+        moveSelectionExpanded(s, 0, 0, warp = b)
+    }
+
+    private fun selBoxMove(sx: Float, sy: Float) {
+        val s = sel ?: return
+        val start = selBoxStart ?: return; val from = selBoxFrom ?: return; val handle = selBoxHandle ?: return
+        val lp = layerPoint(s.id, sx, sy) ?: return
+        selBox = com.vibetoon.domain.raster.TransformBox.drag(start, handle, _selTransformMode.value, from, com.vibetoon.domain.raster.TransformBox.P(lp.first.toDouble(), lp.second.toDouble()), _selTransformProportional.value)
+        refreshSelOverlay()
+    }
+
+    /** Выделяет весь слой-картинку. */
+    fun selectAllPixels() {
+        cancelPendingLasso()
+        val id = paintTargetId() ?: run { _state.value = UiState.Message("Инструмент работает на слое-картинке: выберите его или создайте «Новый слой»"); return }
+        val size = paintSizes[id] ?: run { requestPaintSize(id); _state.value = UiState.Message("Слой готовится, повторите"); return }
+        setSelection(Sel(id, size[0], size[1], com.vibetoon.domain.raster.SelectionOps.all(size[0], size[1])))
+    }
+
+    /** Расширяет (px > 0) или сужает (px < 0) выделение. */
+    fun growSelection(px: Int) {
+        val s = sel ?: return
+        if (_pendingLasso.value || selBox != null || _selectionExtractBusy.value) return
+        viewModelScope.launch {
+            val m = withContext(Dispatchers.Default) { com.vibetoon.domain.raster.SelectionOps.grow(s.mask, s.w, s.h, px) } ?: return@launch
+            if (sel !== s) return@launch
+            if (com.vibetoon.domain.raster.RasterMath.count(m) == 0) clearSelection() else setSelection(Sel(s.id, s.w, s.h, m))
+        }
+    }
+
+    /** Новая маска с учётом режима сочетания (только для того же слоя и размера). */
+    private suspend fun applyCombined(id: Int, w: Int, h: Int, mask: ByteArray) {
+        val op = _selCombine.value
+        val old = sel?.takeIf { it.id == id && it.w == w && it.h == h }?.mask
+        val merged = if (op == com.vibetoon.domain.raster.SelectionOps.Combine.REPLACE) mask else withContext(Dispatchers.Default) { com.vibetoon.domain.raster.SelectionOps.combine(old, mask, op) }
+        if (com.vibetoon.domain.raster.RasterMath.count(merged) == 0) clearSelection() else setSelection(Sel(id, w, h, merged))
+    }
+
     fun rasterToolActive(): Boolean = _rasterTool.value != null && !_playing.value
 
     fun setRasterTool(t: RasterTool?) {
@@ -7146,17 +7351,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun rasterMove(sx: Float, sy: Float) {
         if (rasterMode == 5 && kotlin.math.hypot(sx - closeTapX, sy - closeTapY) > 12f * getApplication<Application>().resources.displayMetrics.density) closeTapMoved = true
-        when (rasterMode) { 1 -> selDrawMove(sx, sy); 2 -> selMoveMove(sx, sy); 3 -> pxSmudgeMove(sx, sy); 4 -> vecNodeMove(sx, sy); 6 -> penDragMove(sx, sy) }
+        when (rasterMode) { 1 -> selDrawMove(sx, sy); 2 -> selMoveMove(sx, sy); 3 -> pxSmudgeMove(sx, sy); 4 -> vecNodeMove(sx, sy); 6 -> penDragMove(sx, sy); 7 -> selBoxMove(sx, sy) }
     }
 
     fun rasterUp() {
-        when (rasterMode) { 1 -> selDrawUp(); 2 -> selMoveUp(); 3 -> pxSmudgeUp(); 4 -> vecNodeUp(); 5 -> if (!closeTapMoved) finishPendingLasso() }
+        when (rasterMode) { 1 -> selDrawUp(); 2 -> selMoveUp(); 3 -> pxSmudgeUp(); 4 -> vecNodeUp(); 5 -> if (!closeTapMoved) finishPendingLasso(); 7 -> { selBoxStart = null; selBoxHandle = null } }
         rasterMode = 0
     }
 
     /** Жест прерван вторым пальцем (камера). */
     fun rasterCancel() {
-        when (rasterMode) { 1 -> { _toolDrag.value = null; selPts.clear(); selLayerPts.clear() }; 2 -> { selShiftX = 0f; selShiftY = 0f; refreshSelOverlay() }; 3 -> pxSmudgeUp(); 4 -> vecNodeCancel(); 6 -> penDragCancel() }
+        when (rasterMode) { 1 -> { _toolDrag.value = null; selPts.clear(); selLayerPts.clear() }; 2 -> { selShiftX = 0f; selShiftY = 0f; refreshSelOverlay() }; 3 -> pxSmudgeUp(); 4 -> vecNodeCancel(); 6 -> penDragCancel(); 7 -> { selBoxStart?.let { selBox = it }; selBoxStart = null; selBoxHandle = null; refreshSelOverlay() } }
         rasterMode = 0
         cancelPendingLasso()
     }
@@ -7230,6 +7435,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun selDown(id: Int, sx: Float, sy: Float): Boolean {
         val lp0 = layerPoint(id, sx, sy) ?: return false
+        val box = selBox
+        if (box != null) {
+            // Sprint 33: рамка трансформации забирает касание (угол, сторона, опора, перенос или поворот)
+            val s0 = sel
+            if (s0 == null || s0.id != id || _selectionExtractBusy.value) return true
+            val lp1 = layerPoint(id, sx + 24f * getApplication<Application>().resources.displayMetrics.density, sy)
+            val radius = if (lp1 == null) 12.0 else kotlin.math.hypot(lp1.first - lp0.first, lp1.second - lp0.second).toDouble().coerceAtLeast(2.0)
+            val from = com.vibetoon.domain.raster.TransformBox.P(lp0.first.toDouble(), lp0.second.toDouble())
+            selBoxHandle = com.vibetoon.domain.raster.TransformBox.hit(box, from, radius); selBoxStart = box; selBoxFrom = from
+            rasterMode = 7
+            return true
+        }
         if (_pendingLasso.value) {
             if (!pendingLassoValid(id)) cancelPendingLasso()
             else {
@@ -7247,7 +7464,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         val s = sel
-        if (s != null && s.id == id) {
+        if (s != null && s.id == id && _selCombine.value == com.vibetoon.domain.raster.SelectionOps.Combine.REPLACE) {
             val x = lp0.first.toInt(); val y = lp0.second.toInt()
             if (x in 0 until s.w && y in 0 until s.h && s.mask[y * s.w + x].toInt() != 0) {
                 // тянем внутри выделения: переносим его содержимое
@@ -7262,7 +7479,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val mask = withContext(Dispatchers.Default) {
                     com.vibetoon.domain.raster.RasterMath.wandMask(lp.bytes, 8, lp.w, lp.h, lp0.first.toInt(), lp0.second.toInt(), thr)
                 }
-                setSelection(Sel(id, lp.w, lp.h, mask))
+                applyCombined(id, lp.w, lp.h, mask)
             }
             return true
         }
@@ -7299,7 +7516,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // касание без протяжки вне выделения снимает его
         if (mode == SelMode.LASSO) {
             when (com.vibetoon.domain.raster.LassoClosure.classify(screen, manualLassoClose(), lassoRadius())) {
-                com.vibetoon.domain.raster.LassoClosure.Result.TAP -> { clearSelection(); return }
+                com.vibetoon.domain.raster.LassoClosure.Result.TAP -> { tapWithoutContour(); return }
                 com.vibetoon.domain.raster.LassoClosure.Result.OPEN -> {
                     if (selPts.size >= 20_000) { cancelPendingLasso(); selPts.clear(); selLayerPts.clear(); _toolDrag.value = null; _state.value = UiState.Message("Контур слишком длинный; начните заново"); return }
                     _pendingLasso.value = true
@@ -7313,7 +7530,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         } else {
             val moved = screen.size >= 4 && kotlin.math.hypot(screen[screen.size - 2] - screen[0], screen[screen.size - 1] - screen[1]) > 6f
-            if (!moved) { clearSelection(); return }
+            if (!moved) { tapWithoutContour(); return }
         }
         _pendingLasso.value = false; pendingQuad = null
         selPts.clear(); selLayerPts.clear(); _toolDrag.value = null
@@ -7330,8 +7547,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     else -> com.vibetoon.domain.raster.RasterMath.polygonMask(size[0], size[1], pts)
                 }
             }
-            if (com.vibetoon.domain.raster.RasterMath.count(mask) == 0) clearSelection() else setSelection(Sel(id, size[0], size[1], mask))
+            applyCombined(id, size[0], size[1], mask)
         }
+    }
+
+    /** Касание без контура: в режиме «Новое» снимает выделение, в остальных режимах ничего не меняет. */
+    private fun tapWithoutContour() {
+        if (_selCombine.value == com.vibetoon.domain.raster.SelectionOps.Combine.REPLACE) clearSelection()
+        else { selPts.clear(); selLayerPts.clear(); _toolDrag.value = null }
     }
 
     private fun selMoveMove(sx: Float, sy: Float) {
@@ -7442,7 +7665,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun moveSelectionExpanded(s: Sel, dx: Int, dy: Int, selectionOperation: com.vibetoon.domain.raster.SelectionMirror.Operation? = null,
-                                      gesture: com.vibetoon.domain.raster.FreeSelectionTransform.Gesture? = null) {
+                                      gesture: com.vibetoon.domain.raster.FreeSelectionTransform.Gesture? = null,
+                                      warp: com.vibetoon.domain.raster.TransformBox.Box? = null) {
         if (_selectionExtractBusy.value || _playing.value || _pendingLasso.value) return
         val pid = projectId ?: return
         val view = RenderHost.view ?: return
@@ -7461,10 +7685,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(kotlinx.coroutines.NonCancellable) {
                     rasterTransactionGate.run {
                         val budget = com.vibetoon.data.RasterMemory.available(getApplication())
-                        val withinSize = selectionOperation != null || gesture != null || withContext(Dispatchers.Default) {
+                        val withinSize = selectionOperation != null || gesture != null || warp != null || withContext(Dispatchers.Default) {
                             com.vibetoon.domain.raster.ExpandedSelectionMove.plan(s.w, s.h, s.mask, dx, dy, Long.MAX_VALUE) != null
                         }
-                        val plan = if (selectionOperation == null && gesture == null && withinSize) withContext(Dispatchers.Default) {
+                        val plan = if (selectionOperation == null && gesture == null && warp == null && withinSize) withContext(Dispatchers.Default) {
                             com.vibetoon.domain.raster.ExpandedSelectionMove.plan(s.w, s.h, s.mask, dx, dy, budget)
                         } else null
                         // Компактный путь может поместиться и тогда, когда обычный план слишком затратен.
@@ -7480,7 +7704,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (lp.w != s.w || lp.h != s.h) return@run
                         val change = try {
                             withContext(Dispatchers.Default) {
-                                if (gesture != null) com.vibetoon.domain.raster.FreeSelectionTransform.prepare(src, lp.bytes, 8, lp.w, lp.h, s.mask, gesture, budget)
+                                if (warp != null) com.vibetoon.domain.raster.SelectionWarp.prepare(src, lp.bytes, 8, lp.w, lp.h, s.mask, warp, budget)
+                                else if (gesture != null) com.vibetoon.domain.raster.FreeSelectionTransform.prepare(src, lp.bytes, 8, lp.w, lp.h, s.mask, gesture, budget)
                                 else if (selectionOperation != null) com.vibetoon.domain.raster.SelectionMirror.prepare(src, lp.bytes, 8, lp.w, lp.h, s.mask, selectionOperation, budget)
                                 else if (plan != null) com.vibetoon.domain.raster.ExpandedLayerSnapshot.prepare(src, lp.bytes, 8, lp.w, lp.h, s.mask, dx, dy, budget)
                                 else com.vibetoon.domain.raster.ExpandedLayerSnapshot.prepareTrimmed(src, lp.bytes, 8, lp.w, lp.h, s.mask, dx, dy, budget)
@@ -7557,6 +7782,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var lastMoveSy = 0f
 
     private fun setSelection(s: Sel?) {
+        cancelSelectionTransform()
         sel = s
         _hasSel.value = s != null
         if (s == null) { _selOverlay.value = SelOverlay(); return }
@@ -7591,8 +7817,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun refreshSelOverlay() {
         val s = sel
         val bmp = selBmp
-        if (s == null || bmp == null || _rasterTool.value != RasterTool.SELECT) { if (_selOverlay.value.bmp != null) _selOverlay.value = SelOverlay(); return }
+        if (s == null || bmp == null || _rasterTool.value != RasterTool.SELECT) { if (_selOverlay.value.bmp != null) _selOverlay.value = SelOverlay(); _selTransform.value = null; return }
         val q = scene?.selectionQuads?.get(s.id) ?: run { clearSelection(); return }   // слой удалён - выделение снимается
+        val box = selBox
+        _selTransform.value = if (box == null) null else FloatArray(10).also { out ->
+            (box.corners + box.pivot).forEachIndexed { i, pt ->
+                val u = (pt.x / s.w).toFloat(); val v = (pt.y / s.h).toFloat()
+                val cx = q[0] + u * (q[2] - q[0]) + v * (q[6] - q[0]); val cy = q[1] + u * (q[3] - q[1]) + v * (q[7] - q[1])
+                val sc = toScreen(cx, cy); out[i * 2] = sc.first; out[i * 2 + 1] = sc.second
+            }
+        }
         val c = floatArrayOf(
             toScreen(q[0], q[1]).first + selShiftX, toScreen(q[0], q[1]).second + selShiftY,
             toScreen(q[2], q[3]).first + selShiftX, toScreen(q[2], q[3]).second + selShiftY,
@@ -7601,7 +7835,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _selOverlay.value = SelOverlay(bmp, c)
     }
 
-    fun clearSelection() { cancelPendingLasso(); sel = null; selBmp = null; _hasSel.value = false; _selOverlay.value = SelOverlay(); _toolDrag.value = null }
+    fun clearSelection() { cancelPendingLasso(); cancelSelectionTransform(); sel = null; selBmp = null; _hasSel.value = false; _selOverlay.value = SelOverlay(); _toolDrag.value = null }
 
     fun invertSelection() {
         val s = sel ?: return

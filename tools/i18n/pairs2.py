@@ -1365,4 +1365,55 @@ GIF показывает не больше {} fps: кадры проекта п�
 HEVC: файл примерно вдвое меньше при том же качестве, но старые телефоны и Windows без расширения его могут не открыть|HEVC: the file is about half the size at the same quality, but old phones and Windows without the extension may not open it
 Своя частота (1-120 fps)|Custom frame rate (1-120 fps)
 Экран показывает до {} кадров в секунду: при просмотре часть кадров пропускается, в экспорт попадают все|The screen shows up to {} frames per second: some frames are skipped during playback, export keeps all of them
+Трансформ: углы и стороны меняют размер, наклон или искажение; внутри рамки - перенос, снаружи - поворот; «Применить» переносит пиксели|Transform: corners and sides change size, skew or distortion; drag inside the box to move, outside to rotate; Apply moves the pixels
+Недопустимые значения трансформации|Invalid transform values
+Рамка вырождена, перекручена или слишком мала/велика: исправьте её или отмените|The box is degenerate, twisted or too small/large: fix it or cancel
+Свободно|Free
+Наклон|Skew
+Пропорционально|Proportional
+Центр|Center
+Левый верхний угол|Top-left corner
+Верхний край|Top edge
+Правый верхний угол|Top-right corner
+Левый край|Left edge
+Правый край|Right edge
+Левый нижний угол|Bottom-left corner
+Нижний край|Bottom edge
+Правый нижний угол|Bottom-right corner
+Числа…|Numbers…
+Новое выделение|New selection
+Добавить к выделению|Add to selection
+Вычесть из выделения|Subtract from selection
+Пересечь с выделением|Intersect with selection
+Выделить всё|Select all
+Расширить на 2 px|Expand by 2 px
+Сузить на 2 px|Contract by 2 px
+Направляющие|Guides
+Без направляющих|No guides
+Изометрическая сетка|Isometric grid
+Перспектива: 1 точка|Perspective: 1 point
+Перспектива: 2 точки|Perspective: 2 points
+Перспектива: 3 точки|Perspective: 3 points
+Эллипс и круг|Ellipse and circle
+Без симметрии|No symmetry
+Симметрия: вертикальная ось|Symmetry: vertical axis
+Симметрия: горизонтальная ось|Symmetry: horizontal axis
+Симметрия: обе оси|Symmetry: both axes
+Симметрия: радиальная|Symmetry: radial
+Править направляющие|Edit guides
+Притяжение|Snapping
+Лучи|Rays
+Сбросить направляющие|Reset guides
+Трансформация числами|Numeric transform
+Значения применяются поверх рамки относительно опорной точки|Values are applied on top of the box relative to the pivot point
+Ширина, %|Width, %
+Высота, %|Height, %
+Поворот, °|Rotation, °
+Наклон по X, °|Skew X, °
+Наклон по Y, °|Skew Y, °
+Сдвиг по X, px|Offset X, px
+Сдвиг по Y, px|Offset Y, px
+Отразить по горизонтали|Flip horizontally
+Отразить по вертикали|Flip vertically
+Ширина и высота 1–800 %, наклон меньше 85°|Width and height 1–800 %, skew below 85°
 """

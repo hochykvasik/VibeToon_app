@@ -666,6 +666,12 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
     val pendingLasso by vm.pendingLasso.collectAsStateWithLifecycle()
     val pen by vm.penCount.collectAsStateWithLifecycle()
     val fillOn by vm.vecFill.collectAsStateWithLifecycle()
+    val combine by vm.selCombine.collectAsStateWithLifecycle()
+    val transformBox by vm.selTransform.collectAsStateWithLifecycle()
+    val transformMode by vm.selTransformMode.collectAsStateWithLifecycle()
+    val proportional by vm.selTransformProportional.collectAsStateWithLifecycle()
+    var numericOpen by remember { mutableStateOf(false) }
+    if (numericOpen) SelectionTransformDialog(onDismiss = { numericOpen = false }, onApply = { n -> numericOpen = false; vm.applySelTransformNumeric(n) })
     Row(
         Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
@@ -678,12 +684,46 @@ private fun RasterToolRow(vm: MainViewModel, tool: RasterTool?) {
                 com.vibetoon.ui.inspector.ScrubBox("Зазор", fp.gap.toFloat(), 0f, 8f, { v -> vm.setFillParams { it.copy(gap = v.toInt()) } }, perPx = 0.05f)
             }
             RasterTool.PIPETTE -> Text("Пипетка: коснитесь холста, чтобы взять цвет", fontSize = 12.sp, maxLines = 1, softWrap = false)
-            RasterTool.SELECT -> {
+            RasterTool.SELECT -> if (transformBox != null) {
+                // Sprint 33: рамка свободной трансформации
+                Text("Трансформ", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                for ((m, t) in listOf(com.vibetoon.domain.raster.TransformBox.Mode.FREE to "Свободно", com.vibetoon.domain.raster.TransformBox.Mode.SKEW to "Наклон",
+                        com.vibetoon.domain.raster.TransformBox.Mode.DISTORT to "Искажение"))
+                    androidx.compose.material3.FilterChip(selected = transformMode == m, onClick = { vm.setSelTransformMode(m) }, label = { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) })
+                androidx.compose.material3.FilterChip(selected = proportional, onClick = vm::toggleSelTransformProportional, label = { Text("Пропорционально", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+                var anchorMenu by remember { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(onClick = { anchorMenu = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { com.vibetoon.ui.DropText("Опорная точка") }
+                    DropdownMenu(expanded = anchorMenu, onDismissRequest = { anchorMenu = false }) {
+                        for ((a, t) in listOf(
+                            (1 to 1) to "Центр", (0 to 0) to "Левый верхний угол", (1 to 0) to "Верхний край", (2 to 0) to "Правый верхний угол",
+                            (0 to 1) to "Левый край", (2 to 1) to "Правый край", (0 to 2) to "Левый нижний угол", (1 to 2) to "Нижний край", (2 to 2) to "Правый нижний угол"
+                        )) DropdownMenuItem(text = { Text(t) }, onClick = { anchorMenu = false; vm.setSelTransformAnchor(a.first, a.second) })
+                    }
+                }
+                OutlinedButton(onClick = { numericOpen = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Числа…", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                Button(onClick = vm::applySelectionTransform, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Применить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                OutlinedButton(onClick = vm::cancelSelectionTransform, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Отмена", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            } else {
                 for ((m, t) in listOf(SelMode.RECT to "Прямоугольник", SelMode.OVAL to "Овал", SelMode.LASSO to "Лассо", SelMode.WAND to "Палочка"))
                     androidx.compose.material3.FilterChip(selected = mode == m, onClick = { vm.setSelMode(m) }, label = { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) })
                 if (pendingLasso) OutlinedButton(onClick = vm::cancelPendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Отменить контур", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (mode == SelMode.WAND) com.vibetoon.ui.inspector.ScrubBox("Порог", fp.threshold.toFloat(), 0f, 128f, { v -> vm.setFillParams { it.copy(threshold = v.toInt()) } }, perPx = 0.4f)
+                // Sprint 33: как новый контур сочетается с выделением
+                var combineMenu by remember { mutableStateOf(false) }
+                val combineTitles = listOf(com.vibetoon.domain.raster.SelectionOps.Combine.REPLACE to "Новое выделение", com.vibetoon.domain.raster.SelectionOps.Combine.ADD to "Добавить к выделению",
+                    com.vibetoon.domain.raster.SelectionOps.Combine.SUBTRACT to "Вычесть из выделения", com.vibetoon.domain.raster.SelectionOps.Combine.INTERSECT to "Пересечь с выделением")
+                Box {
+                    OutlinedButton(onClick = { combineMenu = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { com.vibetoon.ui.DropText(combineTitles.first { it.first == combine }.second) }
+                    DropdownMenu(expanded = combineMenu, onDismissRequest = { combineMenu = false }) {
+                        for ((c, t) in combineTitles) DropdownMenuItem(text = { Text((if (combine == c) "✓ " else "") + com.vibetoon.ui.i18n.L(t)) }, onClick = { combineMenu = false; vm.setSelCombine(c) })
+                    }
+                }
+                OutlinedButton(onClick = vm::selectAllPixels, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Выделить всё", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 if (has) {
+                    OutlinedButton(onClick = vm::beginSelectionTransform, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Трансформ", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.growSelection(2) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Расширить на 2 px", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    OutlinedButton(onClick = { vm.growSelection(-2) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Сузить на 2 px", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                     Text("Два пальца: поворот и масштаб выделения", fontSize = 12.sp, maxLines = 1, softWrap = false)
                     val partName = com.vibetoon.ui.i18n.L("часть")
                     OutlinedButton(onClick = { vm.mirrorSelectedPixels(true) }, enabled = !pendingLasso, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Отразить X", fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -764,6 +804,40 @@ private fun PaintToolRow(vm: MainViewModel, onColor: () -> Unit) {
                     com.vibetoon.domain.paint.RulerPath.Mode.COMPASS to "Циркуль"
                 )) androidx.compose.material3.DropdownMenuItem(text = { Text((if (ruler == mode) "✓ " else "") + com.vibetoon.ui.i18n.L(title)) }, onClick = { rulerMenu = false; vm.setRulerMode(mode) })
             }
+        }
+        // Sprint 33: направляющие рисования и симметрия
+        val guides by vm.guides.collectAsStateWithLifecycle()
+        val guideEdit by vm.guideEdit.collectAsStateWithLifecycle()
+        var guideMenu by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick = { guideMenu = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
+                com.vibetoon.ui.DropText("Направляющие")
+            }
+            androidx.compose.material3.DropdownMenu(expanded = guideMenu, onDismissRequest = { guideMenu = false }) {
+                for ((kind, title) in listOf(
+                    com.vibetoon.domain.paint.DrawingGuides.Kind.OFF to "Без направляющих",
+                    com.vibetoon.domain.paint.DrawingGuides.Kind.ISOMETRIC to "Изометрическая сетка",
+                    com.vibetoon.domain.paint.DrawingGuides.Kind.PERSPECTIVE_1 to "Перспектива: 1 точка",
+                    com.vibetoon.domain.paint.DrawingGuides.Kind.PERSPECTIVE_2 to "Перспектива: 2 точки",
+                    com.vibetoon.domain.paint.DrawingGuides.Kind.PERSPECTIVE_3 to "Перспектива: 3 точки",
+                    com.vibetoon.domain.paint.DrawingGuides.Kind.ELLIPSE to "Эллипс и круг"
+                )) androidx.compose.material3.DropdownMenuItem(text = { Text((if (guides.kind == kind) "✓ " else "") + com.vibetoon.ui.i18n.L(title)) }, onClick = { guideMenu = false; vm.setGuideKind(kind) })
+                HorizontalDivider()
+                for ((symmetry, title) in listOf(
+                    com.vibetoon.domain.paint.DrawingGuides.Symmetry.OFF to "Без симметрии",
+                    com.vibetoon.domain.paint.DrawingGuides.Symmetry.VERTICAL to "Симметрия: вертикальная ось",
+                    com.vibetoon.domain.paint.DrawingGuides.Symmetry.HORIZONTAL to "Симметрия: горизонтальная ось",
+                    com.vibetoon.domain.paint.DrawingGuides.Symmetry.BOTH to "Симметрия: обе оси",
+                    com.vibetoon.domain.paint.DrawingGuides.Symmetry.RADIAL to "Симметрия: радиальная"
+                )) androidx.compose.material3.DropdownMenuItem(text = { Text((if (guides.symmetry == symmetry) "✓ " else "") + com.vibetoon.ui.i18n.L(title)) }, onClick = { guideMenu = false; vm.setSymmetry(symmetry) })
+            }
+        }
+        if (guides.active) {
+            androidx.compose.material3.FilterChip(selected = guideEdit, onClick = vm::toggleGuideEdit, label = { Text("Править направляющие", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+            if (guides.kind != com.vibetoon.domain.paint.DrawingGuides.Kind.OFF) androidx.compose.material3.FilterChip(selected = guides.snap, onClick = vm::toggleGuideSnap, label = { Text("Притяжение", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+            if (guides.symmetry == com.vibetoon.domain.paint.DrawingGuides.Symmetry.RADIAL)
+                com.vibetoon.ui.inspector.ScrubBox("Лучи", guides.radial.toFloat(), com.vibetoon.domain.paint.DrawingGuides.MIN_RADIAL.toFloat(), com.vibetoon.domain.paint.DrawingGuides.MAX_RADIAL.toFloat(), { v -> vm.setRadialCount(Math.round(v)) }, perPx = 0.05f)
+            OutlinedButton(onClick = vm::resetGuides, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) { Text("Сбросить направляющие", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
         var shapeMenu by remember { mutableStateOf(false) }
         Box {

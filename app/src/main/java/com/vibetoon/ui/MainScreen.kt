@@ -363,9 +363,11 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         PerfHudLayer(vm)
         PivotOverlay(vm)
         RulerGuideLayer(vm)
+        DrawingGuideLayer(vm)
         PaintCursorLayer(vm)
         PerspOverlayLayer(vm)
         RasterOverlayLayer(vm)
+        SelectionTransformLayer(vm)
         MarqueeOverlay(vm)
         val gs = com.vibetoon.ui.theme.LocalAppSettings.current
         val hoverEnabled = gs?.cursorHoverPreview == true && gs.cursorEnabled
@@ -845,6 +847,72 @@ private fun RulerGuideLayer(vm: MainViewModel) {
             drawLine(Color.Black, a, b, strokeWidth = 4.dp.toPx())
             drawLine(color, a, b, strokeWidth = 2.dp.toPx())
         }
+    }
+}
+
+/** Sprint 33: направляющие (изометрия, перспектива, эллипс) и оси симметрии - в координатах холста, только редактор. */
+@Composable
+private fun DrawingGuideLayer(vm: MainViewModel) {
+    val g by vm.guides.collectAsStateWithLifecycle()
+    val edit by vm.guideEdit.collectAsStateWithLifecycle()
+    val tool by vm.paintTool.collectAsStateWithLifecycle()
+    val view by vm.gridView.collectAsStateWithLifecycle()
+    if (!g.active || tool == null) return
+    val guideLines = remember(g, view.canvasWidth, view.canvasHeight) {
+        com.vibetoon.domain.paint.DrawingGuides.overlay(g.copy(symmetry = com.vibetoon.domain.paint.DrawingGuides.Symmetry.OFF), view.canvasWidth, view.canvasHeight)
+    }
+    val symmetryLines = remember(g, view.canvasWidth, view.canvasHeight) {
+        com.vibetoon.domain.paint.DrawingGuides.overlay(g.copy(kind = com.vibetoon.domain.paint.DrawingGuides.Kind.OFF), view.canvasWidth, view.canvasHeight)
+    }
+    val handles = remember(g) { com.vibetoon.domain.paint.DrawingGuides.handles(g) }
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        if (view.width <= 0f || view.height <= 0f || view.canvasWidth <= 0 || view.canvasHeight <= 0) return@Canvas
+        fun pt(x: Float, y: Float): Offset {
+            val (sx, sy) = view.camera.toScreen(x, y, view.width, view.height, view.canvasWidth, view.canvasHeight)
+            return Offset(sx, sy)
+        }
+        fun polyline(line: FloatArray, color: Color, width: Float) {
+            for (i in 0 until line.size / 2 - 1) drawLine(color, pt(line[i * 2], line[i * 2 + 1]), pt(line[i * 2 + 2], line[i * 2 + 3]), width)
+        }
+        val guideColor = Color(0xFF7C4DFF).copy(alpha = .55f)
+        val symmetryColor = Color(0xFF00B8D4).copy(alpha = .85f)
+        for (line in guideLines) polyline(line, guideColor, 1.dp.toPx())
+        for (line in symmetryLines) { polyline(line, Color.Black.copy(alpha = .4f), 3.dp.toPx()); polyline(line, symmetryColor, 1.5f.dp.toPx()) }
+        for ((_, p) in handles) {
+            val c = pt(p.x, p.y)
+            drawCircle(Color.Black.copy(alpha = .6f), (if (edit) 10 else 6).dp.toPx(), c)
+            drawCircle(if (edit) Color(0xFFFFB300) else Color.White, (if (edit) 8 else 4).dp.toPx(), c)
+        }
+    }
+}
+
+/** Sprint 33: рамка свободной трансформации выделения - углы, середины сторон и опорная точка. */
+@Composable
+private fun SelectionTransformLayer(vm: MainViewModel) {
+    val box by vm.selTransform.collectAsStateWithLifecycle()
+    val p = box ?: return
+    if (p.size < 10) return
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        val dark = Color.Black.copy(alpha = .7f)
+        val accent = Color(0xFFFFB300)
+        fun corner(i: Int) = Offset(p[i * 2], p[i * 2 + 1])
+        for (i in 0..3) {
+            val a = corner(i); val b = corner((i + 1) % 4)
+            drawLine(dark, a, b, 4.dp.toPx()); drawLine(accent, a, b, 2.dp.toPx())
+            val m = Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+            drawCircle(dark, 7.dp.toPx(), m); drawCircle(Color.White, 5.dp.toPx(), m)
+        }
+        val half = 7.dp.toPx()
+        for (i in 0..3) {
+            val c = corner(i)
+            drawRect(dark, Offset(c.x - half - 1.dp.toPx(), c.y - half - 1.dp.toPx()), androidx.compose.ui.geometry.Size(2 * half + 2.dp.toPx(), 2 * half + 2.dp.toPx()))
+            drawRect(Color.White, Offset(c.x - half, c.y - half), androidx.compose.ui.geometry.Size(2 * half, 2 * half))
+        }
+        val pivot = corner(4)
+        drawCircle(dark, 9.dp.toPx(), pivot, style = Stroke(4.dp.toPx()))
+        drawCircle(accent, 9.dp.toPx(), pivot, style = Stroke(2.dp.toPx()))
+        drawLine(accent, Offset(pivot.x - 12.dp.toPx(), pivot.y), Offset(pivot.x + 12.dp.toPx(), pivot.y), 1.5f.dp.toPx())
+        drawLine(accent, Offset(pivot.x, pivot.y - 12.dp.toPx()), Offset(pivot.x, pivot.y + 12.dp.toPx()), 1.5f.dp.toPx())
     }
 }
 
