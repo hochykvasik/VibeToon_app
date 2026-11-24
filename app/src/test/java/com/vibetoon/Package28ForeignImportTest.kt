@@ -144,7 +144,7 @@ class Package28ForeignImportTest {
         val w = 5; val h = 3
         val px = ByteArray(w * h * 4) { (it * 37 % 256).toByte() }
         val png = PngIO.encode(w, h, px)
-        val img = javax.imageio.ImageIO.read(png.inputStream())
+        val img = pixels(png)
         assertEquals(w, img.width); assertEquals(h, img.height)
         for (y in 0 until h) for (x in 0 until w) {
             val o = (y * w + x) * 4
@@ -154,7 +154,9 @@ class Package28ForeignImportTest {
             if (a == 255) assertEquals(px[o].toInt() and 0xFF, (argb shr 16) and 0xFF)
         }
         assertEquals(w to h, PngIO.imageSize(png))
-        val jpg = ByteArrayOutputStream().also { javax.imageio.ImageIO.write(java.awt.image.BufferedImage(7, 9, java.awt.image.BufferedImage.TYPE_INT_RGB), "jpg", it) }.toByteArray()
+        // минимальный JPEG: SOI, APP0 (JFIF), SOF0 высота 9, ширина 7
+        val jpg = intArrayOf(0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'J'.code, 'F'.code, 'I'.code, 'F'.code, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0,
+            0xFF, 0xC0, 0, 17, 8, 0, 9, 0, 7, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xFF, 0xD9).map { it.toByte() }.toByteArray()
         assertEquals(7 to 9, PngIO.imageSize(jpg))
         assertEquals(3 to 2, PngIO.imageSize("GIF89a".toByteArray() + byteArrayOf(3, 0, 2, 0)))
         assertNull(PngIO.imageSize("hello world".toByteArray()))
@@ -213,7 +215,55 @@ class Package28ForeignImportTest {
         expected.zip(actual).forEach { (e, a) -> assertEquals(e, a, 1e-3f) }
     }
 
-    private fun pixels(png: ByteArray): java.awt.image.BufferedImage = javax.imageio.ImageIO.read(png.inputStream())
+    /** Декодер PNG RGBA 8 бит для проверки (в unit-тестах Android нет javax.imageio). getRGB - ARGB без премультипликации. */
+    private class Png(val width: Int, val height: Int, private val rgba: ByteArray) {
+        fun getRGB(x: Int, y: Int): Int {
+            val o = (y * width + x) * 4
+            fun b(i: Int) = rgba[o + i].toInt() and 0xFF
+            return (b(3) shl 24) or (b(0) shl 16) or (b(1) shl 8) or b(2)
+        }
+    }
+
+    private fun pixels(png: ByteArray): Png {
+        val bb = java.nio.ByteBuffer.wrap(png)
+        bb.position(8)
+        var w = 0; var h = 0
+        val idat = ByteArrayOutputStream()
+        while (bb.remaining() >= 12) {
+            val len = bb.int
+            val type = String(ByteArray(4).also { bb.get(it) }, Charsets.US_ASCII)
+            val data = ByteArray(len).also { bb.get(it) }
+            bb.int   // CRC
+            when (type) {
+                "IHDR" -> {
+                    val d = java.nio.ByteBuffer.wrap(data); w = d.int; h = d.int
+                    assertEquals(8, data[8].toInt()); assertEquals(6, data[9].toInt())   // 8 бит, RGBA
+                }
+                "IDAT" -> idat.write(data)
+                "IEND" -> break
+            }
+        }
+        val raw = java.util.zip.InflaterInputStream(idat.toByteArray().inputStream()).readBytes()
+        val stride = w * 4
+        val out = ByteArray(stride * h)
+        for (y in 0 until h) {
+            val f = raw[y * (stride + 1)].toInt()
+            for (i in 0 until stride) {
+                val x = raw[y * (stride + 1) + 1 + i].toInt() and 0xFF
+                val a = if (i >= 4) out[y * stride + i - 4].toInt() and 0xFF else 0
+                val bU = if (y > 0) out[(y - 1) * stride + i].toInt() and 0xFF else 0
+                val c = if (y > 0 && i >= 4) out[(y - 1) * stride + i - 4].toInt() and 0xFF else 0
+                val v = when (f) {
+                    0 -> x; 1 -> x + a; 2 -> x + bU; 3 -> x + (a + bU) / 2
+                    4 -> { val p = a + bU - c; val pa = Math.abs(p - a); val pb = Math.abs(p - bU); val pc = Math.abs(p - c)
+                        x + if (pa <= pb && pa <= pc) a else if (pb <= pc) bU else c }
+                    else -> error("filter $f")
+                }
+                out[y * stride + i] = v.toByte()
+            }
+        }
+        return Png(w, h, out)
+    }
 
     @Test fun procreateLayersGroupsPropsAndPixels() {
         val src = procreateFixture()
