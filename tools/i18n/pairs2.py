@@ -1508,4 +1508,23 @@ SVG вставлен: слоёв: {}, фигур: {}|SVG inserted: layers: {}, s
 Импорт SVG: что не перенесено|SVG import: what wasn't imported
 Понятно|Got it
 SVG в текущий проект (векторные слои)|SVG into current project (vector layers)
+один раз, затем последний кадр|once, then the last frame
+Без ключей времени:|Without time keys:
+Один раз|Play Once
+Hold (первый кадр)|Hold (first frame)
+Цикл: внутренняя анимация символа повторяется по кругу.|Loop: the symbol's inner animation repeats over and over.
+Один раз: анимация символа идёт с начала его плашки на таймлайне и замирает на последнем кадре - на холсте, при Play и в экспорте.|Play Once: the symbol's animation starts at the beginning of its timeline bar and stops on the last frame - on the canvas, during Play and in export.
+Hold: символ стоит на первом кадре.|Hold: the symbol stays on its first frame.
+Символ без ключей проиграется один раз и замрёт на последнем кадре|Without keys the symbol plays once and holds its last frame
+Калька включена: долгое нажатие на кнопку - цвета, глубина и прозрачность до/после (нужен покадровый слой)|Onion skin on: long-press the button for before/after colors, depth and opacity (needs a frame-by-frame layer)
+Рисунки до (предыдущие)|Drawings before (previous)
+Рисунки после (следующие)|Drawings after (next)
+Затухание: дальние рисунки бледнее|Falloff: farther drawings are fainter
+Тонировать цветом (выкл. - исходные цвета рисунков)|Tint with color (off - original drawing colors)
+Out of Pegs: призраки на своих местах|Out of Pegs: ghosts stay in place
+Out of Pegs: соседние рисунки стоят там, где слой был на их кадрах (с ключами трансформации), и не едут вместе с текущим рисунком, пока его двигают или трансформируют. Выкл. - призраки повторяют текущее положение слоя.|Out of Pegs: neighboring drawings stay where the layer was on their own frames (with transform keys) and don't move with the current drawing while it is being moved or transformed. Off - ghosts follow the layer's current position.
+Работает на слое-картинке с кадрами (кнопка «Добавить пустой кадр»). Настройки сохраняются в настройках приложения и в резервной копии настроек.|Works on an image layer with frames (the “Add empty frame” button). Settings are kept in the app settings and in the settings backup.
+Глубина:|Depth:
+Цвет:|Color:
+Круг HSV|HSV wheel
 """

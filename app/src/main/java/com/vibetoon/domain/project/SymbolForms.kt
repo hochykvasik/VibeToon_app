@@ -84,7 +84,11 @@ object SymbolForms {
      * случайные формы). Поэтому такой сегмент ведёт себя как Hold: форма меняется ровно на кадре следующего ключа.
      * Плавный переход внутри одной формы (анимированная форма) и символы без маркеров работают как раньше.
      */
-    fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, loop: Boolean, markers: List<FrameMarker>): Int {
+    fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, loop: Boolean, markers: List<FrameMarker>): Int =
+        frameAt(keys, f, duration, animated, if (loop) SymbolPlayback.LOOP else SymbolPlayback.HOLD, 0, markers)
+
+    /** Спринт 37: то же с режимом проигрывания без ключей ([SymbolPlayback]: Hold / Loop / Play Once от кадра [start]). */
+    fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, mode: Int, start: Int, markers: List<FrameMarker>): Int {
         if (keys.size >= 2 && markers.any { !it.isAlias }) {
             val ks = keys.sortedBy { it.frame }
             val i = ks.indexOfLast { it.frame <= f }
@@ -94,7 +98,7 @@ object SymbolForms {
                     return a.value.coerceIn(0, maxOf(0, duration - 1))
             }
         }
-        return SymbolMath.instanceFrame(keys, f, duration, animated, loop)
+        return SymbolPlayback.instanceFrame(keys, f, duration, animated, mode, start)
     }
 
     /**

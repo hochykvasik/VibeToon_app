@@ -64,6 +64,7 @@ import com.vibetoon.domain.project.FrameMarker
 import com.vibetoon.domain.project.MAX_SYMBOL_DEPTH
 import com.vibetoon.domain.project.SymbolFormCache
 import com.vibetoon.domain.project.SymbolForms
+import com.vibetoon.domain.project.SymbolPlayback
 import com.vibetoon.domain.project.SymbolMath
 import com.vibetoon.domain.project.TimeKey
 import com.vibetoon.domain.project.TimeEase
@@ -2573,6 +2574,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         override[id] ?: _clips.value[id]?.let { c -> _animation.value.evaluate(id, c.animFrame(_frame.value), base[id]) }
             ?: _animation.value.evaluate(id, _frame.value, base[id])
 
+    /**
+     * Спринт 37: трансформация призрака кальки. Обычно - текущая трансформация слоя (призрак едет вместе с рисунком).
+     * «Out of Pegs» - трансформация слоя на кадре самого рисунка-призрака (с ключами и плашкой), без живой правки
+     * текущего кадра: соседние рисунки стоят на своих местах, пока текущий двигают или трансформируют.
+     */
+    private fun ghostTransform(g: Ghost): LayerTransform {
+        if (!_onionSettings.value.outOfPegs) return effective(g.owner)
+        val f = g.frame
+        return _clips.value[g.owner]?.let { c -> _animation.value.evaluate(g.owner, c.animFrame(f), base[g.owner]) }
+            ?: _animation.value.evaluate(g.owner, f, base[g.owner])
+    }
+
     /** Трансформации всех изменённых слоёв на текущем кадре - вход для SceneBuilder. */
     private fun transformsNow(): Map<Int, LayerTransform> {
         val ids = HashSet<Int>().apply {
@@ -2589,7 +2602,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val ctxIds = symbolContextIds()
         val ctxAlpha = symbolContextAlpha()
         return ids.filter { !(rest && it >= BONE_ID_BASE) }.associateWith { id ->
-            ghostById[id]?.let { g -> return@associateWith effective(g.owner).let { o -> o.copy(opacity = o.opacity * g.alpha) } }   // призрак кальки идёт за своим слоем
+            ghostById[id]?.let { g -> return@associateWith ghostTransform(g).let { o -> o.copy(opacity = o.opacity * g.alpha) } }   // призрак кальки идёт за своим слоем
             val t0 = effective(id)
             val t = fxLayers[id]?.let { l -> t0.copy(rotation = t0.rotation + com.vibetoon.domain.anim.EffectTracks.extraRotation(id, l, _animation.value, _frame.value, _animation.value.settings.fps)) } ?: t0
             val c = _clips.value[id]
@@ -3220,7 +3233,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun storeClip(id: Int, clip: Clip) {
+        val oldStart = _clips.value[id]?.start ?: 0
         _clips.value = if (clip == defaultClip(id)) _clips.value - id else _clips.value + (id to clip)
+        // Спринт 37: Play Once идёт от начала плашки - сдвиг плашки меняет показанный кадр символа
+        if (oldStart != (_clips.value[id]?.start ?: 0) && media.any { it.id == id && it.kind == MediaKind.SYMBOL && it.symOnce && it.timeKeys.isEmpty() })
+            runCatching { updateSymbols(_frame.value) }
     }
 
     /** Перетаскивание клипа за середину полоски: начало меняется, длительность остаётся. */
@@ -3590,12 +3607,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * анимации только по явному флагу экземпляра «Цикл» (раньше любой анимированный участник - кость, ключ слоя - запускал
      * самопроизвольное перелистывание форм).
      */
-    private fun symbolKey(inst: MediaItem, def: MediaItem, f: Int): Int =
-        SymbolForms.frameAt(inst.timeKeys, f, def.symDur, inst.symLoop && symbolCycles(def.id), inst.symLoop, def.markers)
+    private fun symbolKey(inst: MediaItem, def: MediaItem, f: Int): Int {
+        val mode = symbolPlaybackOf(inst)
+        // Спринт 37: Play Once идёт от начала плашки экземпляра и замирает на последнем кадре символа
+        return SymbolForms.frameAt(inst.timeKeys, f, def.symDur, mode != SymbolPlayback.HOLD && symbolCycles(def.id), mode, symbolStart(inst.id), def.markers)
+    }
+    private fun symbolPlaybackOf(inst: MediaItem): Int = SymbolPlayback.mode(inst.symLoop, inst.symOnce)
+    /** Начало плашки экземпляра на таймлайне (кадр, с которого Play Once проигрывает символ). */
+    private fun symbolStart(instId: Int): Int = _clips.value[instId]?.start ?: 0
 
     /** Экземпляру нужны все внутренние кадры (цикл или плавный переход между ключами), а не только кадры ключей. */
     private fun needsAllFrames(inst: MediaItem, def: MediaItem): Boolean =
-        (inst.timeKeys.isEmpty() && inst.symLoop && symbolCycles(def.id)) ||
+        (inst.timeKeys.isEmpty() && SymbolPlayback.needsAllFrames(symbolPlaybackOf(inst), false, symbolCycles(def.id))) ||
             inst.timeKeys.sortedBy { it.frame }.zipWithNext().any { (a, b) ->
                 // переход между разными формами - Hold (SymbolForms.frameAt): промежуточные кадры не нужны
                 a.ease != TimeEase.HOLD && a.value != b.value &&
@@ -4305,6 +4328,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         editInstance(instId, if (on) "Символ без ключей крутит свою анимацию по кругу" else "Символ без ключей держит первый кадр (Hold)") { it.copy(symLoop = on) }
     fun symbolLoops(instId: Int): Boolean = media.firstOrNull { it.id == instId }?.symLoop == true
 
+    /** Спринт 37: режим экземпляра без ключей времени - Hold / Цикл / Один раз (Play Once, замирает на последнем кадре). */
+    fun setSymbolPlayback(instId: Int, mode: Int) {
+        val (loop, once) = SymbolPlayback.flags(mode)
+        val msg = when (mode) {
+            SymbolPlayback.LOOP -> "Символ без ключей крутит свою анимацию по кругу"
+            SymbolPlayback.ONCE -> "Символ без ключей проиграется один раз и замрёт на последнем кадре"
+            else -> "Символ без ключей держит первый кадр (Hold)"
+        }
+        editInstance(instId, msg) { it.copy(symLoop = loop, symOnce = once) }
+    }
+    fun symbolPlayback(instId: Int): Int = media.firstOrNull { it.id == instId }?.let { symbolPlaybackOf(it) } ?: SymbolPlayback.HOLD
+
     /** Переход ключа времени на текущем кадре (или выделенных ключей времени): Hold / Linear / Smooth / Ease in / Ease out. */
     fun setTimeKeyEase(instId: Int, ease: Int) {
         val inst = media.firstOrNull { it.id == instId && it.kind == MediaKind.SYMBOL } ?: return
@@ -4535,25 +4570,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val cellBusy = HashSet<Int>()
     private val ghostShown = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
-    private class Ghost(val id: Int, val owner: Int, val r: Float, val g: Float, val b: Float, val alpha: Float, val file: String)
+    private class Ghost(val id: Int, val owner: Int, val r: Float, val g: Float, val b: Float, val alpha: Float, val file: String,
+                        val tint: Boolean = true, val frame: Int = 0)
     private var ghosts: List<Ghost> = emptyList()
 
     private val _onion = MutableStateFlow(false)
     val onion: StateFlow<Boolean> = _onion.asStateFlow()
-    private val _onionDepth = MutableStateFlow(1)
-    val onionDepth: StateFlow<Int> = _onionDepth.asStateFlow()
-    private val _onionAlpha = MutableStateFlow(0.35f)
-    val onionAlpha: StateFlow<Float> = _onionAlpha.asStateFlow()
+    // Спринт 37: отдельные глубина/непрозрачность/цвет для рисунков до и после, затухание, тонировка, Out of Pegs.
+    // Настройки редактора - в настройках приложения «vt_app» (ключ onion_settings): переживают перезапуск и
+    // попадают в резервную копию настроек.
+    private val _onionSettings = MutableStateFlow(runCatching { com.vibetoon.domain.project.OnionSkin.decode(guidePrefs().getString("onion_settings", null)) }.getOrDefault(com.vibetoon.domain.project.OnionSettings()))
+    val onionSettings: StateFlow<com.vibetoon.domain.project.OnionSettings> = _onionSettings.asStateFlow()
 
     fun toggleOnion() {
         _onion.value = !_onion.value
-        _state.value = UiState.Message(if (_onion.value) "Калька включена: предыдущий рисунок красный, следующий зелёный (нужен покадровый слой)" else "Калька выключена")
+        _state.value = UiState.Message(if (_onion.value) "Калька включена: долгое нажатие на кнопку - цвета, глубина и прозрачность до/после (нужен покадровый слой)" else "Калька выключена")
         refreshOnion()
     }
-    fun setOnionDepth(d: Int) { _onionDepth.value = d.coerceIn(1, 3); refreshOnion() }
-    fun setOnionAlpha(a: Float) { if (a.isFinite()) { _onionAlpha.value = a.coerceIn(0.1f, 0.9f); refreshOnion() } }
+    fun setOnionDepth(d: Int) = setOnionSettings(_onionSettings.value.copy(before = d, after = d))
+    fun setOnionAlpha(a: Float) { if (a.isFinite()) setOnionSettings(_onionSettings.value.copy(beforeAlpha = a, afterAlpha = a)) }
+    fun setOnionSettings(next: com.vibetoon.domain.project.OnionSettings) {
+        val n = com.vibetoon.domain.project.OnionSkin.normalized(next)
+        if (n == _onionSettings.value) return
+        _onionSettings.value = n
+        runCatching { guidePrefs().edit().putString("onion_settings", com.vibetoon.domain.project.OnionSkin.encode(n)).apply() }
+        refreshOnion()
+        pushScene(); RenderHost.view?.requestRender()   // Out of Pegs / тонировка меняют сцену и без новых текстур
+    }
+    fun resetOnionSettings() = setOnionSettings(com.vibetoon.domain.project.OnionSettings())
 
-    private fun ghostBase(owner: Int) = GHOST_BASE + (owner - MEDIA_ID_BASE).coerceAtLeast(0) * 8
+    private fun ghostBase(owner: Int) = GHOST_BASE + (owner - MEDIA_ID_BASE).coerceAtLeast(0) * com.vibetoon.domain.project.OnionSkin.SLOTS_PER_LAYER
 
     /** Корни сцены: слои проекта и (если включена калька) призраки соседних рисунков выбранного покадрового слоя. */
     private fun sceneRoots(): List<com.vibetoon.domain.model.Node> {
@@ -4570,12 +4616,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = frameLayer()
         val list = ArrayList<Ghost>()
         if (_onion.value && m != null && m.cells.size > 1) {
-            val (prev, next) = FrameMath.neighbors(m.cells, _frame.value, _onionDepth.value)
             val base = ghostBase(m.id)
-            prev.forEachIndexed { i, c -> list += Ghost(base + i, m.id, 1f, 0.2f, 0.2f, FrameMath.ghostAlpha(_onionAlpha.value, i), c.file) }
-            next.forEachIndexed { i, c -> list += Ghost(base + 4 + i, m.id, 0.2f, 1f, 0.2f, FrameMath.ghostAlpha(_onionAlpha.value, i), c.file) }
+            // Спринт 37: призраки по настройкам кальки (до/после - свои глубина, непрозрачность и цвет)
+            for (g in com.vibetoon.domain.project.OnionSkin.plan(m.cells, _frame.value, _onionSettings.value))
+                list += Ghost(base + g.slot, m.id, g.r, g.g, g.b, g.alpha, g.cell.file, g.tint, g.cell.start)
         }
-        val same = list.size == ghosts.size && list.indices.all { ghosts[it].id == list[it].id && ghosts[it].file == list[it].file && ghosts[it].alpha == list[it].alpha }
+        val same = list.size == ghosts.size && list.indices.all { ghosts[it].id == list[it].id && ghosts[it].file == list[it].file && ghosts[it].alpha == list[it].alpha &&
+            ghosts[it].r == list[it].r && ghosts[it].g == list[it].g && ghosts[it].b == list[it].b && ghosts[it].tint == list[it].tint && ghosts[it].frame == list[it].frame }
         ghosts = list
         val pid = projectId ?: return
         val need = list.filter { ghostShown[it.id] != it.file }
@@ -6257,6 +6304,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _guides.value = if (decoded == null) com.vibetoon.domain.paint.DrawingGuides.State()
             else com.vibetoon.domain.paint.DrawingGuides.rescale(decoded.state, decoded.width, decoded.height, canvasW, canvasH)
         _guideEdit.value = false
+        // Спринт 37: настройки кальки перечитываются при открытии проекта (например, после импорта резервной копии настроек)
+        runCatching { _onionSettings.value = com.vibetoon.domain.project.OnionSkin.decode(guidePrefs().getString("onion_settings", null)) }
     }
     private fun guidesChanged(next: com.vibetoon.domain.paint.DrawingGuides.State) {
         if (stroker != null) paintCancel()
@@ -9291,7 +9340,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val base = sceneLookFx(fxRecords(fxLayers, _colors.value, _animation.value, _frame.value, _animation.value.settings.fps), sceneLookNow(), leafIdsForLook())
         if (ghosts.isEmpty()) return base
         val out = HashMap(base)
-        for (g in ghosts) out[g.id] = listOf(floatArrayOf(TINT_FX, g.r, g.g, g.b, 0.85f, 0f, 0f, 0f, 0f, 0f))   // красный/зелёный оттенок кадров-ориентиров
+        for (g in ghosts) if (g.tint) out[g.id] = listOf(floatArrayOf(TINT_FX, g.r, g.g, g.b, 0.85f, 0f, 0f, 0f, 0f, 0f))   // оттенок кадров-ориентиров (спринт 37: цвета до/после из настроек)
         return out
     }
 
@@ -11751,7 +11800,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val symInst = if (symbol == null) media.filter { it.kind == MediaKind.SYMBOL && it.id !in symInside } else emptyList()
         val symDefs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to (it.symDur to symbolCycles(it.id)) }
         val symMarks = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to it.markers }
-        val symLoops = symInst.associate { it.id to it.symLoop }
+        val symModes = symInst.associate { it.id to SymbolPlayback.mode(it.symLoop, it.symOnce) }   // спринт 37: Hold / Loop / Play Once
         val symCropExp = symInst.associate { it.id to formCrop(it.id) }
         val pidExp = projectId
         val shadow = symbol != null   // снимок символа: свои (теневые) рисунки участников, текстуры редактора не трогаем
@@ -11793,8 +11842,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val formAliases = ArrayList<Pair<Int, com.vibetoon.domain.project.ExportSymbolForms.Form>>()
             for (si in symInst) {   // экземпляры символов: готовая форма на GPU (или запасная картинка) на этом кадре
                 val def = symDefs[si.symRef] ?: continue
-                val loop = symLoops[si.id] == true
-                val key = SymbolForms.frameAt(si.timeKeys, pf, def.first, def.second && loop, loop, symMarks[si.symRef].orEmpty())   // то же правило, что в редакторе
+                val mode = symModes[si.id] ?: SymbolPlayback.HOLD
+                val key = SymbolForms.frameAt(si.timeKeys, pf, def.first, def.second && mode != SymbolPlayback.HOLD, mode, clipsCopy[si.id]?.start ?: 0, symMarks[si.symRef].orEmpty())   // то же правило, что в редакторе
                 val form = symCache.form(si.symRef, key, symCropExp[si.id] == true)
                 if (form != null) { formAliases += si.id to form; continue }
                 val png = symCache.png(si.symRef, key) ?: continue

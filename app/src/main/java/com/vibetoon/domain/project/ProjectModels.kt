@@ -102,6 +102,8 @@ data class MediaItem(
     val timeKeys: List<TimeKey> = emptyList(),
     /** SYMBOL (экземпляр): без ключей времени крутить внутреннюю анимацию по кругу. false (по умолчанию) - Hold на первом кадре. */
     val symLoop: Boolean = false,
+    /** Спринт 37: SYMBOL (экземпляр) без ключей времени проигрывает символ один раз от начала плашки и держит последний кадр (Play Once). */
+    val symOnce: Boolean = false,
     /** IMAGE: векторный слой - контур/примитивы [vectors] перерисовываются в картинку слоя при каждой правке. */
     val vector: Boolean = false,
     val vectors: List<com.vibetoon.domain.vector.VectorShape> = emptyList(),

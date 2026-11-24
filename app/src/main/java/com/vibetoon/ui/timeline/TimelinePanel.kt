@@ -267,30 +267,13 @@ fun TimelinePanel(
         val stub = LocalStub.current
         val fx by vm.fx.collectAsStateWithLifecycle()
         val onion by vm.onion.collectAsStateWithLifecycle()
-        val onionDepth by vm.onionDepth.collectAsStateWithLifecycle()
-        val onionAlpha by vm.onionAlpha.collectAsStateWithLifecycle()
         var onionDialog by remember { mutableStateOf(false) }
         val loop by vm.loop.collectAsStateWithLifecycle()
         val magnet by vm.magnet.collectAsStateWithLifecycle()
         var selectMode by remember { mutableStateOf(false) }
         val phone = com.vibetoon.ui.shell.LocalPhone.current
         var toolsOpen by remember { mutableStateOf(false) }
-        if (onionDialog) com.vibetoon.ui.motion.AlertDialog(
-            onDismissRequest = { onionDialog = false },
-            title = { Text("Калька (Onion Skin)") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Глубина: сколько рисунков назад и вперёд", fontSize = 12.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (d in 1..3) androidx.compose.material3.FilterChip(selected = onionDepth == d, onClick = { vm.setOnionDepth(d) }, label = { Text("$d") })
-                    }
-                    Text("Прозрачность: ${(onionAlpha * 100).toInt()}%", fontSize = 12.sp)
-                    androidx.compose.material3.Slider(value = onionAlpha, onValueChange = { vm.setOnionAlpha(it) }, valueRange = 0.1f..0.9f)
-                    Text("Красный - предыдущий рисунок, зелёный - следующий. Работает на слое-картинке с кадрами (кнопка «Добавить пустой кадр»).", fontSize = 11.sp)
-                }
-            },
-            confirmButton = { androidx.compose.material3.TextButton({ onionDialog = false }) { Text("Готово") } }
-        )
+        if (onionDialog) OnionSkinDialog(vm) { onionDialog = false }   // спринт 37: до/после - свои глубина, прозрачность, цвет
         val stepByFrames = com.vibetoon.ui.theme.LocalAppSettings.current?.stepFrames ?: true
         // ---- Панель воспроизведения ----
         Row(

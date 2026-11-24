@@ -1832,4 +1832,23 @@
     <string name="ui_svg_import_what_wasn_t_imported">SVG import: what wasn\'t imported</string>
     <string name="ui_got_it">Got it</string>
     <string name="ui_svg_into_current_project_vector_laye">SVG into current project (vector layers)</string>
+    <string name="ui_once_then_the_last_frame">once, then the last frame</string>
+    <string name="ui_without_time_keys">Without time keys:</string>
+    <string name="ui_play_once">Play Once</string>
+    <string name="ui_hold_first_frame">Hold (first frame)</string>
+    <string name="ui_loop_the_symbol_s_inner_animation_re">Loop: the symbol\'s inner animation repeats over and over.</string>
+    <string name="ui_play_once_the_symbol_s_animation_sta">Play Once: the symbol\'s animation starts at the beginning of its timeline bar and stops on the last frame - on the canvas, during Play and in export.</string>
+    <string name="ui_hold_the_symbol_stays_on_its_first_f">Hold: the symbol stays on its first frame.</string>
+    <string name="ui_without_keys_the_symbol_plays_once_a">Without keys the symbol plays once and holds its last frame</string>
+    <string name="ui_onion_skin_on_long_press_the_button_">Onion skin on: long-press the button for before/after colors, depth and opacity (needs a frame-by-frame layer)</string>
+    <string name="ui_drawings_before_previous">Drawings before (previous)</string>
+    <string name="ui_drawings_after_next">Drawings after (next)</string>
+    <string name="ui_falloff_farther_drawings_are_fainter">Falloff: farther drawings are fainter</string>
+    <string name="ui_tint_with_color_off_original_drawing">Tint with color (off - original drawing colors)</string>
+    <string name="ui_out_of_pegs_ghosts_stay_in_place">Out of Pegs: ghosts stay in place</string>
+    <string name="ui_out_of_pegs_neighboring_drawings_sta">Out of Pegs: neighboring drawings stay where the layer was on their own frames (with transform keys) and don\'t move with the current drawing while it is being moved or transformed. Off - ghosts follow the layer\'s current position.</string>
+    <string name="ui_works_on_an_image_layer_with_frames_">Works on an image layer with frames (the “Add empty frame” button). Settings are kept in the app settings and in the settings backup.</string>
+    <string name="ui_depth">Depth:</string>
+    <string name="ui_color_2">Color:</string>
+    <string name="ui_hsv_wheel">HSV wheel</string>
 </resources>

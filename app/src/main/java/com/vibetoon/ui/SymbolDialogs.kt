@@ -177,13 +177,14 @@ fun SymbolTimeTab(vm: MainViewModel, instId: Int) {
     val keys by vm.timeKeys.collectAsStateWithLifecycle()
     val markers = vm.markersOfInstance(instId)
     val cur = if (keys.containsKey(instId)) vm.currentMarkerName(instId, frame) else null
-    var loop by remember(instId) { mutableStateOf(vm.symbolLoops(instId)) }
+    var playMode by remember(instId) { mutableStateOf(vm.symbolPlayback(instId)) }
     val ease = if (keys.containsKey(instId)) vm.timeKeyEaseAt(instId, frame) else null
     Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Символ: ${vm.symbolName(vm.symbolRefOf(instId))}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Время:", fontSize = 13.sp)
-            Text(cur ?: if (loop) "по кругу (цикл)" else "кадр 1 (Hold)", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+            Text(cur ?: when (playMode) { com.vibetoon.domain.project.SymbolPlayback.LOOP -> "по кругу (цикл)"; com.vibetoon.domain.project.SymbolPlayback.ONCE -> "один раз, затем последний кадр"; else -> "кадр 1 (Hold)" },
+                fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton({ vm.openMarkerPanel(instId) }, enabled = markers.isNotEmpty()) { Text("Выбрать маркер", fontSize = 12.sp) }
@@ -201,10 +202,19 @@ fun SymbolTimeTab(vm: MainViewModel, instId: Int) {
             }
             Text("Hold - резкая смена формы. Плавно/Линейно - кадры символа между двумя ключами проигрываются по кривой.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            androidx.compose.material3.Switch(checked = loop, onCheckedChange = { loop = it; vm.setSymbolLoop(instId, it) })
-            Text("Цикл без ключей (внутренняя анимация по кругу)", fontSize = 12.sp)
+        // Спринт 37: режим без ключей времени - Hold / Цикл / Один раз (Play Once)
+        Text("Без ключей времени:", fontSize = 12.sp)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (mode in com.vibetoon.domain.project.SymbolPlayback.ALL)
+                AssistChip(onClick = { playMode = mode; vm.setSymbolPlayback(instId, mode) },
+                    label = { Text(com.vibetoon.domain.project.SymbolPlayback.label(mode), fontSize = 11.sp) },
+                    border = if (mode == playMode) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF7E57C2)) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline))
         }
+        Text(when (playMode) {
+            com.vibetoon.domain.project.SymbolPlayback.LOOP -> "Цикл: внутренняя анимация символа повторяется по кругу."
+            com.vibetoon.domain.project.SymbolPlayback.ONCE -> "Один раз: анимация символа идёт с начала его плашки на таймлайне и замирает на последнем кадре - на холсте, при Play и в экспорте."
+            else -> "Hold: символ стоит на первом кадре."
+        }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton({ vm.removeTimeKey(instId) }) { Text("Убрать ключ", fontSize = 12.sp) }
             TextButton({ vm.clearTimeKeys(instId) }) { Text("Очистить", fontSize = 12.sp) }

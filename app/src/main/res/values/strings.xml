@@ -1832,4 +1832,23 @@
     <string name="ui_svg_import_what_wasn_t_imported">Импорт SVG: что не перенесено</string>
     <string name="ui_got_it">Понятно</string>
     <string name="ui_svg_into_current_project_vector_laye">SVG в текущий проект (векторные слои)</string>
+    <string name="ui_once_then_the_last_frame">один раз, затем последний кадр</string>
+    <string name="ui_without_time_keys">Без ключей времени:</string>
+    <string name="ui_play_once">Один раз</string>
+    <string name="ui_hold_first_frame">Hold (первый кадр)</string>
+    <string name="ui_loop_the_symbol_s_inner_animation_re">Цикл: внутренняя анимация символа повторяется по кругу.</string>
+    <string name="ui_play_once_the_symbol_s_animation_sta">Один раз: анимация символа идёт с начала его плашки на таймлайне и замирает на последнем кадре - на холсте, при Play и в экспорте.</string>
+    <string name="ui_hold_the_symbol_stays_on_its_first_f">Hold: символ стоит на первом кадре.</string>
+    <string name="ui_without_keys_the_symbol_plays_once_a">Символ без ключей проиграется один раз и замрёт на последнем кадре</string>
+    <string name="ui_onion_skin_on_long_press_the_button_">Калька включена: долгое нажатие на кнопку - цвета, глубина и прозрачность до/после (нужен покадровый слой)</string>
+    <string name="ui_drawings_before_previous">Рисунки до (предыдущие)</string>
+    <string name="ui_drawings_after_next">Рисунки после (следующие)</string>
+    <string name="ui_falloff_farther_drawings_are_fainter">Затухание: дальние рисунки бледнее</string>
+    <string name="ui_tint_with_color_off_original_drawing">Тонировать цветом (выкл. - исходные цвета рисунков)</string>
+    <string name="ui_out_of_pegs_ghosts_stay_in_place">Out of Pegs: призраки на своих местах</string>
+    <string name="ui_out_of_pegs_neighboring_drawings_sta">Out of Pegs: соседние рисунки стоят там, где слой был на их кадрах (с ключами трансформации), и не едут вместе с текущим рисунком, пока его двигают или трансформируют. Выкл. - призраки повторяют текущее положение слоя.</string>
+    <string name="ui_works_on_an_image_layer_with_frames_">Работает на слое-картинке с кадрами (кнопка «Добавить пустой кадр»). Настройки сохраняются в настройках приложения и в резервной копии настроек.</string>
+    <string name="ui_depth">Глубина:</string>
+    <string name="ui_color_2">Цвет:</string>
+    <string name="ui_hsv_wheel">Круг HSV</string>
 </resources>
