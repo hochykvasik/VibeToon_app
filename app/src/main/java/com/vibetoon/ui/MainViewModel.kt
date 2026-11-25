@@ -2964,14 +2964,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (primary != null && media.any { it.id == primary && it.kind == MediaKind.BONES }) activeBoneLayer = primary   // спринт 38
         if (_pathDraw.value && (primary == null || media.none { it.id == primary && it.kind == MediaKind.PATH })) { _pathDraw.value = false; pathStroke = null }
         refreshPathOverlay()
-        if (_paintTool.value != null && primary != null) paintTargetId()?.let { requestPaintSize(it) }   // размер текстуры заранее: первый мазок не ждёт
+        // размер текстуры заранее: первый мазок, заливка или выделение не ждут (спринт 50: при любом инструменте, и у слоёв PSD)
+        if (primary != null) (paintTargetId() ?: primaryLeafLayer())?.let { requestPaintSize(it) }
         updateSelectionFrame()
         if (_warpTool.value) ensureWarp()
         if (_perspTool.value) ensurePersp()
         _skinned.value = warpTarget()?.let { it in skinLayers } == true
         _boneStrength.value = _bones.value.firstOrNull { it.id == primary }?.strength
         if (_liquifyTool.value) liqPrefetch()
-        _turb.value = warpTarget()?.let { turbEffective(it) }
+        _turb.value = turbTarget()?.let { turbEffective(it) }
         refreshFxState()
     }
 
@@ -3508,7 +3509,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Во время Play панели (инспектор, эффекты, турбулентность) не пересчитываются каждый кадр: их перерисовка в Compose
         // съедала UI-поток. Значения обновляются при паузе (pause() -> refreshPanelsAfterPlay).
         if (!_playing.value) {
-            warpTarget()?.let { id -> if (id in turbLayers) _turb.value = turbEffective(id) }
+            turbTarget()?.let { id -> if (id in turbLayers) _turb.value = turbEffective(id) }
             refreshFxState()
         }
         refreshBoneOverlay()
@@ -3518,7 +3519,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun refreshPanelsAfterPlay() {
-        warpTarget()?.let { id -> if (id in turbLayers) _turb.value = turbEffective(id) }
+        turbTarget()?.let { id -> if (id in turbLayers) _turb.value = turbEffective(id) }
         refreshFxState()
         refreshInspector()
     }
@@ -3995,7 +3996,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         setProps(snap.lprops)
         _pathRevision.value++   // спринт 38: панель «Положение на пути» перечитывает значение
         refreshFxState()
-        _turb.value = warpTarget()?.let { turbEffective(it) }
+        _turb.value = turbTarget()?.let { turbEffective(it) }
         textJob?.cancel()
         rebuildLayers()
         val known = layers.mapTo(HashSet()) { it.id } + media.filter { !it.isVisual }.map { it.id } + _bones.value.map { it.id }
@@ -4171,7 +4172,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pid = projectId ?: return
         if (_playing.value) return
         val item = media.firstOrNull { it.id == id }
-        if (item == null || !item.isVisual) { _state.value = UiState.Message("Дублировать можно картинки, видео, текст и рисунки"); return }
+        // спринт 50: слой PSD дублируется копией его пикселей (с правками кистью) в новый слой-картинку
+        if (item == null && id < MEDIA_ID_BASE && layers.any { it.id == id && it.kind == LayerKind.LAYER && !it.isEmpty }) { duplicatePsdLayer(id, above); return }
+        if (item == null || !item.isVisual) { _state.value = UiState.Message("Дублировать можно картинки, видео, текст, рисунки и слои PSD"); return }
         if (item.kind == MediaKind.BONES) { _state.value = UiState.Message("Слой костей не дублируется: создайте новый и нарисуйте кости"); return }
         checkpoint("dup", force = true)
         val newId = nextMediaId()
@@ -4210,6 +4213,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         markDirty()
         _state.value = UiState.Message("Слой продублирован")
     }
+
+    /**
+     * Спринт 50: дубликат слоя PSD - слой-картинка PNG с его текущими пикселями (вместе с правками кистью и Liquify), в той же
+     * группе прямо над исходным, с трансформацией, ключами, клипом, эффектами и свойствами (сдвиги переведены в холст).
+     */
+    private fun duplicatePsdLayer(id: Int, above: Int?) {
+        val pid = projectId ?: return
+        val info = layers.firstOrNull { it.id == id } ?: return
+        if (psdDupBusy) { _state.value = UiState.Message("Подождите завершения операции"); return }
+        psdDupBusy = true
+        val fitAt = fit
+        val parent = info.parentId
+        viewModelScope.launch {
+            try {
+                val lp = readLayer(id) ?: run { _state.value = UiState.Message("Слой ещё не загружен, повторите"); return@launch }
+                val newId = nextMediaId()
+                val name = "dup_${java.util.UUID.randomUUID()}.png"
+                val saved = withContext(decodeDispatcher) {
+                    val argb = com.vibetoon.domain.raster.LayerDetach.toArgb(lp.bytes, 8, lp.w, lp.h) ?: return@withContext false
+                    val bmp = android.graphics.Bitmap.createBitmap(argb, lp.w, lp.h, android.graphics.Bitmap.Config.ARGB_8888)
+                    val ok = try { projects.mediaFile(pid, name).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } } finally { bmp.recycle() }
+                    ok
+                }
+                if (!saved || projectId != pid || layers.none { it.id == id }) { runCatching { projects.mediaFile(pid, name).delete() }; return@launch }
+                val r = com.vibetoon.domain.raster.LayerDetach.mediaRect(fitAt, info.x.toFloat(), info.y.toFloat(), info.width.toFloat(), info.height.toFloat())
+                val item = MediaItem(newId, MediaKind.IMAGE, dn("${layerName(id)} копия"), "assets/$name", lp.w, lp.h, r[0], r[1], r[2], r[3])
+                checkpoint("dup", force = true)
+                media += item
+                if (parent != -1) regroup = regroup.filter { it.first != newId } + (newId to parent)
+                cloneLayerState(id, newId, psd = true, fitAt = fitAt)
+                rebuildLayers()
+                com.vibetoon.domain.model.StackOrder.place(layers, stackOrder, newId, id, above = true)?.let { stackOrder = it; rebuildLayers() }
+                pushScene()
+                withContext(decodeDispatcher) { runCatching { uploadTextureFor(pid, item) } }
+                RenderHost.view?.requestRender()
+                if (above != null) dropLayer(newId, above)
+                selectLayer(newId)
+                markDirty()
+                _state.value = UiState.Message("Слой продублирован")
+            } finally { psdDupBusy = false }
+        }
+    }
+    private var psdDupBusy = false
 
     // ---- глаз, замок, имя, копирование, очистка (контекстное меню слоя) ----
 
@@ -6134,7 +6180,91 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val i = rows.indexOfFirst { it.layer.id == id }
         val below = rows.getOrNull(i + 1)?.layer
         if (i < 0 || below == null || below.kind != LayerKind.LAYER) { _state.value = UiState.Message("Под слоем нет обычного слоя, с которым можно слить"); return }
+        if (mergeDownIntoPixels(id, below.id)) return
         mergeLayers(setOf(id, below.id))
+    }
+
+    private var mergeDownBusy = false
+
+    /** Слой, пиксели которого можно править напрямую: картинка (не векторная, без покадровых рисунков) или слой PSD. */
+    private fun mergePixelLayer(id: Int): Boolean {
+        val l = layers.firstOrNull { it.id == id } ?: return false
+        if (l.kind != LayerKind.LAYER || l.isEmpty || id >= BONE_ID_BASE) return false
+        val m = media.firstOrNull { it.id == id } ?: return id < MEDIA_ID_BASE
+        return m.kind == MediaKind.IMAGE && !m.vector && m.cells.isEmpty()
+    }
+
+    /**
+     * Спринт 50: «Слить вниз» в пиксели нижнего слоя. Верхний слой накладывается своим режимом наложения (Экран, Умножение,
+     * Добавление...), прозрачностью и обтравкой по тем же формулам, что и рендерер; нижний слой остаётся на своём месте,
+     * в своей группе, со своими ключами и свойствами (его Opacity запекается в пиксели). Один шаг Undo. false - случай
+     * не подходит (разные группы, эффекты, деформеры, обрезка, режим нижнего не Обычный, верхний выходит за рамку нижнего):
+     * тогда работает прежнее слияние снимком.
+     */
+    private fun mergeDownIntoPixels(top: Int, bottom: Int): Boolean {
+        val pid = projectId ?: return true
+        if (_playing.value || stroker != null) return true
+        if (mergeDownBusy || _selectionExtractBusy.value) { _state.value = UiState.Message("Подождите завершения операции"); return true }
+        val lt = layers.firstOrNull { it.id == top } ?: return false
+        val lb = layers.firstOrNull { it.id == bottom } ?: return false
+        if (lt.parentId != lb.parentId || !mergePixelLayer(top) || !mergePixelLayer(bottom)) return false
+        if (isLockedId(top) || isLockedId(bottom)) { lockedNotice(); return true }
+        val pt = layerPropsOf(top); val pb = layerPropsOf(bottom)
+        if (!pt.visible || !pb.visible) { _state.value = UiState.Message("Скрытый слой не сливается: включите глаз у обоих слоёв"); return true }
+        fun plain(id: Int, p: LayerProps) = p.mask < 0 && p.path < 0 && p.crop == null && !p.hasColor && layerProps.values.none { it.mask == id } &&
+            fxLayers[id].isNullOrEmpty() && id !in warpLayers && id !in meshLayers && id !in perspLayers && id !in skinLayers &&
+            id !in turbLayers && id !in pinLayers && id !in denseWarps
+        if (!plain(top, pt) || !plain(bottom, pb)) return false
+        val bottomBlend = SceneBuilder.blendCode(pb.blend)
+        if (bottomBlend != SceneBuilder.BLEND_NORMAL && bottomBlend != SceneBuilder.BLEND_PASS) return false
+        val mode = SceneBuilder.blendCode(pt.blend)
+        val opacity = pt.opacity * effective(top).opacity
+        val clipped = pt.clip && !pb.clip
+        val bottomOpacity = pb.opacity
+        val qt = texQuad(top)?.copyOf() ?: return false
+        val qb = texQuad(bottom)?.copyOf() ?: return false
+        val frame = _frame.value
+        mergeDownBusy = true
+        viewModelScope.launch {
+            var fallback = false
+            try {
+                val bt = readLayer(bottom) ?: run { _state.value = UiState.Message("Слой ещё не загружен, повторите"); return@launch }
+                val tp = readLayer(top) ?: run { _state.value = UiState.Message("Слой ещё не загружен, повторите"); return@launch }
+                val map = com.vibetoon.domain.raster.LayerMergeMath.pixelMap(qb, bt.w, bt.h, qt, tp.w, tp.h) ?: run { fallback = true; return@launch }
+                val res = withContext(Dispatchers.Default) {
+                    if (!clipped && com.vibetoon.domain.raster.LayerMergeMath.topOutside(tp.bytes, 8, tp.w, tp.h, map, bt.w, bt.h)) null
+                    else Result.success(com.vibetoon.domain.raster.LayerMergeMath.merge(bt.bytes, 8, bt.w, bt.h, tp.bytes, 8, tp.w, tp.h, map, mode, opacity, clipped, bottomOpacity))
+                } ?: run { fallback = true; return@launch }
+                if (projectId != pid || _frame.value != frame || _playing.value || stroker != null || layers.none { it.id == top } || layers.none { it.id == bottom } ||
+                    texQuad(top)?.contentEquals(qt) != true || texQuad(bottom)?.contentEquals(qb) != true) {
+                    _state.value = UiState.Message("Слой изменился: повторите слияние"); return@launch
+                }
+                val change = res.getOrNull()
+                checkpoint("merge-down", force = true)
+                if (bottomOpacity < 1f) setProps(layerProps + (bottom to pb.copy(opacity = 1f)))
+                applySelection(setOf(top), top)
+                deleteSelected(cp = false)
+                if (change != null) {
+                    val r = change.rect
+                    val op = PaintOp(bottom, r.x, r.y, r.w, r.h, change.before, change.after)
+                    val saved = undoStack.removeLast()
+                    undoStack.addLast(saved.withPaint(op))
+                    RenderHost.view?.paintRestore(bottom, r.x, r.y, r.w, r.h, change.after) { }
+                    invalidateThumb(bottom)
+                    paintDirty += bottom
+                    viewModelScope.launch(Dispatchers.Default) { op.compress(); withContext(Dispatchers.Main) { enforcePaintBudget() } }
+                }
+                pushScene()
+                selectLayer(bottom)
+                markDirty()
+                RenderHost.view?.requestRender()
+                _state.value = UiState.Message("Слито вниз: результат с режимом наложения сохранён в нижнем слое")
+            } finally {
+                mergeDownBusy = false
+                if (fallback) mergeLayers(setOf(top, bottom))
+            }
+        }
+        return true
     }
 
     fun mergeVisible() {
@@ -6149,6 +6279,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pid = projectId ?: return
         val i = media.indexOfFirst { it.id == id }
         val m = media.getOrNull(i)
+        if (m == null && id < MEDIA_ID_BASE && layers.any { it.id == id && it.kind == LayerKind.LAYER }) {
+            // спринт 50: слой PSD уже растровый - кисть, ластик, выделение, «Вырезать/Копировать в новый слой» и «Дублировать» работают прямо на нём
+            _state.value = UiState.Message("Слой PSD уже растровый: рисуйте, выделяйте и отделяйте части прямо на нём"); return
+        }
         if (m == null || !m.isText) { _state.value = UiState.Message("Слой уже растровый"); return }
         viewModelScope.launch {
             val fps = _animation.value.settings.fps.coerceAtLeast(1)
@@ -7854,8 +7988,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** «Стирать/размазывать только выбранные слои-контуры»: ластик и смаз действуют только на выбранных векторных слоях. */
     private fun onlyPathLayers(): Boolean = appSettings()?.onlyEraseSelectedPaths == true
 
+    /**
+     * Спринт 50: основной выбранный слой как цель кисти, ластика, заливки и выделения - и при мультивыборе (раньше
+     * кисть требовала ровно один отмеченный слой, а авто-режим в этом случае создавал новый пустой слой).
+     */
+    private fun primaryLeafLayer(): Int? = com.vibetoon.domain.paint.PaintTargetPolicy.primary(_selected.value, _selection.value) { id ->
+        id < BONE_ID_BASE && layers.any { it.id == id && it.kind == LayerKind.LAYER }
+    }
+
     private fun paintTargetId(): Int? {
-        val t = warpTarget() ?: return null
+        val t = warpTarget() ?: primaryLeafLayer() ?: return null
         if (isLockedId(t)) return null   // замок: по слою рисовать нельзя
         val m = media.firstOrNull { it.id == t }
         if (m != null) return if (m.kind == MediaKind.IMAGE && !m.vector) t else null
@@ -7914,8 +8056,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (_paintTool.value == PaintTool.ERASER) { _state.value = UiState.Message("На векторном слое ластика нет: «Убрать последнюю» удаляет примитив"); return false }
             return vectorDown(vid, sx, sy, pressure)
         }
+        // спринт 50: выбранный слой под замком не подменяется новым пустым слоем - сообщаем о замке
+        (warpTarget() ?: primaryLeafLayer())?.let { if (isLockedId(it)) { lockedNotice(); return false } }
         val id = ensurePixelTarget() ?: run {
-            _state.value = UiState.Message("Рисовать можно на слое-картинке: выберите его или создайте «Новый слой»")
+            _state.value = UiState.Message("Рисовать можно на слое-картинке или слое PSD: выберите его или создайте «Новый слой»")
             return false
         }
         val size = paintSizes[id] ?: run {
@@ -9228,6 +9372,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val frame = _frame.value
         val src = media.firstOrNull { it.id == s.id }
         val sourceTransform = base[s.id] ?: LayerTransform()
+        if (src == null && s.id < MEDIA_ID_BASE && layers.any { it.id == s.id && it.kind == LayerKind.LAYER }) {
+            // спринт 50: пиксели слоя PSD живут в его рамке - поворот, отражение и вынос за край делаются над отделённой частью
+            _state.value = UiState.Message("Слой PSD: сначала «Вырезать в новый слой» или «Копировать в новый слой», затем трансформируйте часть")
+            return
+        }
         if (src == null || !src.file.endsWith(".png", ignoreCase = true) || !safeSelectionSource(src, separating = false) || _selected.value != s.id || _selection.value.size != 1) {
             _state.value = UiState.Message(if (src != null && !src.file.endsWith(".png", ignoreCase = true))
                 "Для переноса за границы нужен PNG; GIF и другие форматы пока не поддерживаются"
@@ -9462,6 +9611,61 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Спринт 50: можно ли отделить выделение от слоя [id] в новый слой (null - можно). Слой-картинка PNG (и растрированный
+     * текст) или слой PSD; ключи, трансформация, клип, эффекты, свойства и привязка копируются новому слою, а не запрещают
+     * операцию. Остаются отказы, при которых часть не совпала бы с источником: деформеры, маски и пути, обтравочный сосед.
+     */
+    private fun detachRejection(id: Int): String? {
+        val layer = layers.firstOrNull { it.id == id }
+        if (layer == null || layer.kind != LayerKind.LAYER || id >= BONE_ID_BASE) return "Выберите слой-картинку или слой PSD"
+        val m = media.firstOrNull { it.id == id }
+        if (m != null) {
+            if (m.kind != MediaKind.IMAGE || m.vector || m.background || m.cells.isNotEmpty()) return "Этот тип слоя пока не поддерживается"
+            if (!m.file.endsWith(".png", ignoreCase = true)) return "Для отделения нужен PNG; GIF и другие форматы пока не поддерживаются"
+        } else if (id >= MEDIA_ID_BASE || layer.isEmpty) return "Этот тип слоя пока не поддерживается"
+        val groupIds = layers.filter { it.kind == LayerKind.GROUP_OPEN || it.kind == LayerKind.GROUP_CLOSED }.mapTo(HashSet()) { it.id }
+        if (!com.vibetoon.domain.raster.GroupSelectionPolicy.supports(id, layers, groupIds,
+                hiddenIds() + _clips.value.filterValues { !it.visibleAt(_frame.value) }.keys, layerProps.filterValues { it.locked }.keys))
+            return "Слой и его группы должны быть видимы и разблокированы"
+        val props = layerPropsOf(id)
+        if (props.mask >= 0 || props.path >= 0 || layerProps.values.any { it.mask == id }) return "Слой с маской, слой-маска и слой на пути пока не поддерживаются"
+        if (id in warpLayers || id in meshLayers || id in perspLayers || id in skinLayers || id in turbLayers || id in pinLayers || id in denseWarps)
+            return "Деформация слоя пока не поддерживается"
+        // трансформация и ключи копируются новому слою (та же рамка и опорная точка), годится и отражение (масштаб < 0)
+        val t = base[id] ?: LayerTransform()
+        if ((override[id] ?: LayerTransform()) != LayerTransform() || !(t.dx.isFinite() && t.dy.isFinite() && t.rotation.isFinite() &&
+                t.scaleX.isFinite() && t.scaleY.isFinite() && t.scaleX != 0f && t.scaleY != 0f && t.opacity.isFinite())) return "Трансформация слоя пока не поддерживается"
+        val sibs = com.vibetoon.domain.model.StackOrder.children(layers, layer.parentId)
+        val above = sibs.getOrNull(sibs.indexOf(id) + 1)
+        if (above != null && com.vibetoon.domain.raster.LayerDetach.breaksClipping(layerPropsOf(above).clip, props.clip))
+            return "Над слоем есть обтравочный слой: новый слой встал бы под ним и изменил обтравку"
+        return null
+    }
+
+    /**
+     * Спринт 50: новый слой-картинка [to] повторяет слой [from]: трансформацию, ключи, клип, эффекты (с ключами), свойства
+     * (прозрачность, режим, обтравка, цветокоррекция, глубина), привязку к родителю и опорную точку. У слоя PSD сдвиги
+     * переводятся из координат PSD в координаты холста (LayerDetach).
+     */
+    private fun cloneLayerState(from: Int, to: Int, psd: Boolean, fitAt: Affine2D) {
+        val k = if (psd) com.vibetoon.domain.raster.LayerDetach.scaleOf(fitAt) else 1f
+        base[from]?.let { base[to] = com.vibetoon.domain.raster.LayerDetach.transform(it, k) }
+        _animation.value.tracks[from]?.let { tr ->
+            _animation.value = _animation.value.copy(tracks = _animation.value.tracks + (to to AnimationTrack(to, com.vibetoon.domain.raster.LayerDetach.keys(tr.keys, k))))
+        }
+        _clips.value[from]?.let { _clips.value = _clips.value + (to to it) }
+        fxLayers[from]?.let { effects ->
+            fxLayers = fxLayers + (to to effects)
+            copyEffectTracks(from, to)
+        }
+        val props = (if (psd) layerPropsOf(from) else layerProps[from])
+            ?.copy(name = null, mask = -1, maskInvert = false, maskOff = false, path = -1, pathOrient = false, locked = false)
+        if (props != null && props != LayerProps()) setProps(layerProps + (to to props))
+        _links.value[from]?.let { _links.value = _links.value + (to to it) }
+        pivotOverrides[from]?.let { p -> pivotOverrides = pivotOverrides + (to to if (psd) com.vibetoon.domain.raster.LayerDetach.pivot(fitAt, p) else p) }
+    }
+
     /** Cut и Copy используют одну маску; PSD, анимация и деформеры блокируются до сквозной поддержки. */
     fun selectionToNewLayer(partName: String) = extractSelection(cut = true, partName = partName)
     fun copySelectionToNewLayer(partName: String) = extractSelection(cut = false, partName = partName)
@@ -9480,10 +9684,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         fun sourceUnchanged(): Boolean = layers.firstOrNull { it.id == s.id }?.parentId == sourceParent &&
             sourceQuad != null && sourceQuad.contentEquals(texQuad(s.id))
         val src = media.firstOrNull { it.id == s.id }
-        if (src == null || !src.file.endsWith(".png", ignoreCase = true) || !safeSelectionSource(src) || _selected.value != s.id || _selection.value.size != 1) {
-            _state.value = UiState.Message(if (src != null && !src.file.endsWith(".png", ignoreCase = true))
-                "Для отделения нужен PNG; GIF и другие форматы пока не поддерживаются" else selectionSourceMessage(src)); return
-        }
+        // спринт 50: источник - слой-картинка PNG (в том числе растрированный) или слой PSD; мультивыбор не мешает
+        val psd = src == null
+        detachRejection(s.id)?.let { _state.value = UiState.Message(it); return }
+        if (_selected.value != s.id) { _state.value = UiState.Message("Выделение сделано на другом слое: выберите его или выделите область заново"); return }
+        val fitAt = fit
+        val psdInfo = if (psd) layers.firstOrNull { it.id == s.id } ?: return else null
+        val rect = if (psdInfo != null) com.vibetoon.domain.raster.LayerDetach.mediaRect(fitAt, psdInfo.x.toFloat(), psdInfo.y.toFloat(), psdInfo.width.toFloat(), psdInfo.height.toFloat())
+            else floatArrayOf(src!!.x, src.y, src.w, src.h)
+        val sourceName = src?.name ?: layerName(s.id)
         _selectionExtractBusy.value = true
         val fileName = "selection_${java.util.UUID.randomUUID()}.png"
         viewModelScope.launch {
@@ -9509,7 +9718,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     } catch (t: Throwable) { bmp.recycle(); throw t }
                 }
                 if (projectId != pid || RenderHost.view !== renderView || sel !== s || _selected.value != s.id || _playing.value || _frame.value != frame ||
-                    media.firstOrNull { it.id == s.id } != src || (base[s.id] ?: LayerTransform()) != sourceTransform || !sourceUnchanged() || !safeSelectionSource(src)) {
+                    media.firstOrNull { it.id == s.id } != src || (base[s.id] ?: LayerTransform()) != sourceTransform || !sourceUnchanged() || detachRejection(s.id) != null) {
                     _state.value = UiState.Message("Слой изменился: повторите операцию"); return@extraction
                 }
                 val newId = nextMediaId()
@@ -9529,15 +9738,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@extraction
                 }
                 if (projectId != pid || RenderHost.view !== renderView || sel !== s || _selected.value != s.id || _playing.value || _frame.value != frame ||
-                    media.firstOrNull { it.id == s.id } != src || (base[s.id] ?: LayerTransform()) != sourceTransform || !sourceUnchanged() || !safeSelectionSource(src)) {
+                    media.firstOrNull { it.id == s.id } != src || (base[s.id] ?: LayerTransform()) != sourceTransform || !sourceUnchanged() || detachRejection(s.id) != null) {
                     _state.value = UiState.Message("Слой изменился: повторите операцию"); return@extraction
                 }
-                val item = MediaItem(newId, MediaKind.IMAGE, "${src.name} — $partName", "assets/$fileName", s.w, s.h, src.x, src.y, src.w, src.h)
+                val item = MediaItem(newId, MediaKind.IMAGE, "$sourceName — $partName", "assets/$fileName", s.w, s.h, rect[0], rect[1], rect[2], rect[3])
                 var previous: Snapshot? = null
                 var undoBefore: List<Snapshot> = emptyList(); var redoBefore: List<Snapshot> = emptyList()
                 val change = part.cut
                 // Полные снимки позволяют Undo/Redo ждать подтверждённую замену GL до публикации дерева.
-                val history = if (cut) withContext(Dispatchers.Default) {
+                val history = if (cut && src != null) withContext(Dispatchers.Default) {
                     val before = lp.bytes.copyOfRange(8, 8 + s.w * s.h * 4)
                     val after = before.copyOf()
                     for (y in 0 until change.rect.h) System.arraycopy(change.after, y * change.rect.w * 4, after,
@@ -9546,6 +9755,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         com.vibetoon.domain.raster.ExpandedLayerSnapshot.State(src, s.w, s.h, before),
                         com.vibetoon.domain.raster.ExpandedLayerSnapshot.State(src, s.w, s.h, after), ByteArray(0)))
                 } else null
+                // спринт 50: у слоя PSD нет файла-картинки - вырезанная часть отменяется как штрих кисти (assets/liq_<id>.png)
+                val psdCut = if (cut && psd) PaintOp(s.id, change.rect.x, change.rect.y, change.rect.w, change.rect.h, change.before, change.after) else null
                 var published = false
                 withContext(kotlinx.coroutines.NonCancellable) {
                     suspend fun patch(data: ByteArray): Boolean? {
@@ -9568,7 +9779,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         },
                         publish = {
                             check(projectId == pid && RenderHost.view === renderView && sel === s && _frame.value == frame &&
-                                media.firstOrNull { it.id == s.id } == src && (base[s.id] ?: LayerTransform()) == sourceTransform && sourceUnchanged() && safeSelectionSource(src))
+                                media.firstOrNull { it.id == s.id } == src && (base[s.id] ?: LayerTransform()) == sourceTransform && sourceUnchanged() && detachRejection(s.id) == null)
                             previous = snapshot()
                             undoBefore = undoStack.toList(); redoBefore = redoStack.toList()
                             published = true
@@ -9580,10 +9791,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 // PNG источника версионируется до публикации нового дерева в JSON.
                                 versionedRasterIds.add(s.id)
                             }
-                            media.add(media.indexOfFirst { it.id == s.id } + 1, item)
+                            if (psdCut != null) {
+                                val saved = undoStack.removeLast()
+                                undoStack.addLast(saved.withPaint(psdCut))
+                                invalidateThumb(s.id); paintDirty += s.id
+                            }
+                            val at = media.indexOfFirst { it.id == s.id }
+                            if (at >= 0) media.add(at + 1, item) else media.add(item)
                             if (sourceParent != -1) regroup = regroup.filter { it.first != newId } + (newId to sourceParent)
-                            if (sourceTransform != LayerTransform()) base[newId] = sourceTransform
-                            rebuildLayers(); pushScene()
+                            // спринт 50: часть наследует трансформацию, ключи, клип, эффекты, свойства и привязку источника
+                            cloneLayerState(s.id, newId, psd, fitAt)
+                            rebuildLayers()
+                            com.vibetoon.domain.model.StackOrder.place(layers, stackOrder, newId, s.id, above = true)?.let { stackOrder = it; rebuildLayers() }
+                            pushScene()
                             clearSelection(); selectLayer(newId)
                             contentBoxScheduled(newId); markDirty(); RenderHost.view?.requestRender()
                         },
@@ -9605,6 +9825,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         com.vibetoon.domain.raster.TextureTransaction.Outcome.COMMITTED -> {
                             committed = true
                             if (history != null) enforcePaintBudget()
+                            if (psdCut != null) viewModelScope.launch(Dispatchers.Default) { psdCut.compress(); withContext(Dispatchers.Main) { enforcePaintBudget() } }
                             _state.value = UiState.Message(if (cut) "Выделение вырезано в новый слой" else "Выделение скопировано в новый слой")
                         }
                         com.vibetoon.domain.raster.TextureTransaction.Outcome.REJECTED,
@@ -10721,17 +10942,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun refreshFxState() {
         val group = selectedEffectGroup()
         val plan = group?.let { groupEffectPlan(it, allowAnimated = true) }
-        _groupFxBlocked.value = group != null && plan?.rejection != null
+        // спринт 50: эффекты группы - у самой группы (рендерер применяет их к группе целиком); прежняя общая цепочка
+        // вложенных слоёв показывается ниже, только если она есть и совпадает у всех слоёв
+        val legacy = plan != null && plan.rejection == null && plan.ids.isNotEmpty() && plan.effects.isNotEmpty()
+        _groupFxBlocked.value = group != null && !legacy
         _groupFxInfo.value = when {
             group == null -> ""
-            plan?.rejection != null -> "Группа: Вращение, Качание и Ось растяжения работают у самой группы; остальные эффекты недоступны - цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка"
-            else -> "Группа: Вращение, Качание и Ось растяжения - у самой группы (вокруг её пивота, ключи на строке группы); остальные эффекты - на вложенных слоях"
+            legacy -> "Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы). Ниже своих - прежняя общая цепочка вложенных слоёв"
+            else -> "Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы), независимо от слоёв внутри"
         }
         val id = warpTarget()
         _layerFx.value = if (group != null) {
-            // свои трансформации группы (сверху) + общая цепочка вложенных слоёв
+            // свои эффекты группы (сверху) + прежняя общая цепочка вложенных слоёв
             val own = com.vibetoon.domain.anim.EffectTracks.at(group, com.vibetoon.domain.anim.GroupEffects.own(fxLayers, group), _animation.value, _frame.value.toFloat())
-            val nested = if (plan?.rejection == null && plan?.ids?.isNotEmpty() == true) com.vibetoon.domain.anim.EffectTracks.at(plan.ids.first(), plan.effects, _animation.value, _frame.value.toFloat()) else emptyList()
+            val nested = if (legacy) com.vibetoon.domain.anim.EffectTracks.at(plan!!.ids.first(), plan.effects, _animation.value, _frame.value.toFloat()) else emptyList()
             own + nested
         } else if (id == null) emptyList() else com.vibetoon.domain.anim.EffectTracks.at(id, fxLayers[id].orEmpty(), _animation.value, _frame.value.toFloat())
     }
@@ -10775,7 +10999,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val e = EffectMath.create(type) ?: return
         val group = selectedEffectGroup()
         if (group != null && com.vibetoon.domain.anim.GroupEffects.addsToGroupItself(type)) {
-            // Вращение/Качание/Ось растяжения - на саму группу: её матрица вокруг пивота группы, дети наследуют целиком
+            // Спринт 50: любой эффект - на саму группу (трансформации - её матрица, шейдерные - буфер группы целиком)
             if (_playing.value) { _state.value = UiState.Message("Остановите воспроизведение перед редактированием эффектов группы"); return }
             if (isLockedId(group)) { lockedNotice(); return }
             if (fxLayers[group].orEmpty().size >= EffectMath.MAX_PER_LAYER) { _state.value = UiState.Message("На слое не больше ${EffectMath.MAX_PER_LAYER} эффектов"); return }
@@ -10935,9 +11159,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun turbEffective(id: Int): Turb? = turbLayers[id]?.let { TurbMath.at(id, it, _frame.value, _animation.value) }
 
-    /** Включает/выключает Turbulent Displace на выделенном слое. */
+    /** Спринт 50: Turbulent Displace - у слоя или у группы целиком (буфер группы, см. GroupTurb). */
+    private fun turbTarget(): Int? = warpTarget() ?: selectedEffectGroup()
+
+    /** Включает/выключает Turbulent Displace на выделенном слое или группе. */
     fun toggleTurb() {
-        val t = warpTarget() ?: run { _state.value = UiState.Message("Выберите один слой"); return }
+        val t = turbTarget() ?: run { _state.value = UiState.Message("Выберите один слой"); return }
+        if (_playing.value) return
+        if (isLockedId(t)) { lockedNotice(); return }
         checkpoint("turb", force = true)
         turbLayers = if (t in turbLayers) turbLayers - t else turbLayers + (t to Turb())
         if (t !in turbLayers) {   // выключили: ключи параметров слоя удаляются
@@ -10951,7 +11180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Меняет один параметр: 0 - Intensity (%), 1 - Size, 2 - Complexity, 3 - Line Boil (кадров). */
     fun setTurbParam(which: Int, v: Float) {
-        val t = warpTarget() ?: return
+        val t = turbTarget() ?: return
         val cur = turbLayers[t] ?: return
         checkpoint("turb-$which")
         if (_fx.value) {

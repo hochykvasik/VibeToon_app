@@ -72,7 +72,7 @@ class BoneKeysGroupSwingTest {
         assertTrue(GroupEffects.addsToGroupItself(EffectMath.SWING))
         assertTrue(GroupEffects.addsToGroupItself(EffectMath.SPIN))
         assertTrue(GroupEffects.addsToGroupItself(EffectMath.STRETCH_AXIS))
-        assertFalse(GroupEffects.addsToGroupItself(EffectMath.BLUR))
+        assertTrue(GroupEffects.addsToGroupItself(EffectMath.BLUR))   // спринт 50: шейдерные эффекты - тоже у самой группы
         val fx = mapOf(7 to listOf(EffectMath.create(EffectMath.SWING)!!), 8 to listOf(EffectMath.create(EffectMath.BLUR)!!))
         assertEquals(1, GroupEffects.own(fx, 7).size)
         // список инспектора группы: свои трансформации, затем общая цепочка вложенных слоёв

@@ -1803,4 +1803,18 @@ Hold - резкая смена формы. Остальные переходы �
 Добавлен слой «{}» (выбрано: {})|Added layer “{}” (selected: {})
 Снят слой «{}» (выбрано: {})|Removed layer “{}” (selected: {})
 Слой «{}» уже выбран (выбрано: {})|Layer “{}” is already selected (selected: {})
+Дублировать можно картинки, видео, текст, рисунки и слои PSD|Only images, video, text, drawings and PSD layers can be duplicated
+Скрытый слой не сливается: включите глаз у обоих слоёв|A hidden layer can't be merged: turn on visibility for both layers
+Слой изменился: повторите слияние|The layer changed: merge again
+Слито вниз: результат с режимом наложения сохранён в нижнем слое|Merged down: the blended result is kept in the lower layer
+Слой PSD уже растровый: рисуйте, выделяйте и отделяйте части прямо на нём|A PSD layer is already raster: draw, select and split parts right on it
+Рисовать можно на слое-картинке или слое PSD: выберите его или создайте «Новый слой»|You can draw on an image layer or PSD layer: select one or create a New layer
+Слой PSD: сначала «Вырезать в новый слой» или «Копировать в новый слой», затем трансформируйте часть|PSD layer: first use Cut to new layer or Copy to new layer, then transform the part
+Выберите слой-картинку или слой PSD|Select an image layer or PSD layer
+Слой и его группы должны быть видимы и разблокированы|The layer and its groups must be visible and unlocked
+Слой с маской, слой-маска и слой на пути пока не поддерживаются|Masked layers, mask layers and layers on a path aren't supported yet
+Над слоем есть обтравочный слой: новый слой встал бы под ним и изменил обтравку|A clipped layer sits above: the new layer would go under it and change the clipping
+Выделение сделано на другом слое: выберите его или выделите область заново|The selection was made on another layer: select it or make the selection again
+Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы). Ниже своих - прежняя общая цепочка вложенных слоёв|Group: effects apply to the whole group - on the canvas, in Play and export (keys on the group row). Below the group's own effects is the former shared chain of nested layers
+Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы), независимо от слоёв внутри|Group: effects apply to the whole group - on the canvas, in Play and export (keys on the group row), regardless of the layers inside
 """

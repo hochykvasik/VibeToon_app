@@ -52,8 +52,12 @@ object GroupEffects {
     /** Собственные эффекты группы (туда добавляются только трансформации, см. [addsToGroupItself]). */
     fun own(fx: Map<Int, List<Effect>>, group: Int): List<Effect> = fx[group].orEmpty()
 
-    /** Куда идёт новый эффект группы: трансформация - на саму группу, остальное - на вложенные слои. */
-    fun addsToGroupItself(type: Int): Boolean = EffectMath.isTransform(type)
+    /**
+     * Куда идёт новый эффект группы. Спринт 50: любой эффект - на саму группу: трансформации меняют её матрицу, шейдерные
+     * эффекты рендерер применяет к буферу группы целиком (холст, Play и экспорт), независимо от состава группы
+     * (слои PSD, картинки, ключи, трансформации, обтравка). Прежняя общая цепочка вложенных слоёв остаётся редактируемой.
+     */
+    fun addsToGroupItself(type: Int): Boolean = EffectMath.isTransform(type) || EffectMath.def(type) != null
 
     /** Строка инспектора группы [index] -> (свой эффект?, индекс внутри своей части списка). */
     fun route(index: Int, ownCount: Int): Pair<Boolean, Int> =

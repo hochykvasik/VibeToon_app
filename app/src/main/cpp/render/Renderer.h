@@ -206,6 +206,7 @@ private:
         uint64_t cacheKey = 0;
         uint64_t hash = 0;
         int missingBefore = 0;
+        bool fx = false;   // спринт 50: эффекты группы при закрытии
     };
     // Пакет 27: сохранённый FBO поддерева группы (см. GroupCachePolicy.h).
     struct GroupEntry {
@@ -274,6 +275,8 @@ private:
     void drawLayer(const Item& it, float opacity, int blend, bool clipMode);
     void drawLayerPlain(const Item& it, float opacity, int blend, bool clipMode);
     void runEffect(GLuint srcTex, const float* e);   // e[10]: тип, p0..p7, время
+    bool hasGroupEffects(int groupId) const;         // спринт 50: у группы есть шейдерные эффекты
+    Fbo runGroupEffects(const Fbo& src, int groupId);   // спринт 50: цепочка эффектов над буфером группы (src освобождается)
     void compositeFbo(const Fbo& f, float opacity, int blend);
     void multiplyByMask(const Fbo& mask, bool invert = false);   // текущая цель *= альфа маски (или 1 - альфа, спринт 38)
     void drawItem(const Item& it, float opacity, int blend, bool clipMode);   // слой маски - без эффектов

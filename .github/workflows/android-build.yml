@@ -48,6 +48,8 @@ jobs:
           /tmp/vibetoon-blend-bind-test
           g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/CropPolicyTest.cpp -o /tmp/vibetoon-crop-policy-test
           /tmp/vibetoon-crop-policy-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/GroupFxPolicyTest.cpp -o /tmp/vibetoon-group-fx-test
+          /tmp/vibetoon-group-fx-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
       - name: Check RU/EN dictionary

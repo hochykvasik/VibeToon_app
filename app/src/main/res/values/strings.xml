@@ -2127,4 +2127,18 @@
     <string name="ui_added_layer_selected">Добавлен слой «{}» (выбрано: {})</string>
     <string name="ui_removed_layer_selected">Снят слой «{}» (выбрано: {})</string>
     <string name="ui_layer_is_already_selected_selected">Слой «{}» уже выбран (выбрано: {})</string>
+    <string name="ui_only_images_video_text_drawings_and_">Дублировать можно картинки, видео, текст, рисунки и слои PSD</string>
+    <string name="ui_a_hidden_layer_can_t_be_merged_turn_">Скрытый слой не сливается: включите глаз у обоих слоёв</string>
+    <string name="ui_the_layer_changed_merge_again">Слой изменился: повторите слияние</string>
+    <string name="ui_merged_down_the_blended_result_is_ke">Слито вниз: результат с режимом наложения сохранён в нижнем слое</string>
+    <string name="ui_a_psd_layer_is_already_raster_draw_s">Слой PSD уже растровый: рисуйте, выделяйте и отделяйте части прямо на нём</string>
+    <string name="ui_you_can_draw_on_an_image_layer_or_ps">Рисовать можно на слое-картинке или слое PSD: выберите его или создайте «Новый слой»</string>
+    <string name="ui_psd_layer_first_use_cut_to_new_layer">Слой PSD: сначала «Вырезать в новый слой» или «Копировать в новый слой», затем трансформируйте часть</string>
+    <string name="ui_select_an_image_layer_or_psd_layer">Выберите слой-картинку или слой PSD</string>
+    <string name="ui_the_layer_and_its_groups_must_be_vis_2">Слой и его группы должны быть видимы и разблокированы</string>
+    <string name="ui_masked_layers_mask_layers_and_layers">Слой с маской, слой-маска и слой на пути пока не поддерживаются</string>
+    <string name="ui_a_clipped_layer_sits_above_the_new_l">Над слоем есть обтравочный слой: новый слой встал бы под ним и изменил обтравку</string>
+    <string name="ui_the_selection_was_made_on_another_la">Выделение сделано на другом слое: выберите его или выделите область заново</string>
+    <string name="ui_group_effects_apply_to_the_whole_gro">Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы). Ниже своих - прежняя общая цепочка вложенных слоёв</string>
+    <string name="ui_group_effects_apply_to_the_whole_gro_2">Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы), независимо от слоёв внутри</string>
 </resources>

@@ -1851,6 +1851,20 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Лассо: обведите слои пальцем" to R.string.ui_lasso_draw_around_layers_with_your_f,
     "Слой закрыт замком" to R.string.ui_layer_is_locked,
     "Под пальцем нет видимого слоя" to R.string.ui_no_visible_layer_under_your_finger,
+    "Дублировать можно картинки, видео, текст, рисунки и слои PSD" to R.string.ui_only_images_video_text_drawings_and_,
+    "Скрытый слой не сливается: включите глаз у обоих слоёв" to R.string.ui_a_hidden_layer_can_t_be_merged_turn_,
+    "Слой изменился: повторите слияние" to R.string.ui_the_layer_changed_merge_again,
+    "Слито вниз: результат с режимом наложения сохранён в нижнем слое" to R.string.ui_merged_down_the_blended_result_is_ke,
+    "Слой PSD уже растровый: рисуйте, выделяйте и отделяйте части прямо на нём" to R.string.ui_a_psd_layer_is_already_raster_draw_s,
+    "Рисовать можно на слое-картинке или слое PSD: выберите его или создайте «Новый слой»" to R.string.ui_you_can_draw_on_an_image_layer_or_ps,
+    "Слой PSD: сначала «Вырезать в новый слой» или «Копировать в новый слой», затем трансформируйте часть" to R.string.ui_psd_layer_first_use_cut_to_new_layer,
+    "Выберите слой-картинку или слой PSD" to R.string.ui_select_an_image_layer_or_psd_layer,
+    "Слой и его группы должны быть видимы и разблокированы" to R.string.ui_the_layer_and_its_groups_must_be_vis_2,
+    "Слой с маской, слой-маска и слой на пути пока не поддерживаются" to R.string.ui_masked_layers_mask_layers_and_layers,
+    "Над слоем есть обтравочный слой: новый слой встал бы под ним и изменил обтравку" to R.string.ui_a_clipped_layer_sits_above_the_new_l,
+    "Выделение сделано на другом слое: выберите его или выделите область заново" to R.string.ui_the_selection_was_made_on_another_la,
+    "Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы). Ниже своих - прежняя общая цепочка вложенных слоёв" to R.string.ui_group_effects_apply_to_the_whole_gro,
+    "Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы), независимо от слоёв внутри" to R.string.ui_group_effects_apply_to_the_whole_gro_2,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */

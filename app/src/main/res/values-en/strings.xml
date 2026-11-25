@@ -2127,4 +2127,18 @@
     <string name="ui_added_layer_selected">Added layer “{}” (selected: {})</string>
     <string name="ui_removed_layer_selected">Removed layer “{}” (selected: {})</string>
     <string name="ui_layer_is_already_selected_selected">Layer “{}” is already selected (selected: {})</string>
+    <string name="ui_only_images_video_text_drawings_and_">Only images, video, text, drawings and PSD layers can be duplicated</string>
+    <string name="ui_a_hidden_layer_can_t_be_merged_turn_">A hidden layer can\'t be merged: turn on visibility for both layers</string>
+    <string name="ui_the_layer_changed_merge_again">The layer changed: merge again</string>
+    <string name="ui_merged_down_the_blended_result_is_ke">Merged down: the blended result is kept in the lower layer</string>
+    <string name="ui_a_psd_layer_is_already_raster_draw_s">A PSD layer is already raster: draw, select and split parts right on it</string>
+    <string name="ui_you_can_draw_on_an_image_layer_or_ps">You can draw on an image layer or PSD layer: select one or create a New layer</string>
+    <string name="ui_psd_layer_first_use_cut_to_new_layer">PSD layer: first use Cut to new layer or Copy to new layer, then transform the part</string>
+    <string name="ui_select_an_image_layer_or_psd_layer">Select an image layer or PSD layer</string>
+    <string name="ui_the_layer_and_its_groups_must_be_vis_2">The layer and its groups must be visible and unlocked</string>
+    <string name="ui_masked_layers_mask_layers_and_layers">Masked layers, mask layers and layers on a path aren\'t supported yet</string>
+    <string name="ui_a_clipped_layer_sits_above_the_new_l">A clipped layer sits above: the new layer would go under it and change the clipping</string>
+    <string name="ui_the_selection_was_made_on_another_la">The selection was made on another layer: select it or make the selection again</string>
+    <string name="ui_group_effects_apply_to_the_whole_gro">Group: effects apply to the whole group - on the canvas, in Play and export (keys on the group row). Below the group\'s own effects is the former shared chain of nested layers</string>
+    <string name="ui_group_effects_apply_to_the_whole_gro_2">Group: effects apply to the whole group - on the canvas, in Play and export (keys on the group row), regardless of the layers inside</string>
 </resources>

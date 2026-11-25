@@ -126,11 +126,11 @@ private fun EffectsTab(vm: MainViewModel) {
             TurbSlider("Line Boil, кадров (0 - выкл)", t.boil.toFloat(), 0f..24f, t.boil.toString()) { vm.setTurbParam(3, it) }
         }
         if (groupFxInfo.isNotEmpty()) Text(groupFxInfo, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-        if (groupFxInfo.isNotEmpty()) androidx.compose.material3.OutlinedButton(
+        if (groupFxInfo.isNotEmpty() && !groupFxBlocked) androidx.compose.material3.OutlinedButton(
             onClick = vm::keyGroupEffects, enabled = !groupFxBlocked && layerFx.isNotEmpty(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
         ) { Text("Ключи эффектов на вложенных слоях", fontSize = 12.sp) }
-        if (groupFxInfo.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (groupFxInfo.isNotEmpty() && !groupFxBlocked) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             androidx.compose.material3.OutlinedButton(onClick = { vm.moveGroupEffectKeys(-1) }, enabled = !groupFxBlocked) { Text("Ключ −1", fontSize = 12.sp) }
             androidx.compose.material3.OutlinedButton(onClick = { vm.moveGroupEffectKeys(1) }, enabled = !groupFxBlocked) { Text("Ключ +1", fontSize = 12.sp) }
             androidx.compose.material3.OutlinedButton(onClick = vm::deleteGroupEffectKeys, enabled = !groupFxBlocked) { Text("Удалить ключи", fontSize = 12.sp) }
@@ -142,7 +142,7 @@ private fun EffectsTab(vm: MainViewModel) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
             ) { Text("+ Добавить эффект", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
-        if (layerFx.isEmpty() && !groupFxBlocked) Text(
+        if (layerFx.isEmpty()) Text(
             "Эффектов нет. Нажмите «+ Добавить эффект»: Хромакей, Размытие, Цветокоррекция, Пикселизация, Свечение, Тень и другие. Цепочка применяется сверху вниз.",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
         )

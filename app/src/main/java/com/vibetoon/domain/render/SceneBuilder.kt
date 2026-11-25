@@ -175,6 +175,11 @@ object SceneBuilder {
      * нарисованное на маске скрывает слой. Маска слоя - тот же механизм пары «маска - группа под маской», что и в пакете 26.
      */
     const val FLAG_MASK_INVERT = 16
+    /**
+     * Спринт 50: начало/конец настоящей группы, у которой есть шейдерные эффекты (или Turbulent Displace): рендерер
+     * собирает её в буфер и применяет цепочку к группе целиком (GroupFxPolicy.h). Обёртки слоя под маской - без флага.
+     */
+    const val FLAG_GROUP_FX = 32
 
     /** Вид камеры (без параллакса): тот же, что у корней сцены; null - камеры нет. */
     fun cameraView(cam: LayerTransform?, canvasWidth: Int, canvasHeight: Int): Affine2D {
@@ -577,7 +582,8 @@ object SceneBuilder {
                         // Спринт 38: маска слоя у группы (если у группы нет «Маски по слою» растяжения)
                         val gLayerMask = if (!gMasked && maskPass == 0) layerMasks[n.id] else null
                         val gLm = gLayerMask != null && emitLayerMask(gLayerMask)
-                        val gFlag = if (gMasked) FLAG_MASKED else if (gLm) maskFlags(gLayerMask!!) else 0
+                        val gFx = if (fx[n.id]?.isNotEmpty() == true || turbs.containsKey(n.id)) FLAG_GROUP_FX else 0
+                        val gFlag = (if (gMasked) FLAG_MASKED else if (gLm) maskFlags(gLayerMask!!) else 0) or gFx
                         add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), gFlag, Affine2D.IDENTITY, n.opacity * t.opacity)
                         val childQuads = ArrayList<FloatArray>()
                         walk(n.children, world, childQuads, SceneDomain.isMedia(n.id))
@@ -757,6 +763,8 @@ object SceneBuilder {
             mi++
         }
         deformCache?.retain(order)
+        // спринт 50: Turbulent Displace группы - эффект над буфером группы в её рамке (слои - как раньше, в текстурном шейдере)
+        val (turbsOut, fxOut) = com.vibetoon.domain.anim.GroupTurb.split(turbs, fx, quads, groupWorlds.keys)
         return SceneData(
             canvasWidth, canvasHeight, ops.toArray(), params.toArray(), textureIds.distinct().toIntArray(),
             // спринт 38: и дельты слоёв костей - родителей корневых костей (id < BONE_ID_BASE): поза в Animation считается от них
@@ -764,8 +772,8 @@ object SceneBuilder {
             nativeWarps.keys.toIntArray(), concat(nativeWarps.values),
             mIds, mCounts, mVerts.toArray(), mTris.toArray(),
             nativePersp.keys.toIntArray(), concat(nativePersp.values),
-            turbs.keys.toIntArray(), concat(turbs.values),
-            fx.keys.toIntArray(), fx.values.map { it.size }.toIntArray(), concat(fx.values.flatten()),
+            turbsOut.keys.toIntArray(), concat(turbsOut.values),
+            fxOut.keys.toIntArray(), fxOut.values.map { it.size }.toIntArray(), concat(fxOut.values.flatten()),
             groupLocalBounds, groupWorlds
         ).also { sd ->
             // спринт 46: таблица обрезки едет в той же сцене, по которой построена геометрия (никакого рассинхрона)

@@ -23,6 +23,7 @@
 #include <chrono>
 #include "render/LayerBounds.h"
 #include "render/EffectRenderPolicy.h"
+#include "render/GroupFxPolicy.h"
 #include "render/MeshPosition.h"
 #include "render/UploadQueue.h"
 
@@ -216,6 +217,12 @@ float vnoise(vec2 p) {
     return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
+// Спринт 50: фрактальный шум как у Turbulent Displace слоя (kFragTex), до 6 октав.
+float fbmFx(vec2 p, int oct) {
+    float s = 0.0, a = 0.5;
+    for (int k = 0; k < 6; ++k) { if (k >= oct) break; s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; }
+    return s;
+}
 // Спринт 35: холст (y вниз) -> uv цели; обратное к q в main().
 vec2 uvOf(vec2 qc) { return vec2(qc.x * uView.x + uView.y, uSize.y - (qc.y * uView.x + uView.z)) / uSize; }
 float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -376,6 +383,12 @@ void main() {
         vec2 m = q / max(uP0.y, 4.0) + vec2(uView.w * uP0.z, -uView.w * uP0.z * 0.7);
         vec2 d = vec2(vnoise(m), vnoise(m + 17.3)) - 0.5;
         o = tx(uv + vec2(d.x, -d.y) * 2.0 * uP0.x * k / uSize);
+    } else if (uMode == 25) {                       // спринт 50: Turbulent Displace группы: доля, ячеек, октавы, seed; рамка x, y, w, h (холст)
+        vec2 box = max(uP1.zw, vec2(1.0));
+        vec2 p = (q - uP1.xy) / box * uP0.y + vec2(uP0.w * 7.31, uP0.w * 3.17);
+        int oct = int(uP0.z);
+        vec2 d = (vec2(fbmFx(p, oct), fbmFx(p + 31.4, oct)) - 0.5) * 2.0 * uP0.x * box;
+        o = tx(uvOf(q + d));
     } else if (uMode == 22) {                       // Inner Glow: цвет rgb, радиус, распространение, интенсивность, режим, инверсия
         if (c.a > 0.0001) {
             float ba = blurAt(uv, max(uP0.w * k, 0.5)).a;
@@ -1764,6 +1777,29 @@ void Renderer::runEffect(GLuint srcTex, const float* e) {
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 }
 
+bool Renderer::hasGroupEffects(int groupId) const {
+    const auto fx = effects_.find(groupId);
+    return fx != effects_.end() && !fx->second.empty();
+}
+
+// Спринт 50: буфер группы -> проходы эффектов (A -> B, как у слоя). Проходы - на всю цель: рамку группы рендерер не
+// знает, а обрезка кадром (экспорт) действует только при наложении. Возвращает буфер результата (он текущая цель).
+Renderer::Fbo Renderer::runGroupEffects(const Fbo& src, int groupId) {
+    const auto fx = effects_.find(groupId);
+    if (fx == effects_.end() || fx->second.empty() || !progFx_) return src;
+    if (canvasScissorOn_) glDisable(GL_SCISSOR_TEST);
+    Fbo a = src;
+    for (const auto& e : fx->second) {
+        Fbo b = acquireFbo();
+        runEffect(a.tex, e.data());
+        releaseFbo(a);
+        a = b;
+        ++stats_.fxPasses;
+    }
+    restoreCanvasScissor();
+    return a;
+}
+
 // Слой с эффектами: слой -> FBO A, затем каждый эффект читает A и пишет в B (A и B меняются местами),
 // в конце результат накладывается на родителя с прозрачностью и режимом слоя.
 void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode) {
@@ -2105,6 +2141,14 @@ uint64_t Renderer::subtreeHash(size_t begin, size_t end, int& layers, bool& hasM
         h = mixFloats(h, it.m, 6);
         h = mixFloat(h, it.opacity);
         if (it.flags & (kFlagMaskSrc | kFlagMasked)) hasMask = true;
+        if (it.op == kBeginGroup && groupfx::hashEffects(it.op)) {
+            // спринт 50: эффекты вложенной группы (в том числе зависящие от времени) меняют вид родителя
+            const auto ge = effects_.find(it.layerId);
+            if (ge != effects_.end()) {
+                h = mix(h, ge->second.size());
+                for (const auto& fx : ge->second) h = mixFloats(h, fx.data(), fx.size());
+            }
+        }
         if (it.op != kLayer) continue;
         ++layers;
         const int id = it.layerId;
@@ -2239,11 +2283,14 @@ bool Renderer::drawFrame() {
         if (it.op == kBeginGroup) {
             // FBO нужен, только если у группы прозрачность < 1 или режим не Normal/Pass-through; маске и группе под маской - всегда.
             const int mflags = it.flags & (kFlagMaskSrc | kFlagMasked | kFlagMaskInvert);   // спринт 38: инверсия едет в Frame до kEndGroup
-            const bool isolated = maskpolicy::isolated(mflags, it.blend == kNormal || it.blend == kPass, it.opacity);
+            // спринт 50: шейдерные эффекты группы целиком - буфер всегда, кэш поддерева не используется
+            const bool groupFx = groupfx::applies(it.flags, hasGroupEffects(it.layerId), progFx_ != 0);
+            const bool isolated = groupfx::isolated(maskpolicy::isolated(mflags, it.blend == kNormal || it.blend == kPass, it.opacity), groupFx);
             Frame f{isolated, it.opacity, it.blend, curFbo_, {}, mflags};
+            f.fx = groupFx;
             // ключ - у каждой группы, чтобы номера появлений одинаковых id не зависели от того, что взято из кэша
             const uint64_t key = groupCacheOn ? groupKey(it.layerId) : 0;
-            if (isolated && groupCacheOn) {
+            if (groupfx::cacheable(isolated && groupCacheOn, groupFx)) {
                 // Пакет 27: неизменное поддерево берётся из сохранённого FBO, содержимое не перерисовывается.
                 size_t e = i;
                 for (int depth = 0; e < n; ++e) {
@@ -2290,6 +2337,21 @@ bool Renderer::drawFrame() {
                 bindTarget(f.parentFbo);
                 masks.push_back(f.fbo);
             } else if (f.isolated) {
+                if (f.fx) {
+                    // спринт 50: эффекты группы над её буфером (до маски: маска режет уже обработанный результат)
+                    const Fbo out = runGroupEffects(f.fbo, it.layerId);
+                    if ((f.flags & kFlagMasked) && !masks.empty()) {
+                        const Fbo m = masks.back();
+                        masks.pop_back();
+                        bindTarget(out.fbo);
+                        multiplyByMask(m, maskpolicy::inverted(f.flags));
+                        releaseFbo(m);
+                    }
+                    bindTarget(f.parentFbo);
+                    compositeFbo(out, f.opacity, f.blend);
+                    releaseFbo(out);
+                    continue;
+                }
                 if ((f.flags & kFlagMasked) && !masks.empty()) {
                     const Fbo m = masks.back();
                     masks.pop_back();
