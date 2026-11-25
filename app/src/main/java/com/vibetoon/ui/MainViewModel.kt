@@ -605,6 +605,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         thumbGen++; thumbs.clear(); thumbPending.clear()   // миниатюры прошлого проекта не должны всплывать у новых слоёв
         stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null
         paintSizes.clear(); paintDirty.clear(); versionedRasterIds.clear(); mediaIds.reset()
+        deformCache.clear()   // спринт 43: готовые сетки прошлого проекта не держат память
         residency.clear(); everEdited.clear(); lastEvictable = null   // пакет 29: учёт памяти текстур - заново
         saveJob?.cancel()
         camera = Camera()
@@ -2957,7 +2958,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             scaleYPct = t.scaleY * 100f,
             rotationDeg = Math.toDegrees(t.rotation.toDouble()).toFloat(),
             opacityPct = t.opacity * 100f,
-            hasKey = _animation.value.hasKey(id, _frame.value),
+            hasKey = com.vibetoon.domain.anim.LayerKeyFlow.hasKey(_animation.value, id, _frame.value),
             easing = _animation.value.easingAt(id, _frame.value),
             count = transformTargets().size.coerceAtLeast(1),
             pivotX = px, pivotY = py
@@ -3126,8 +3127,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Трансформации всех изменённых слоёв на текущем кадре - вход для SceneBuilder. */
     private fun transformsNow(): Map<Int, LayerTransform> {
+        // Спринт 43: только узлы сцены (слои, группы, кости, призраки). Раньше сюда попадали id ВСЕХ вершин сеток, точек
+        // Warp и пинов из base и дорожек - десятки тысяч лишних вычислений трансформации на каждом кадре Play/скраббинга.
+        val node = com.vibetoon.domain.render.SceneHotPath::isNodeId
         val ids = HashSet<Int>().apply {
-            addAll(base.keys); addAll(override.keys); addAll(_animation.value.tracks.keys.filter { it >= 0 }); addAll(_clips.value.keys); addAll(fxLayers.keys); addAll(hiddenIds()); addAll(ghosts.map { it.id })
+            for (id in base.keys) if (node(id)) add(id)
+            for (id in override.keys) if (node(id)) add(id)
+            for (id in _animation.value.tracks.keys) if (node(id)) add(id)
+            addAll(_clips.value.keys); addAll(fxLayers.keys); addAll(hiddenIds()); addAll(ghosts.map { it.id })
         }
         val look = sceneLookNow()   // пакет 24: свои слои сцен и переходы
         ids.addAll(look.alpha.keys); ids.addAll(look.shiftX.keys)
@@ -3206,6 +3213,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun buildEditorScene(warpIds: Set<Int> = warpLayers, perspIds: Set<Int> = perspLayers, useGroups: Boolean = true, dense: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = denseWarps): SceneData =
         buildEditorSceneRaw(warpIds, perspIds, useGroups, dense).also { it.backgroundOverride = sceneLookNow().background }   // пакет 24: фон сцены / переход через цвет
 
+    /** Спринт 43: готовые сетки слоёв редактора по id слоя (изоляция слоёв и экономия Play/скраббинга). */
+    private val deformCache = com.vibetoon.domain.render.DeformCache()
+
     private fun buildEditorSceneRaw(warpIds: Set<Int>, perspIds: Set<Int>, useGroups: Boolean, dense: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid>): SceneData {
         val options = com.vibetoon.domain.render.SceneOptions.capture(media, layerProps)
         val inputs = com.vibetoon.domain.render.GroupSceneInputs.build(groupDeformationAnchors, warpIds, perspIds,
@@ -3216,15 +3226,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxLayers, _animation.value, _frame.value),
             stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxLayers, _animation.value, _frame.value),
             layerMasks = options.layerMasks, maskSources = options.maskSources,
-            pathPlaces = options.pathPlaces { lid -> effective(com.vibetoon.domain.anim.PathLayerMath.progressId(lid)).dx })
+            pathPlaces = options.pathPlaces { lid -> effective(com.vibetoon.domain.anim.PathLayerMath.progressId(lid)).dx },
+            deformCache = deformCache)
     }
 
     private fun pushScene() {
         refreshGridView()
-        val sc0 = try { buildEditorScene() } catch (e: IllegalArgumentException) {
-            // Сложные группы временно пропускаются без удаления исходных данных.
-            _state.value = UiState.Message("Деформация пропущена: неподдерживаемое содержимое или область")
-            buildEditorScene(useGroups = false, dense = emptyMap())
+        // Спринт 43: деформации больше не выключаются при «неподдерживаемом» сочетании - SceneBuilder складывает их
+        // (DeformStack). Непредвиденная ошибка не роняет приложение и ничего не отключает: остаётся прежний кадр.
+        val sc0 = try { buildEditorScene() } catch (e: RuntimeException) {
+            Log.e("VT/Scene", "scene build failed", e)
+            _state.value = UiState.Message("Кадр не обновлён: ошибка построения сцены")
+            return
         }
         val sc = applySymbolContext(sc0)   // пакет 22: главная сцена вокруг открытого символа
         // формы символов едут вместе со сценой: на любом кадре экземпляр показывает форму именно этого кадра
@@ -3268,14 +3281,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (t == effective(id)) return
         val anim = _animation.value
         val auto = autoKeyEnabled()
-        if (auto && canAutoKeyTransform(id)) {
-            _animation.value = com.vibetoon.domain.anim.AutoKeyEdits.transform(anim, id, _frame.value, effective(id), t, fxLayers[id].orEmpty())
-            override.remove(id)
-            return
-        }
-        if (auto && !canAutoKeyTransform(id)) _state.value = UiState.Message("Автоключ трансформации недоступен при ретайминге клипа")
+        val canKey = canAutoKeyTransform(id)
+        if (auto && !canKey) _state.value = UiState.Message("Автоключ трансформации недоступен при ретайминге клипа")
+        // Спринт 43: у анимированного свойства правка на другом кадре сразу становится ключом (раньше - временная правка,
+        // которая пропадала при перемотке без Add Key); первая правка с автоключом ставит и базовый ключ на кадре 0
+        val keyed = com.vibetoon.domain.anim.LayerKeyFlow.transformEdit(anim, id, _frame.value, effective(id), t, fxLayers[id].orEmpty(), auto, canKey)
         when {
-            anim.hasKey(id, _frame.value) -> _animation.value = anim.withKey(id, _frame.value, t)
+            keyed != null -> { _animation.value = keyed; override.remove(id) }
             anim.hasTrack(id) -> override[id] = t
             else -> base[id] = t
         }
@@ -3507,28 +3519,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val ids = transformTargets().ifEmpty { return }
         val frame = _frame.value
         checkpoint("key", force = true)
-        val removing = _animation.value.hasKey(prim, frame)
+        // Спринт 43: ключ слоя - все его дорожки (трансформация + сетка, пины, Warp, перспектива), как ромб таймлайна
+        val flow = com.vibetoon.domain.anim.LayerKeyFlow
+        val removing = flow.hasKey(_animation.value, prim, frame)
         for (id in ids) {
             val anim = _animation.value
             if (removing) {
-                if (!anim.hasKey(id, frame)) continue
-                val (next, lastValue) = anim.withoutKey(id, frame)
-                _animation.value = next
+                if (!flow.hasKey(anim, id, frame)) continue
                 removeEffectKeys(id, frame)
-                // Последний ключ удалён: слой остаётся на месте как ручная трансформация
-                if (lastValue != null) base[id] = lastValue
+                // Последний ключ удалён: слой и форма деформеров остаются на месте (смещения - к форме привязки)
+                val (next, updates) = flow.removeKey(_animation.value, id, frame, base)
+                _animation.value = next
+                base.putAll(updates)
                 Log.i("VT/Anim", "key deleted: layer $id frame $frame")
             } else {
-                if (anim.hasKey(id, frame)) continue
-                // Первый ключ создаётся из текущего положения, поэтому слой не прыгает
-                val t = effective(id)
+                // Первый ключ создаётся из текущего положения, поэтому слой не прыгает; деформеры фиксируются целиком
+                // (неанимированный деформер на кадре > 0 получает и базовый ключ исходной формы на кадре 0)
+                val t = if (anim.hasKey(id, frame)) null else effective(id)
                 override.remove(id)
-                _animation.value = com.vibetoon.domain.anim.EffectTracks.snapshot(id, fxLayers[id].orEmpty(), anim.withKey(id, frame, t), frame)
-                Log.i("VT/Anim", "key added: layer $id frame $frame dx=${t.dx} dy=${t.dy} scaleX=${t.scaleX} scaleY=${t.scaleY} rot=${t.rotation}")
+                var next = flow.addKey(anim, id, frame, t, deformerGroupsOf(id))
+                if (t != null) next = com.vibetoon.domain.anim.EffectTracks.snapshot(id, fxLayers[id].orEmpty(), next, frame)
+                _animation.value = next
+                Log.i("VT/Anim", "key added: layer $id frame $frame")
             }
         }
         pushScene()
         markDirty()
+    }
+
+    /** Спринт 43: деформеры слоя для ключа «слой целиком» (вершины, пины, точки Warp, углы перспективы). */
+    private fun deformerGroupsOf(id: Int): List<List<Int>> {
+        if (id >= BONE_ID_BASE) return emptyList()
+        val warpPoints = if (id in warpLayers) (warpGridSizes[id] ?: com.vibetoon.domain.anim.CubicWarpGrid.DEFAULT).let { it.width * it.height } else 0
+        return com.vibetoon.domain.anim.LayerKeyFlow.deformerGroups(id, meshLayers[id]?.count ?: 0, pinLayers[id]?.size ?: 0, warpPoints, id in perspLayers)
     }
 
     // ---------------------------------------------------------------- Undo / Redo
@@ -6221,10 +6244,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (if (warp) id in warpLayers else id in perspLayers) return
         val nextWarp = if (warp) warpLayers + id else warpLayers
         val nextPersp = if (warp) perspLayers else perspLayers + id
-        if (runCatching { buildEditorScene(nextWarp, nextPersp) }.isFailure) {
-            _state.value = UiState.Message("Групповая деформация недоступна для этого содержимого или области")
-            return
-        }
+        // спринт 43: пробной сборки сцены и отказа больше нет - групповой деформер складывается с деформерами слоёв
         checkpoint("group-deformation-enable", force = true)
         warpLayers = nextWarp; perspLayers = nextPersp
         pushScene(); markDirty()
@@ -6301,7 +6321,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val proposed = if (grid == null) com.vibetoon.domain.anim.DenseWarpGrid.zero(nextW, nextH) else grid.resized(nextW, nextH)
                 if (proposed == null || !proposed.valid()) { _state.value = UiState.Message("Сетка не изменена: форма или ключи несовместимы"); return }
                 val candidate = denseWarps + (id to proposed)
-                if (runCatching { buildEditorScene(dense = candidate) }.isFailure) { _state.value = UiState.Message("Плотный Warp несовместим с содержимым слоя"); return }
                 checkpoint("dense-warp-grid:$id", force = true)
                 denseWarps = candidate
             }
@@ -9618,6 +9637,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var pinsStiffDefault = false
     private var pinRadiusDefault = 180f
     private val PIN_GRAB = 50_000
+    /** Спринт 43: насколько (в долях слоя) точку пути можно вынести за край слоя. */
+    private val PIN_OUTSIDE = 0.5f
     private val _pinOverlay = MutableStateFlow(PinOverlay())
     val pinOverlay: StateFlow<PinOverlay> = _pinOverlay.asStateFlow()
     private val _pinInfo = MutableStateFlow(PinInfo())
@@ -9633,14 +9654,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val (w, h) = layerSize(id) ?: return v
         val poff = PuppetMath.offsets(id, pins.size, frame, base, _animation.value, fx)
         // pushScene вызывается на каждый кадр и жест; ARAP-решение пересчитывается только если сетка, пины или их смещения изменились
+        // спринт 43: путь через пины считается с учётом масштаба слоя (нормали верны у растянутого слоя)
+        val lt = effective(id); val sx = lt.scaleX; val sy = lt.scaleY
         val hit = arapMemo[id]
-        if (hit != null && hit.mesh === m && hit.pins === pins && hit.w == w && hit.h == h && hit.v.contentEquals(v) && hit.poff.contentEquals(poff)) return hit.out
-        val out = PuppetMath.addTo(m, v, pins, poff, w, h)
-        arapMemo[id] = ArapMemo(m, pins, v.copyOf(), poff, w, h, out)
+        if (hit != null && hit.mesh === m && hit.pins === pins && hit.w == w && hit.h == h && hit.sx == sx && hit.sy == sy && hit.v.contentEquals(v) && hit.poff.contentEquals(poff)) return hit.out
+        val out = PuppetMath.addTo(m, v, pins, poff, w, h, sx, sy)
+        arapMemo[id] = ArapMemo(m, pins, v.copyOf(), poff, w, h, sx, sy, out)
         return out
     }
 
-    private class ArapMemo(val mesh: Mesh, val pins: List<Pin>, val v: FloatArray, val poff: FloatArray, val w: Float, val h: Float, val out: FloatArray)
+    private class ArapMemo(val mesh: Mesh, val pins: List<Pin>, val v: FloatArray, val poff: FloatArray, val w: Float, val h: Float, val sx: Float, val sy: Float, val out: FloatArray)
     private val arapMemo = HashMap<Int, ArapMemo>()
 
     private fun refreshPinInfo() {
@@ -9730,14 +9753,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (m == null) { generateMeshContour(); _state.value = UiState.Message("Сетка создана по контуру: тапните ещё раз, чтобы поставить пин"); swallowTap = true; return true }
         val q = scene?.selectionQuads?.get(t) ?: return false
         val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return false
-        if (u !in 0f..1f || v !in 0f..1f) return false
+        // спринт 43: точку пути можно поставить и вне сетки/слоя (корень пряди «в голове» - мягкий корень, как в Live2D)
+        if (u !in -PIN_OUTSIDE..(1f + PIN_OUTSIDE) || v !in -PIN_OUTSIDE..(1f + PIN_OUTSIDE)) return false
         val cur = pinLayers[t].orEmpty()
         if (cur.size >= PuppetMath.MAX_PINS) { _state.value = UiState.Message("Не больше ${PuppetMath.MAX_PINS} пинов"); return true }
         val (w, h) = layerSize(t) ?: return false
         val off = PuppetMath.offsets(t, cur.size, _frame.value, base, _animation.value, _fx.value)
         val d = PuppetMath.fieldAt(u, v, cur, off, w, h)
         checkpoint("pin-add", force = true)
-        pinLayers = pinLayers + (t to cur + Pin((u - d[0]).coerceIn(0f, 1f), (v - d[1]).coerceIn(0f, 1f), pinsStiffDefault, pinRadiusDefault))
+        pinLayers = pinLayers + (t to cur + Pin((u - d[0]).coerceIn(-PIN_OUTSIDE, 1f + PIN_OUTSIDE), (v - d[1]).coerceIn(-PIN_OUTSIDE, 1f + PIN_OUTSIDE), pinsStiffDefault, pinRadiusDefault))
         pinSel = cur.size
         swallowTap = true
         pushScene(); markDirty()
@@ -10414,7 +10438,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _animation.value = _animation.value.copy(tracks = _animation.value.tracks.filterKeys { it !in ids })
     }
 
-    private fun meshEdges(m: Mesh): IntArray = meshEdgeCache.getOrPut(m) {
+    // спринт 43: кэш рёбер ограничен - старые сетки (после каждой перегенерации) не копятся в памяти
+    private fun meshEdges(m: Mesh): IntArray = (if (meshEdgeCache.size > 256 && m !in meshEdgeCache) meshEdgeCache.also { it.clear() } else meshEdgeCache).getOrPut(m) {
         val seen = HashSet<Long>()
         val out = ArrayList<Int>()
         for (t in 0 until m.tris.size / 3) for (e in 0 until 3) {
@@ -10762,8 +10787,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (k !in 0 until m.count) return
         val q = scene?.selectionQuads?.get(t) ?: return
         val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
-        val ox = (u - m.u(k)).coerceIn(-1.5f, 1.5f)
-        val oy = (v - m.v(k)).coerceIn(-1.5f, 1.5f)
+        // спринт 43: у пряди с пинами показанная вершина = своё смещение + добавка пинов/пути - вычитаем добавку,
+        // чтобы вершина вставала ровно под палец и форма сохранялась ключом, а не отскакивала
+        var ox = u - m.u(k); var oy = v - m.v(k)
+        if (!pinLayers[t].isNullOrEmpty()) {
+            val shown = fullMeshOffsets(t, m, _frame.value, _fx.value)
+            val own = MeshMath.offsets(t, m, _frame.value, base, _animation.value, _fx.value)
+            if (shown.size >= m.count * 2 && own.size >= m.count * 2) {
+                ox = com.vibetoon.domain.anim.LayerKeyFlow.vertexTarget(u, m.u(k), shown[k * 2], own[k * 2])
+                oy = com.vibetoon.domain.anim.LayerKeyFlow.vertexTarget(v, m.v(k), shown[k * 2 + 1], own[k * 2 + 1])
+            }
+        }
+        ox = ox.coerceIn(-1.5f, 1.5f); oy = oy.coerceIn(-1.5f, 1.5f)
         checkpoint("mesh$t-$k")
         // FX выкл: меняется Bind Pose сетки; FX вкл: ключ кадра с исходной формой на кадре 0 (спринт 41)
         setVertexOffsets(t, m, mapOf(k to (ox to oy)))
@@ -11840,7 +11875,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             for (id in TrackGroups.ids(layer, _animation.value.tracks)) {
                 val (next, lastValue) = _animation.value.withoutKey(id, frame)
                 _animation.value = next
-                if (lastValue != null) base[id] = lastValue
+                // спринт 43: смещение формы (вершина, пин, точка Warp) добавляется к форме привязки, а не подменяет её
+                if (lastValue != null) base[id] = com.vibetoon.domain.anim.LayerKeyFlow.baseAfterLastKey(id, base[id], lastValue)
             }
         }
     }
@@ -12255,6 +12291,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         for (b in _bones.value) tracks[b.id]?.keys?.forEach { if (inRange(it.frame)) sel += b.id to it.frame }
         if (sel.isEmpty()) { _state.value = UiState.Message("Ключей нет"); return }
         _keySel.value = sel
+    }
+
+    /**
+     * Спринт 43: «Выбрать все ключи слоя» - ключи только активного слоя (все его дорожки), чтобы применить кривую
+     * интерполяции ко всем сразу. Другие слои не выделяются.
+     */
+    fun selectLayerKeys() {
+        val id = _selected.value ?: run { _state.value = UiState.Message("Выберите слой"); return }
+        val r = activeRange()
+        val sel = com.vibetoon.domain.anim.LayerKeySelection.of(id, _animation.value.tracks, isBoneId(id),
+            _timeKeys.value[id]?.map { it.frame }.orEmpty(), r?.let { it.start until it.end })
+        if (sel.isEmpty()) { _state.value = UiState.Message("У слоя нет ключей"); return }
+        _keySel.value = sel
+        _state.value = UiState.Message("Выбрано ключей слоя: ${sel.size}")
     }
 
     // ---------------------------------------------------------------- список ключей (пакет 11)
@@ -12673,6 +12723,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .map { Triple(it, clipOf(it.id), projects.mediaFile(pidExp, it.file.removePrefix("assets/"))) }
         val session = if (shadow) null else ExportSession(maxOf(cw, ch)).also { synchronized(exportSessions) { exportSessions += it } }
         val sceneRange = if (symbol == null) range else null   // пакет 9: экспорт только текущей сцены
+        val exportDeformCache = com.vibetoon.domain.render.DeformCache()   // спринт 43: свой кэш сеток у экспорта
         val sceneAtFn = { i: Int ->
             // Внутренний кадр символа берётся как есть (раньше обрезался длительностью проекта - формы за её концом
             // снимались как последний кадр).
@@ -12734,21 +12785,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val v = MeshMath.offsets(lid, m, pf, baseCopy, anim, true)
                     val ps = pinl[lid]
                     val sz = lsz[lid]
-                    m to (if (ps != null && sz != null) PuppetMath.addTo(m, v, ps, PuppetMath.offsets(lid, ps.size, pf, baseCopy, anim, true), sz.first, sz.second) else v)
+                    m to (if (ps != null && sz != null) anim.evaluate(lid, pf, baseCopy[lid]).let { lt ->
+                        PuppetMath.addTo(m, v, ps, PuppetMath.offsets(lid, ps.size, pf, baseCopy, anim, true), sz.first, sz.second, lt.scaleX, lt.scaleY)
+                    } else v)
                 },
                 groupInputs.perspectives, btl, sk, tl.mapValues { (id, t) -> TurbMath.params(TurbMath.at(id, t, pf, anim), pf) },
                 sceneLookFx(fxRecords(fxl, adjCopy, anim, pf, st.fps), lookExp, leafExp), camId, sceneOptions.nullIds, sceneOptions.depths, groupDeformations = groupInputs.groups, denseWarps = denseExp, leafPivots = pivotOverrides,
                 stretches = com.vibetoon.domain.anim.EffectTracks.stretches(fxl, anim, pf),
                 stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxl, anim, pf),
                 layerMasks = sceneOptions.layerMasks, maskSources = sceneOptions.maskSources,
-                pathPlaces = sceneOptions.pathPlaces { lid -> com.vibetoon.domain.anim.PathLayerMath.progressId(lid).let { pidP -> anim.evaluate(pidP, pf, baseCopy[pidP]).dx } }).also { sc ->
+                pathPlaces = sceneOptions.pathPlaces { lid -> com.vibetoon.domain.anim.PathLayerMath.progressId(lid).let { pidP -> anim.evaluate(pidP, pf, baseCopy[pidP]).dx } },
+                deformCache = exportDeformCache).also { sc ->
                 sc.backgroundOverride = lookExp.background
                 if (formAliases.isNotEmpty()) sc.aliases = com.vibetoon.domain.project.ExportSymbolForms.aliases(formAliases)
                 if (batch != null && session != null) sc.beforeDraw = { session.textures.commit(batch) }
             }
             } catch (e: IllegalArgumentException) {
-                if (groupInputs.groups.isEmpty() && denseExp.isEmpty()) throw e
-                throw IllegalStateException("Экспорт остановлен: неподдерживаемая деформация или область", e)
+                // спринт 43: «неподдерживаемых» сочетаний деформаций больше нет; сюда попадает только настоящая ошибка
+                throw IllegalStateException("Экспорт остановлен: ошибка построения кадра $i", e)
             }
         }
         return sceneAtFn

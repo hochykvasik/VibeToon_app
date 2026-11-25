@@ -418,8 +418,8 @@
     <string name="ui_path_color_and_width_updated">Цвет и толщина контура обновлены</string>
     <string name="ui_prepare_bounds">Подготовить область</string>
     <string name="ui_enable_for_group">Включить для группы</string>
-    <string name="ui_deformation_skipped_unsupported_cont">Деформация пропущена: неподдерживаемое содержимое или область</string>
-    <string name="ui_export_stopped_unsupported_deformati">Экспорт остановлен: неподдерживаемая деформация или область</string>
+    <string name="ui_frame_not_updated_scene_build_error">Кадр не обновлён: ошибка построения сцены</string>
+    <string name="ui_export_stopped_frame_could_not_be_bu">Экспорт остановлен: ошибка построения кадра {}</string>
     <string name="ui_x_divisions">Раздел X</string>
     <string name="ui_dense_warp_static_fx_off">Плотный Warp: статический, FX выкл</string>
     <string name="ui_dense_warp_requires_a_regular_layer_">Плотный Warp: только обычный слой и FX выкл</string>
@@ -2016,4 +2016,7 @@
     <string name="ui_tasks">Задач: {}</string>
     <string name="ui_hide_panel">Скрыть панель</string>
     <string name="ui_show_panel">Показать панель</string>
+    <string name="ui_select_all_layer_keys">Выбрать все ключи слоя</string>
+    <string name="ui_the_layer_has_no_keys">У слоя нет ключей</string>
+    <string name="ui_layer_keys_selected">Выбрано ключей слоя: {}</string>
 </resources>

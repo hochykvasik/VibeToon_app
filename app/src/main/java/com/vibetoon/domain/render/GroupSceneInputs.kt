@@ -12,10 +12,11 @@ object GroupSceneInputs {
     fun build(anchors: Map<Int, GroupDeformationAnchor>, warpIds: Set<Int>, perspectiveIds: Set<Int>,
               frame: Int, base: Map<Int, LayerTransform>, animation: Animation, fx: Boolean,
               sizes: Map<Int, CubicWarpGrid.Size> = emptyMap()): Split {
-        val groupIds = anchors.keys.intersect(warpIds + perspectiveIds)
+        // Спринт 43: повреждённая рамка группы не роняет всю сцену (раньше - исключение и выключение всех групповых
+        // деформаций); такая группа ведёт себя как группа без сохранённой рамки, остальные группы работают.
+        val groupIds = anchors.filterValues { it.valid() }.keys.intersect(warpIds + perspectiveIds)
         val groups = groupIds.associateWith { id ->
             val a = anchors.getValue(id)
-            require(a.valid()) { "Invalid group bounds" }
             SceneBuilder.GroupDeformation(GroupDeformationMesh.Bounds(a.x, a.y, a.width, a.height),
                 if (id in warpIds) CubicWarpGrid.cubic(id, sizes[id] ?: CubicWarpGrid.DEFAULT, frame, base, animation, fx) else null,
                 if (id in perspectiveIds) PerspectiveMath.matrix(PerspectiveMath.offsets(id, frame, base, animation, fx)) else null)

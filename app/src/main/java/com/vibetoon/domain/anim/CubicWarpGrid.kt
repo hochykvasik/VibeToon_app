@@ -21,8 +21,13 @@ object CubicWarpGrid {
         }
     }
     /** Exact elevation to 4x4: same GPU shader and group mesh for every supported grid. */
-    fun cubic(id: Int, size: Size, frame: Int, base: Map<Int, LayerTransform>, anim: Animation, fx: Boolean): FloatArray =
-        requireNotNull(RectWarpGridMath.convert(raw(id, size, frame, base, anim, fx), size.width, size.height, 4, 4))
+    /** Спринт 43: тотально - нечисловые значения повреждённого проекта считаются нулём, неверный размер - 4x4. */
+    fun cubic(id: Int, size: Size, frame: Int, base: Map<Int, LayerTransform>, anim: Animation, fx: Boolean): FloatArray {
+        val s = if (size.valid()) size else DEFAULT
+        val r = raw(id, s, frame, base, anim, fx)
+        for (i in r.indices) if (!r[i].isFinite()) r[i] = 0f
+        return RectWarpGridMath.convert(r, s.width, s.height, 4, 4) ?: FloatArray(32)
+    }
 
     fun migrate(id: Int, source: Size, target: Size, base: Map<Int, LayerTransform>, anim: Animation): Migration? {
         if (!source.valid() || !target.valid()) return null

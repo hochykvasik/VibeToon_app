@@ -19,7 +19,7 @@ class Sprint38WiringTest {
     @Test fun editorAndExportScenesUseTheSameMasksAndPaths() {
         // редактор (холст и Play) и экспорт (PNG/JPEG/GIF/MOV/PNG-секвенция, PSD) собирают сцену с одними и теми же масками и путями
         assertTrue(vm.contains("layerMasks = options.layerMasks, maskSources = options.maskSources,"))
-        assertTrue(vm.contains("pathPlaces = options.pathPlaces { lid -> effective(com.vibetoon.domain.anim.PathLayerMath.progressId(lid)).dx })"))
+        assertTrue(vm.contains("pathPlaces = options.pathPlaces { lid -> effective(com.vibetoon.domain.anim.PathLayerMath.progressId(lid)).dx }"))
         assertTrue(vm.contains("layerMasks = sceneOptions.layerMasks, maskSources = sceneOptions.maskSources,"))
         assertTrue(vm.contains("anim.evaluate(pidP, pf, baseCopy[pidP]).dx"))
         // PSD: служебные слои и слои-маски не пишутся, маска уже применена

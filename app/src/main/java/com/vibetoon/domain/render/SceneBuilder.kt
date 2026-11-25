@@ -169,6 +169,50 @@ object SceneBuilder {
         else -> BLEND_NORMAL // остальные режимы PSD пока рисуются как Normal
     }
 
+    /**
+     * Смещения вершин сетки слоя со скинингом: вес кости - по позе привязки (u, v без смещения кадра), движение - от
+     * смещённой точки. Без скининга (или без костей) возвращает [off0] как есть.
+     */
+    private fun skinnedOffsets(
+        id: Int, m: com.vibetoon.domain.anim.Mesh, off0: FloatArray, skinRest: Map<Int, Affine2D>, skins: Map<Int, Map<Int, Float>>,
+        bones: Map<Int, Pair<Float, Float>>, boneTails: Map<Int, Pair<Float, Float>>, delta: (Int) -> Affine2D
+    ): FloatArray {
+        val rest = skinRest[id] ?: return off0
+        val inv = rest.inverse() ?: return off0
+        val segs = ArrayList<BoneSeg>()
+        val deltas = ArrayList<Affine2D>()
+        for ((bid, st) in skins[id].orEmpty()) {
+            val h = bones[bid] ?: continue
+            val tl = boneTails[bid] ?: continue
+            segs += BoneSeg(bid, h.first, h.second, tl.first, tl.second, st)
+            deltas += delta(bid)
+        }
+        if (segs.isEmpty()) return off0
+        val off = off0.copyOf()
+        for (k in 0 until m.count) {
+            val u = m.u(k) + off0[k * 2]
+            val v = m.v(k) + off0[k * 2 + 1]
+            val bx = rest.applyX(m.u(k), m.v(k)); val by = rest.applyY(m.u(k), m.v(k))
+            val px = rest.applyX(u, v); val py = rest.applyY(u, v)
+            val w = SkinMath.weights(bx, by, segs)
+            if (w.isEmpty()) continue
+            var sx = 0f; var sy = 0f
+            for ((bi, wi) in w) { sx += wi * deltas[bi].applyX(px, py); sy += wi * deltas[bi].applyY(px, py) }
+            off[k * 2] = inv.applyX(sx, sy) - m.u(k)
+            off[k * 2 + 1] = inv.applyY(sx, sy) - m.v(k)
+        }
+        return off
+    }
+
+    /** Склейка массивов без боксинга (раньше flatMap { asList() } создавал объект на каждое число каждого кадра). */
+    internal fun concat(parts: Collection<FloatArray>): FloatArray {
+        var n = 0
+        for (p in parts) n += p.size
+        val out = FloatArray(n); var o = 0
+        for (p in parts) { p.copyInto(out, o); o += p.size }
+        return out
+    }
+
     /** Удобная перегрузка: дерево строится из плоского списка записей PSD. */
     fun build(
         layers: List<LayerInfo>,
@@ -234,11 +278,10 @@ object SceneBuilder {
         /** Спринт 38: слои-маски (и выключенных масок): сами по себе не рисуются, рамка для выбора остаётся. */
         maskSources: Set<Int> = emptySet(),
         /** Спринт 38: слои на пути - id -> [x, y, угол] (координаты холста): опорная точка слоя встаёт в точку пути. */
-        pathPlaces: Map<Int, FloatArray> = emptyMap()
+        pathPlaces: Map<Int, FloatArray> = emptyMap(),
+        /** Спринт 43: кэш готовых сеток слоёв (редактор и экспорт держат свои); null - без кэша. */
+        deformCache: DeformCache? = null
     ): SceneData {
-        require(preparedGroupMeshes.keys.none { it in meshes || it in warps || it in persp || it in skins }) {
-            "Group mesh conflicts with a leaf deformer"
-        }
         // Камера: dx, dy - смещение центра кадра, scaleX - приближение, rotation - поворот вида
         val cam = transforms[cameraId]
         val camView = cameraView(cam, canvasWidth, canvasHeight)
@@ -252,24 +295,24 @@ object SceneBuilder {
         }
         val rootWorld = camView * rootWorld0
         val skinRest = HashMap<Int, Affine2D>()
-        val ops = ArrayList<Int>()
-        val params = ArrayList<Float>()
+        val ops = IntBuilder()
+        val params = FloatBuilder()
         val textureIds = ArrayList<Int>()
         val quads = HashMap<Int, FloatArray>()
         val parentWorlds = HashMap<Int, Affine2D>()
         val groupLocalBounds = HashMap<Int, GroupDeformationMesh.Bounds>()
         val groupWorlds = HashMap<Int, Affine2D>()
-        val generatedGroupMeshes = HashMap<Int, GroupDeformationMesh.Result>()
-        val generatedDenseMeshes = HashMap<Int, GroupDeformationMesh.Result>()
-        val visitedGroups = HashSet<Int>()
-        data class ActiveGroup(val deformation: GroupDeformation, val inverseWorld: Affine2D)
-        var activeGroup: ActiveGroup? = null
-        var safeGroupPath = true
+        // Спринт 43: стек активных групповых деформеров (от внешнего к внутреннему) и слои под ними - деформации
+        // складываются (DeformStack), а не отклоняются исключением, которое раньше выключало их во всей сцене.
+        val groupChain = ArrayList<DeformStack.GroupLevel>()
+        val leafStacks = HashMap<Int, Pair<List<DeformStack.GroupLevel>, Affine2D>>()
+        val leafWorlds = HashMap<Int, Affine2D>()
+        val denseLeaves = LinkedHashSet<Int>()
         var maskPass = 0   // > 0 - идёт проход маски группы: слои помечаются FLAG_MASK_SRC
 
         fun add(op: Int, id: Int, blend: Int, flags: Int, m: Affine2D, opacity: Float) {
-            ops += listOf(op, id, blend, if (op == OP_LAYER && maskPass > 0) flags or FLAG_MASK_SRC else flags)
-            params += listOf(m.a, m.b, m.c, m.d, m.tx, m.ty, opacity, 0f)
+            ops.add(op); ops.add(id); ops.add(blend); ops.add(if (op == OP_LAYER && maskPass > 0) flags or FLAG_MASK_SRC else flags)
+            params.add(m.a); params.add(m.b); params.add(m.c); params.add(m.d); params.add(m.tx); params.add(m.ty); params.add(opacity); params.add(0f)
         }
 
         val fitInv0 = rootWorld0.inverse() ?: Affine2D.IDENTITY
@@ -454,21 +497,17 @@ object SceneBuilder {
                         val world = pw * local(t, n.pivotX, n.pivotY, n.id)
                         parentWorlds[n.id] = pw
                         groupWorlds[n.id] = world
-                        val previous = activeGroup
-                        val previousPath = safeGroupPath
-                        safeGroupPath = previousPath && n.blend in setOf("pass", "norm") && n.opacity == 1f && t.opacity == 1f &&
-                            n.id !in warps && n.id !in persp && n.id !in meshes && n.id !in skins && n.id !in fx && n.id !in turbs
-                        if (previous != null || n.id in groupDeformations) {
-                            require(safeGroupPath) { "Group deformation requires pass-through groups without effects" }
-                        }
+                        val chainDepth = groupChain.size
+                        // Спринт 43: групповой деформер добавляется в стек; вложенные деформеры, эффекты и прозрачность групп
+                        // на пути больше не запрещены. Пустой деформер ничего не меняет; вырожденная группа (масштаб 0)
+                        // не видна вовсе, поэтому её деформация тоже ничего не меняет.
                         groupDeformations[n.id]?.let { deformation ->
-                            require(previous == null) { "Nested group deformers are not supported" }
-                            require(deformation.warp != null || deformation.perspective != null) { "Empty group deformation" }
-                            activeGroup = ActiveGroup(deformation, requireNotNull(world.inverse()) { "Singular group transform" })
-                            visitedGroups += n.id
+                            val inv = world.inverse()
+                            if ((deformation.warp != null || deformation.perspective != null) && inv != null)
+                                groupChain += DeformStack.GroupLevel(deformation, world, inv)
                         }
                         // Пакет 26: «Маска по слою» - сначала маска: та же группа без своего растяжения (в отдельный буфер)
-                        val gMasked = n.id in stretchMasks && stretches[n.id] != null && previous == null && n.id !in groupDeformations
+                        val gMasked = n.id in stretchMasks && stretches[n.id] != null && n.id !in groupDeformations
                         if (gMasked) {
                             maskPass++
                             add(OP_BEGIN_GROUP, n.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
@@ -477,14 +516,13 @@ object SceneBuilder {
                             maskPass--
                         }
                         // Спринт 38: маска слоя у группы (если у группы нет «Маски по слою» растяжения)
-                        val gLayerMask = if (!gMasked && previous == null && maskPass == 0) layerMasks[n.id] else null
+                        val gLayerMask = if (!gMasked && maskPass == 0) layerMasks[n.id] else null
                         val gLm = gLayerMask != null && emitLayerMask(gLayerMask)
                         val gFlag = if (gMasked) FLAG_MASKED else if (gLm) maskFlags(gLayerMask!!) else 0
                         add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), gFlag, Affine2D.IDENTITY, n.opacity * t.opacity)
                         val childQuads = ArrayList<FloatArray>()
                         walk(n.children, world, childQuads, SceneDomain.isMedia(n.id))
-                        activeGroup = previous
-                        safeGroupPath = previousPath
+                        while (groupChain.size > chainDepth) groupChain.removeAt(groupChain.size - 1)
                         add(OP_END_GROUP, n.id, blendCode(n.blend), gFlag, Affine2D.IDENTITY, n.opacity * t.opacity)
                         if (childQuads.isNotEmpty()) {
                             quads[n.id] = bounds(childQuads)
@@ -544,32 +582,20 @@ object SceneBuilder {
                         val m = world * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) *
                             Affine2D.scale(n.w.toFloat(), n.h.toFloat())
                         if (skinned) skinRest[n.id] = m
-                        activeGroup?.let { group ->
-                            require(n.id !in meshes && n.id !in warps && n.id !in persp && n.id !in skins &&
-                                n.id !in preparedGroupMeshes && n.id !in denseWarps && n.id !in turbs && n.id !in fx && !n.clipped) {
-                                "Group deformation conflicts with a descendant deformer, effect or clipping"
-                            }
-                            val d = group.deformation
-                            val local = group.inverseWorld * m
-                            generatedGroupMeshes[n.id] = requireNotNull(GroupDeformationMesh.build(d.bounds, local, d.warp, d.perspective, d.cells)) {
-                                "Invalid group deformation, transform, or child outside fixed bounds"
-                            }
-                        }
-                        denseWarps[n.id]?.let { grid ->
-                            require(activeGroup == null && n.id !in meshes && n.id !in skins && n.id !in preparedGroupMeshes &&
-                                n.id !in fx && n.id !in turbs && !n.clipped) { "Unsupported dense warp combination" }
-                            val cubic = requireNotNull(warps[n.id]) { "Dense warp requires base warp" }
-                            generatedDenseMeshes[n.id] = requireNotNull(DenseWarpMesh.build(grid, cubic)) { "Invalid dense warp" }
-                        }
+                        leafWorlds[n.id] = m
+                        // Спринт 43: слой под групповыми деформерами запоминает их стек (от внутреннего к внешнему); своя
+                        // сетка, Warp, перспектива, эффекты и обтравка слоя сохраняются и складываются с групповыми.
+                        if (groupChain.isNotEmpty()) leafStacks[n.id] = groupChain.asReversed().toList() to m
+                        if (denseWarps[n.id]?.valid() == true) denseLeaves += n.id
                         val hitFlag = if (n.id in bboxHitIds) FLAG_HIT_BBOX else 0
-                        val leafMask = if (!clipped && activeGroup == null && maskPass == 0 && !(n.id in stretchMasks && stretches[n.id] != null)) layerMasks[n.id] else null
+                        val leafMask = if (!clipped && maskPass == 0 && !(n.id in stretchMasks && stretches[n.id] != null)) layerMasks[n.id] else null
                         if (leafMask != null && emitLayerMask(leafMask)) {
                             // Спринт 38: маска слоя - буфер маски, затем слой в группе под маской; прозрачность и режим наложения
                             // слоя - у этой группы, слои с обтравкой по нему остаются внутри (обтравливаются по видимой части)
                             add(OP_BEGIN_GROUP, n.id, blendCode(n.blend), maskFlags(leafMask), Affine2D.IDENTITY, n.opacity * t.opacity)
                             add(OP_LAYER, n.id, BLEND_NORMAL, hitFlag, m, 1f)
                             openMasked = true
-                        } else if (n.id in stretchMasks && stretches[n.id] != null && !clipped && activeGroup == null) {
+                        } else if (n.id in stretchMasks && stretches[n.id] != null && !clipped) {
                             // Пакет 26: «Маска по слою» - маска (слой без растяжения), затем растянутый слой под ней; прозрачность
                             // и режим наложения слоя - у группы под маской (как у основы обтравки)
                             val m0 = pw * local(t, lpx, lpy) * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
@@ -613,67 +639,93 @@ object SceneBuilder {
             prevDepth = d
             ri = rj
         }
-        require(visitedGroups == groupDeformations.keys) { "Group deformer targets a missing or hidden group" }
-        val allGroupMeshes = preparedGroupMeshes + generatedGroupMeshes + generatedDenseMeshes
-        val nativeWarps = warps - generatedDenseMeshes.keys
-        val mIds = (meshes.keys + allGroupMeshes.keys).toIntArray()
-        val mCounts = IntArray(mIds.size * 2)
-        val mVerts = ArrayList<Float>()
-        val mTris = ArrayList<Int>()
-        mIds.forEachIndexed { i, id ->
-            val groupMesh = allGroupMeshes[id]
-            val (m, off0) = if (groupMesh != null) groupMesh.mesh to groupMesh.offsets else meshes.getValue(id)
-            var off = off0
-            val rest = skinRest[id]
-            val inv = rest?.inverse()
-            if (rest != null && inv != null) {
-                val segs = ArrayList<BoneSeg>()
-                val deltas = ArrayList<Affine2D>()
-                for ((bid, st) in skins.getValue(id)) {
-                    val h = bones[bid] ?: continue
-                    val tl = boneTails[bid] ?: continue
-                    segs += BoneSeg(bid, h.first, h.second, tl.first, tl.second, st)
-                    deltas += delta(bid)
-                }
-                if (segs.isNotEmpty()) {
-                    off = off0.copyOf()
-                    for (k in 0 until m.count) {
-                        val u = m.u(k) + off0[k * 2]
-                        val v = m.v(k) + off0[k * 2 + 1]
-                        // вес считается по позе привязки (u, v без смещения кадра), движение - от смещённой точки
-                        val bx = rest.applyX(m.u(k), m.v(k)); val by = rest.applyY(m.u(k), m.v(k))
-                        val px = rest.applyX(u, v); val py = rest.applyY(u, v)
-                        val w = SkinMath.weights(bx, by, segs)
-                        if (w.isEmpty()) continue
-                        var sx = 0f; var sy = 0f
-                        for ((bi, wi) in w) { sx += wi * deltas[bi].applyX(px, py); sy += wi * deltas[bi].applyY(px, py) }
-                        off[k * 2] = inv.applyX(sx, sy) - m.u(k)
-                        off[k * 2 + 1] = inv.applyY(sx, sy) - m.v(k)
-                    }
-                }
+        // Спринт 43: итоговые сетки. Каждый слой собирается отдельно (DeformStack) и кэшируется по своему id - новая
+        // сетка не затирает соседние, а «неподдерживаемых» сочетаний больше нет: деформации складываются по порядку.
+        val nativeWarps = LinkedHashMap(warps)
+        val nativePersp = LinkedHashMap(persp)
+        val order = LinkedHashSet<Int>()
+        order += meshes.keys; order += preparedGroupMeshes.keys; order += denseLeaves; order += leafStacks.keys
+        val mIds = IntArray(order.size)
+        val mCounts = IntArray(order.size * 2)
+        val mVerts = FloatBuilder()
+        val mTris = IntBuilder()
+        var mi = 0
+        for (id in order) {
+            val prepared = preparedGroupMeshes[id]
+            val stack = leafStacks[id]
+            val own = meshes[id]
+            var rm: com.vibetoon.domain.anim.Mesh
+            var ro: FloatArray
+            var clampOwn = false
+            val leafDeformed = id in warps || id in persp || id in denseLeaves || stack != null
+            if (prepared != null && own == null && !leafDeformed) {
+                // экспериментальный вызов: уже отсемплированная общая сетка (без Loop-сглаживания)
+                rm = prepared.mesh; ro = prepared.offsets
+            } else if (prepared != null && own == null) {
+                // спринт 43: готовая групповая сетка + деформеры самого слоя - складываются (раньше - отказ сцены)
+                val dense = if (id in denseLeaves) denseWarps[id] else null
+                val input = DeformStack.Input(prepared.mesh, prepared.offsets, 0, warps[id], dense, persp[id],
+                    stack?.first.orEmpty(), stack?.second ?: leafWorlds[id])
+                val r = deformCache?.compose(id, input) ?: DeformStack.compose(input)
+                rm = r.mesh; ro = r.offsets
+                nativeWarps.remove(id); nativePersp.remove(id)
+            } else {
+                val off = if (own != null) skinnedOffsets(id, own.first, own.second, skinRest, skins, bones, boneTails, ::delta) else null
+                val dense = if (id in denseLeaves) denseWarps[id] else null
+                val cubic = if (own != null || dense != null || stack != null) warps[id] else null
+                // перспектива слоя запекается только под групповыми деформерами (иначе - шейдер, после сетки)
+                val bakePersp = if (stack != null) persp[id] else null
+                val input = DeformStack.Input(own?.first, off, if (own != null) (if (own.first.count <= 300) 2 else 1) else 0,
+                    cubic, dense, bakePersp, stack?.first.orEmpty(), stack?.second ?: leafWorlds[id],
+                    cells = stack?.first?.maxOfOrNull { it.deformation.cells.coerceIn(1, 30) } ?: DeformStack.GROUP_CELLS)
+                val r = deformCache?.compose(id, input) ?: DeformStack.compose(input)
+                rm = r.mesh; ro = r.offsets
+                if (cubic != null) nativeWarps.remove(id)
+                if (bakePersp != null) nativePersp.remove(id)
+                clampOwn = own != null && stack == null && cubic == null && dense == null
             }
-            // плавная деформация: ребра делятся, смещение середин считается по правилу Loop (без заломов между точками)
-            // Подготовленная общая сетка уже отсемплирована и не должна усредняться Loop-сглаживанием.
-            val (rm, ro) = if (groupMesh != null) m to off else MeshMath.smooth(m, off, if (m.count <= 300) 2 else 1)
-            mCounts[i * 2] = rm.count
-            mCounts[i * 2 + 1] = rm.tris.size / 3
+            mIds[mi] = id
+            mCounts[mi * 2] = rm.count
+            mCounts[mi * 2 + 1] = rm.tris.size / 3
             for (k in 0 until rm.count) {
                 // NaN/Inf и «улетевшие» смещения рисуют артефакты на весь экран: обрезаем
-                fun safe(x: Float) = if (x.isFinite()) (if (groupMesh != null) x else x.coerceIn(-3f, 3f)) else 0f
-                mVerts.add(rm.u(k)); mVerts.add(rm.v(k)); mVerts.add(safe(ro[k * 2])); mVerts.add(safe(ro[k * 2 + 1]))
+                fun safe(x: Float) = if (x.isFinite()) (if (clampOwn) x.coerceIn(-3f, 3f) else x) else 0f
+                mVerts.add(rm.u(k)); mVerts.add(rm.v(k)); mVerts.add(safe(ro.getOrElse(k * 2) { 0f })); mVerts.add(safe(ro.getOrElse(k * 2 + 1) { 0f }))
             }
-            for (t in rm.tris) mTris.add(t)
+            mTris.addAll(rm.tris)
+            mi++
         }
+        deformCache?.retain(order)
         return SceneData(
-            canvasWidth, canvasHeight, ops.toIntArray(), params.toFloatArray(), textureIds.distinct().toIntArray(),
+            canvasWidth, canvasHeight, ops.toArray(), params.toArray(), textureIds.distinct().toIntArray(),
             // спринт 38: и дельты слоёв костей - родителей корневых костей (id < BONE_ID_BASE): поза в Animation считается от них
             quads, parentWorlds, (bones.keys + bones.keys.mapNotNull { links[it] }.filter { it !in bones }).associateWith { delta(it) },
-            nativeWarps.keys.toIntArray(), nativeWarps.values.flatMap { it.asList() }.toFloatArray(),
-            mIds, mCounts, mVerts.toFloatArray(), mTris.toIntArray(),
-            persp.keys.toIntArray(), persp.values.flatMap { it.asList() }.toFloatArray(),
-            turbs.keys.toIntArray(), turbs.values.flatMap { it.asList() }.toFloatArray(),
-            fx.keys.toIntArray(), fx.values.map { it.size }.toIntArray(), fx.values.flatMap { l -> l.flatMap { it.asList() } }.toFloatArray(),
+            nativeWarps.keys.toIntArray(), concat(nativeWarps.values),
+            mIds, mCounts, mVerts.toArray(), mTris.toArray(),
+            nativePersp.keys.toIntArray(), concat(nativePersp.values),
+            turbs.keys.toIntArray(), concat(turbs.values),
+            fx.keys.toIntArray(), fx.values.map { it.size }.toIntArray(), concat(fx.values.flatten()),
             groupLocalBounds, groupWorlds
         )
     }
+}
+
+/** Спринт 43: растущий массив float без боксинга (поток сцены собирается на каждом кадре Play). */
+class FloatBuilder(capacity: Int = 256) {
+    private var a = FloatArray(capacity.coerceAtLeast(8))
+    var size = 0; private set
+    fun add(v: Float) { if (size == a.size) a = a.copyOf(a.size * 2); a[size++] = v }
+    fun toArray(): FloatArray = a.copyOf(size)
+}
+
+/** Спринт 43: растущий массив int без боксинга. */
+class IntBuilder(capacity: Int = 256) {
+    private var a = IntArray(capacity.coerceAtLeast(8))
+    var size = 0; private set
+    fun add(v: Int) { if (size == a.size) a = a.copyOf(a.size * 2); a[size++] = v }
+    fun addAll(v: IntArray) {
+        if (size + v.size > a.size) a = a.copyOf(maxOf(a.size * 2, size + v.size))
+        v.copyInto(a, size); size += v.size
+    }
+    fun toArray(): IntArray = a.copyOf(size)
 }

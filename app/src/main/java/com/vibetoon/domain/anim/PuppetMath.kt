@@ -89,7 +89,7 @@ object PuppetMath {
 
     private class Cached(val w: Float, val h: Float, val hash: Int, val sys: ArapSystem, val adj: Array<IntArray>)
     private class GeoCache(val key: Int, val dist: Array<FloatArray>)
-    private class PathCache(val key: Int, val rest: PathMath.Curve, val bind: PathMath.Binding)
+    private class PathCache(val key: Int, val rest: PathMath.Curve, val bind: PathDeformer.Binding)
     private val cache = java.util.WeakHashMap<Mesh, Cached>()
     private val geoCache = java.util.WeakHashMap<Mesh, GeoCache>()
     private val pathCache = java.util.WeakHashMap<Mesh, PathCache>()
@@ -127,18 +127,26 @@ object PuppetMath {
     /**
      * Добавляет деформацию пинов к смещениям вершин [vertexOffsets] (2 числа на вершину, доли слоя). Нулевые смещения
      * пинов возвращают исходные смещения без расчёта.
-     *  - С [PATH_MIN_PINS] (2) и больше пинов: Deform Path (линия через пины, длина пряди сохраняется, см. [PathMath]).
+     *  - С [PATH_MIN_PINS] (2) и больше пинов: Deform Path (линия через пины, привязка t/d как в Live2D, см. [PathDeformer]).
      *  - Иначе: ARAP с МЯГКИМИ пинами `(L + Lambda) P = b + Lambda P_target`, где Lambda - от [LAMBDA_MAX] в центре пина
      *    до 0 на краю радиуса. Расстояния геодезические (по рёбрам сетки): влияние не перепрыгивает на соседние пряди.
      *    Жёсткий (Stiff) пин дополнительно закрепляет кластер вершин (60% радиуса) как твёрдое тело. Вершины вне
      *    радиусов всех пинов - якоря. Итог умножается на нормированное влияние пинов, у края радиуса оно затухает.
      */
-    fun addTo(mesh: Mesh, vertexOffsets: FloatArray, pins: List<Pin>, pinOffsets: FloatArray, w: Float, h: Float): FloatArray {
+    fun addTo(mesh: Mesh, vertexOffsets: FloatArray, pins: List<Pin>, pinOffsets: FloatArray, w: Float, h: Float,
+              scaleX: Float = 1f, scaleY: Float = 1f): FloatArray {
         if (pins.isEmpty() || mesh.count == 0) return vertexOffsets
         if ((0 until pins.size * 2).all { kotlin.math.abs(pinOffsets[it]) < 1e-6f }) return vertexOffsets
         val n = mesh.count
+        if (pins.size >= PATH_MIN_PINS) {
+            // спринт 43: путь считается в пикселях С УЧЁТОМ масштаба слоя - нормали и ширина верны и у растянутого слоя
+            val sx = kotlin.math.abs(scaleX).takeIf { it.isFinite() && it > 1e-3f } ?: 1f
+            val sy = kotlin.math.abs(scaleY).takeIf { it.isFinite() && it > 1e-3f } ?: 1f
+            val ww = w * sx; val hh = h * sy
+            val qs = FloatArray(n * 2) { if (it % 2 == 0) (mesh.u(it / 2) + vertexOffsets[it]) * ww else (mesh.v(it / 2) + vertexOffsets[it]) * hh }
+            return pathAddTo(mesh, vertexOffsets, pins, pinOffsets, ww, hh, qs)
+        }
         val q = FloatArray(n * 2) { if (it % 2 == 0) (mesh.u(it / 2) + vertexOffsets[it]) * w else (mesh.v(it / 2) + vertexOffsets[it]) * h }
-        if (pins.size >= PATH_MIN_PINS) return pathAddTo(mesh, vertexOffsets, pins, pinOffsets, w, h, q)
         val c = systemFor(mesh, vertexOffsets, w, h, q)
         val geo = geoFor(mesh, q, c.adj, pins, w, h)
         val avg = FloatArray(n * 2)
@@ -186,6 +194,17 @@ object PuppetMath {
         return clampMoves(vertexOffsets, out, maxPinMovePx(pinOffsets, w, h), w, h)
     }
 
+    /**
+     * Спринт 43: совет по плотности - true, если вдоль пути через пины слишком мало рядов вершин для плавного изгиба
+     * (см. [PathDeformer.needsDenserMesh]). Пинов меньше двух - путь не строится, совет не нужен.
+     */
+    fun pathNeedsDenserMesh(mesh: Mesh, vertexOffsets: FloatArray, pins: List<Pin>, w: Float, h: Float): Boolean {
+        if (pins.size < PATH_MIN_PINS || mesh.count == 0) return false
+        val q = FloatArray(mesh.count * 2) { if (it % 2 == 0) (mesh.u(it / 2) + vertexOffsets.getOrElse(it) { 0f }) * w else (mesh.v(it / 2) + vertexOffsets.getOrElse(it) { 0f }) * h }
+        val rest = PathMath.build(FloatArray(pins.size * 2) { if (it % 2 == 0) pins[it / 2].u * w else pins[it / 2].v * h }) ?: return false
+        return PathDeformer.needsDenserMesh(PathDeformer.bind(q, mesh.tris, rest, pins.maxOf { it.radius }))
+    }
+
     /** Наибольшее смещение пина в пикселях. */
     private fun maxPinMovePx(po: FloatArray, w: Float, h: Float): Float {
         var m = 0f
@@ -210,22 +229,25 @@ object PuppetMath {
     const val CLAMP_K = 1.5f
     const val CLAMP_PAD = 4f
 
-    /** Deform Path: сплайн через пины в исходном положении и в текущем; вершины следуют за линией по длине дуги. */
+    /**
+     * Deform Path (спринт 43 - как Path Deformer в Live2D, см. [PathDeformer]): сплайн через пины в исходном положении и
+     * в текущем; вершины восстанавливаются из (t - доля длины, d - смещение по нормали) с мягким корнем.
+     */
     private fun pathAddTo(mesh: Mesh, vo: FloatArray, pins: List<Pin>, po: FloatArray, w: Float, h: Float, q: FloatArray): FloatArray {
         val m = pins.size
         val restPts = FloatArray(m * 2) { if (it % 2 == 0) pins[it / 2].u * w else pins[it / 2].v * h }
         val curPts = FloatArray(m * 2) { if (it % 2 == 0) (pins[it / 2].u + po[it]) * w else (pins[it / 2].v + po[it]) * h }
         val radius = pins.maxOf { it.radius }
-        val key = (q.contentHashCode() * 31 + restPts.contentHashCode()) * 31 + radius.hashCode()
+        val key = ((q.contentHashCode() * 31 + restPts.contentHashCode()) * 31 + radius.hashCode()) * 31 + w.hashCode() * 7 + h.hashCode()
         val pc = synchronized(pathCache) {
             val c = pathCache[mesh]
             if (c != null && c.key == key) c else {
                 val rest = PathMath.build(restPts) ?: return vo
-                PathCache(key, rest, PathMath.bind(q, mesh.tris, rest, radius)).also { pathCache[mesh] = it }
+                PathCache(key, rest, PathDeformer.bind(q, mesh.tris, rest, radius)).also { pathCache[mesh] = it }
             }
         }
         val cur = PathMath.build(curPts) ?: return vo
-        val p = PathMath.deform(q, pc.bind, cur)
+        val p = PathDeformer.deform(q, pc.bind, cur)
         val out = vo.copyOf()
         for (k in 0 until mesh.count) {
             out[k * 2] += (p[k * 2] - q[k * 2]) / w

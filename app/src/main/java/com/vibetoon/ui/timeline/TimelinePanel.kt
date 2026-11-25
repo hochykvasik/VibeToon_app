@@ -232,7 +232,8 @@ fun TimelinePanel(
     val frameW = frameDp.dp
     val frameNow = frameS
     var anchorX by remember { mutableFloatStateOf(0f) }
-    val hasKey by remember { derivedStateOf { selected?.let { animation.hasKey(it, frameS.value) } ?: false } }
+    // спринт 43: ключ слоя - любая его дорожка (трансформация, сетка, пины, Warp, перспектива, эффекты)
+    val hasKey by remember { derivedStateOf { selected?.let { com.vibetoon.domain.anim.LayerKeyFlow.hasKey(animation, it, frameS.value) } ?: false } }
     val easing by remember { derivedStateOf { selected?.let { animation.easingAt(it, frameS.value) } } }
     val markerHere by remember { derivedStateOf { frameS.value in markers } }
     var easingMenu by remember { mutableStateOf(false) }
@@ -329,6 +330,8 @@ fun TimelinePanel(
                 Text("✕ Снять выделение", fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
             val keyBtn = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            // спринт 43: все ключи только активного слоя - чтобы применить к ним общую кривую интерполяции
+            OutlinedButton(onClick = vm::selectLayerKeys, enabled = selected != null && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Выбрать все ключи слоя", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::copySelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::cutSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вырезать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::pasteKeys, enabled = hasKeyClip && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -377,6 +380,7 @@ fun TimelinePanel(
             OutlinedButton(onClick = { vm.jumpAnyKey(true) }, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Ключ ▶", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::selectKeysAtFrame, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Ключи кадра", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::selectAllKeys, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Все ключи", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::selectLayerKeys, enabled = selected != null && !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Выбрать все ключи слоя", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             TextButton(onClick = vm::toggleKeyMode, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) { Text("Все слои", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
         // ---- Панель инструментов таймлайна ----

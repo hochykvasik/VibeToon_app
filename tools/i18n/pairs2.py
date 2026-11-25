@@ -94,8 +94,8 @@ Transform Layer «Transform {}»: привяжите к нему слои чер
 Цвет и толщина контура обновлены|Path color and width updated
 Подготовить область|Prepare bounds
 Включить для группы|Enable for group
-Деформация пропущена: неподдерживаемое содержимое или область|Deformation skipped: unsupported content or bounds
-Экспорт остановлен: неподдерживаемая деформация или область|Export stopped: unsupported deformation or bounds
+Кадр не обновлён: ошибка построения сцены|Frame not updated: scene build error
+Экспорт остановлен: ошибка построения кадра {}|Export stopped: frame {} could not be built
 Раздел X|X divisions
 Плотный Warp: статический, FX выкл|Dense Warp: static, FX off
 Плотный Warp: только обычный слой и FX выкл|Dense Warp requires a regular layer and FX off
@@ -1692,4 +1692,7 @@ VibeToon: фоновая работа|VibeToon: background work
 Задач: {}|Tasks: {}
 Скрыть панель|Hide panel
 Показать панель|Show panel
+Выбрать все ключи слоя|Select all layer keys
+У слоя нет ключей|The layer has no keys
+Выбрано ключей слоя: {}|Layer keys selected: {}
 """

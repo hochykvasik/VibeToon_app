@@ -402,8 +402,7 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Цвет и толщина контура обновлены" to R.string.ui_path_color_and_width_updated,
     "Подготовить область" to R.string.ui_prepare_bounds,
     "Включить для группы" to R.string.ui_enable_for_group,
-    "Деформация пропущена: неподдерживаемое содержимое или область" to R.string.ui_deformation_skipped_unsupported_cont,
-    "Экспорт остановлен: неподдерживаемая деформация или область" to R.string.ui_export_stopped_unsupported_deformati,
+    "Кадр не обновлён: ошибка построения сцены" to R.string.ui_frame_not_updated_scene_build_error,
     "Раздел X" to R.string.ui_x_divisions,
     "Плотный Warp: статический, FX выкл" to R.string.ui_dense_warp_static_fx_off,
     "Плотный Warp: только обычный слой и FX выкл" to R.string.ui_dense_warp_requires_a_regular_layer_,
@@ -1764,6 +1763,8 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Нажмите, чтобы вернуться в VibeToon" to R.string.ui_tap_to_return_to_vibetoon,
     "Скрыть панель" to R.string.ui_hide_panel,
     "Показать панель" to R.string.ui_show_panel,
+    "Выбрать все ключи слоя" to R.string.ui_select_all_layer_keys,
+    "У слоя нет ключей" to R.string.ui_the_layer_has_no_keys,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -1834,6 +1835,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Текстовые\\ слои\\ PSD\\ стали\\ редактируемым\\ текстом:\\ (.+?)\$" to R.string.ui_psd_text_layers_became_editable_text_3,
     "^Импортировано\\ кистей:\\ (.+?),\\ пропущено\\ повреждённых:\\ (.+?)\$" to R.string.ui_brushes_imported_damaged_skipped,
     "^Импортировано\\ палитр:\\ (.+?),\\ цветов:\\ (.+?),\\ пропущено:\\ (.+?)\$" to R.string.ui_palettes_imported_colors_skipped,
+    "^Экспорт\\ остановлен:\\ ошибка\\ построения\\ кадра\\ (.+?)\$" to R.string.ui_export_stopped_frame_could_not_be_bu,
     "^PSD\\ «(.+?)»\\ вставлен\\ как\\ покадровый\\ слой:\\ кадров\\ (.+?)\$" to R.string.ui_psd_inserted_as_a_frame_by_frame_lay_2,
     "^(.+?)\\ КБ\\.\\ Сохранено\\ в\\ папку\\ проекта\\ и\\ в\\ галерею\\.\$" to R.string.ui_kb_saved_to_the_project_folder_and_t,
     "^Пин\\ (.+?):\\ тяните\\ его,\\ рисунок\\ следует\\ за\\ точкой\$" to R.string.ui_pin_drag_it_the_drawing_follows_the_,
@@ -1918,6 +1920,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Неожиданный\\ символ\\ '(.+?)'\$" to R.string.ui_unexpected_character,
     "^Холст\\ (.+?)×(.+?)\\ уменьшен\\ до\\ (.+?)×(.+?)\$" to R.string.ui_canvas_scaled_down_to,
     "^Запуск\\ кодека\\ в\\ фазе\\ (.+?)\$" to R.string.ui_codec_started_in_phase,
+    "^Выбрано\\ ключей\\ слоя:\\ (.+?)\$" to R.string.ui_layer_keys_selected,
     "^Кадр\\ продублирован:\\ (.+?)\$" to R.string.ui_frame_duplicated,
     "^Скопировано\\ ключей:\\ (.+?)\$" to R.string.ui_keys_copied,
     "^Допустимо\\ от\\ (.+?)\\ до\\ (.+?)\\ px\$" to R.string.ui_allowed_from_to_px,

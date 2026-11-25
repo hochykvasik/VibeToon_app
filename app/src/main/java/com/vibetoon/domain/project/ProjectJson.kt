@@ -299,7 +299,7 @@ object ProjectJson {
                 val list = (v as? List<*>).orEmpty().mapNotNull { item ->
                     val o = item as? Map<*, *> ?: return@mapNotNull null
                     fun f(k: String, d: Float) = (o[k] as? Number)?.toFloat()?.takeIf { it.isFinite() } ?: d
-                    com.vibetoon.domain.anim.Pin(f("u", 0f).coerceIn(0f, 1f), f("v", 0f).coerceIn(0f, 1f), o["s"] == true, f("r", 180f).coerceIn(10f, 2000f))
+                    com.vibetoon.domain.anim.Pin(f("u", 0f).coerceIn(-0.5f, 1.5f), f("v", 0f).coerceIn(-0.5f, 1.5f), o["s"] == true, f("r", 180f).coerceIn(10f, 2000f))
                 }.take(com.vibetoon.domain.anim.PuppetMath.MAX_PINS)
                 if (list.isNotEmpty()) pins[i] = list
             }

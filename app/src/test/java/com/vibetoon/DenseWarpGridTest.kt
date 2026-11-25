@@ -39,14 +39,13 @@ class DenseWarpGridTest {
         assertNotNull(edited.resized(9, 7))
         assertEquals(.8f, edited.offsets[(1 * 5 + 1) * 2], 0f)
     }
-    @Test fun unsafeCombinationIsRejectedAndOldVersionsDoNotReadDenseFormat() {
+    @Test fun effectsCombineAndOldVersionsDoNotReadDenseFormat() {
         val id = 100001; val leaf = LeafNode(id, "a", true, 1f, "norm", false, 0, 0, 100, 100)
         val grid = DenseWarpGrid.zero(5, 4)
-        try {
-            SceneBuilder.buildTree(listOf(leaf), 100, 100, warps = mapOf(id to FloatArray(32)),
-                denseWarps = mapOf(id to grid), fx = mapOf(id to listOf(FloatArray(10))))
-            fail("effects are blocked")
-        } catch (_: IllegalArgumentException) { }
+        // Спринт 43: плотный Warp вместе с эффектами больше не отклоняется - сетка и эффект остаются оба
+        val withFx = SceneBuilder.buildTree(listOf(leaf), 100, 100, warps = mapOf(id to FloatArray(32)),
+            denseWarps = mapOf(id to grid), fx = mapOf(id to listOf(FloatArray(10))))
+        assertEquals(listOf(id), withFx.meshIds.toList()); assertEquals(listOf(id), withFx.fxIds.toList())
         val body = "{\"version\":3,\"id\":\"p\",\"warps\":[$id],\"denseWarps\":{\"$id\":{\"w\":5,\"h\":4,\"p\":[]}}}"
         assertTrue(ProjectJson.decode(body).isFailure)
     }

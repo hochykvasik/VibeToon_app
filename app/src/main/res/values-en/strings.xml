@@ -418,8 +418,8 @@
     <string name="ui_path_color_and_width_updated">Path color and width updated</string>
     <string name="ui_prepare_bounds">Prepare bounds</string>
     <string name="ui_enable_for_group">Enable for group</string>
-    <string name="ui_deformation_skipped_unsupported_cont">Deformation skipped: unsupported content or bounds</string>
-    <string name="ui_export_stopped_unsupported_deformati">Export stopped: unsupported deformation or bounds</string>
+    <string name="ui_frame_not_updated_scene_build_error">Frame not updated: scene build error</string>
+    <string name="ui_export_stopped_frame_could_not_be_bu">Export stopped: frame {} could not be built</string>
     <string name="ui_x_divisions">X divisions</string>
     <string name="ui_dense_warp_static_fx_off">Dense Warp: static, FX off</string>
     <string name="ui_dense_warp_requires_a_regular_layer_">Dense Warp requires a regular layer and FX off</string>
@@ -2016,4 +2016,7 @@
     <string name="ui_tasks">Tasks: {}</string>
     <string name="ui_hide_panel">Hide panel</string>
     <string name="ui_show_panel">Show panel</string>
+    <string name="ui_select_all_layer_keys">Select all layer keys</string>
+    <string name="ui_the_layer_has_no_keys">The layer has no keys</string>
+    <string name="ui_layer_keys_selected">Layer keys selected: {}</string>
 </resources>

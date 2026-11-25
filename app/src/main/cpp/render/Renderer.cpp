@@ -1,5 +1,6 @@
 #include "render/Renderer.h"
 #include "render/UploadBufferPolicy.h"
+#include "render/MeshPackPolicy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -833,6 +834,12 @@ void Renderer::setMeshes(const int* ids, const int* counts, int n, const float* 
     size_t vo = 0, to = 0;
     for (int i = 0; i < n; ++i) {
         const int vc = counts[i * 2], tc = counts[i * 2 + 1];
+        if (!vt::meshpack::meshValid(vc, tc)) {
+            // спринт 43: неверная сетка пропускается только сама; смещения следующих сеток не сбиваются
+            vo += static_cast<size_t>(vc > 0 ? vc : 0) * 4;
+            to += static_cast<size_t>(tc > 0 ? tc : 0) * 3;
+            continue;
+        }
         MeshGeom g;
         g.verts.reserve(static_cast<size_t>(vc) * 4);
         for (int k = 0; k < vc; ++k) {

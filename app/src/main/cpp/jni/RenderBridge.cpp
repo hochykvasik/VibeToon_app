@@ -1,5 +1,6 @@
 // JNI для рендерера. Все вызовы (кроме create) приходят из GL-потока.
 // Указатель на Renderer хранится в Kotlin как Long.
+#include "render/MeshPackPolicy.h"
 #include <android/bitmap.h>
 #include <jni.h>
 #include <cstring>
@@ -120,17 +121,13 @@ Java_com_vibetoon_nativebridge_RenderNative_setMeshes(JNIEnv* env, jobject, jlon
     if (env->GetArrayLength(counts) < n * 2) return;
     jint* i = env->GetIntArrayElements(ids, nullptr);
     jint* c = env->GetIntArrayElements(counts, nullptr);
-    long long vNeed = 0, tNeed = 0;
-    for (jsize k = 0; k < n; ++k) { vNeed += 4LL * c[k * 2]; tNeed += 3LL * c[k * 2 + 1]; }
-    if (env->GetArrayLength(verts) >= vNeed && env->GetArrayLength(tris) >= tNeed) {
-        jfloat* v = env->GetFloatArrayElements(verts, nullptr);
-        jint* t = env->GetIntArrayElements(tris, nullptr);
-        R(h)->setMeshes(i, c, n, v, t);
-        env->ReleaseIntArrayElements(tris, t, JNI_ABORT);
-        env->ReleaseFloatArrayElements(verts, v, JNI_ABORT);
-    } else {
-        R(h)->setMeshes(i, c, 0, nullptr, nullptr);   // рассогласованные массивы: сетки сбрасываются, слои рисуются обычно
-    }
+    // спринт 43: сетки проверяются по одной - рассогласование в конце пакета не сбрасывает предыдущие сетки
+    const int fit = vt::meshpack::fittingPrefix(c, n, env->GetArrayLength(verts), env->GetArrayLength(tris));
+    jfloat* v = env->GetFloatArrayElements(verts, nullptr);
+    jint* t = env->GetIntArrayElements(tris, nullptr);
+    R(h)->setMeshes(i, c, fit, v, t);
+    env->ReleaseIntArrayElements(tris, t, JNI_ABORT);
+    env->ReleaseFloatArrayElements(verts, v, JNI_ABORT);
     env->ReleaseIntArrayElements(counts, c, JNI_ABORT);
     env->ReleaseIntArrayElements(ids, i, JNI_ABORT);
 }

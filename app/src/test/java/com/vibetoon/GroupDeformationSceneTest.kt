@@ -42,12 +42,21 @@ class GroupDeformationSceneTest {
         val perspective = SceneBuilder.GroupDeformation(bounds, perspective = PerspectiveMath.matrix(floatArrayOf(0f,0f,.2f,0f,.2f,.1f,0f,0f)), cells = 2)
         val scene = SceneBuilder.buildTree(listOf(group), 50, 50, groupDeformations = mapOf(10 to perspective))
         assertEquals(2, scene.meshIds.size)
-        fun refused(action: () -> Unit) { try { action(); fail("expected rejection") } catch (_: IllegalArgumentException) {} }
-        refused { SceneBuilder.buildTree(listOf(group), 50, 50, warps = mapOf(1 to FloatArray(32)), groupDeformations = mapOf(10 to definition())) }
+        // Спринт 43: прежние «отказы» (исключение -> выключение всех групповых деформаций сцены) теперь складываются
+        fun moved(scene: SceneData, id: Int): Boolean { val (dx, dy) = meshDisplacement(scene, id); return kotlin.math.abs(dx) + kotlin.math.abs(dy) > 1f }
+        // Warp слоя внутри группового Warp: оба деформера на месте, у слоя - одна общая сетка, нативный Warp не дублируется
+        val withLeafWarp = SceneBuilder.buildTree(listOf(group), 50, 50, warps = mapOf(1 to FloatArray(32) { if (it % 2 == 0) .05f else 0f }), groupDeformations = mapOf(10 to definition()))
+        assertEquals(setOf(1, 2), withLeafWarp.meshIds.toSet()); assertFalse(1 in withLeafWarp.warpIds.toList())
+        assertEquals(20f + 5f, meshDisplacement(withLeafWarp, 1).first, .01f)
+        // обтравка без базы, вложенные групповые деформеры, деформер скрытой/отсутствующей группы, слой за рамкой
         val orphanClip = group.copy(children = listOf(a.copy(clipped = true)))
-        refused { SceneBuilder.buildTree(listOf(orphanClip), 50, 50, groupDeformations = mapOf(10 to definition())) }
-        refused { SceneBuilder.buildTree(listOf(group), 50, 50, groupDeformations = mapOf(10 to definition(), 11 to definition())) }
-        refused { SceneBuilder.buildTree(listOf(group), 50, 50, groupDeformations = mapOf(100 to definition())) }
-        refused { SceneBuilder.buildTree(listOf(group), 50, 50, groupDeformations = mapOf(10 to definition().copy(bounds = GroupDeformationMesh.Bounds(0f,0f,1f,1f)))) }
+        assertTrue(moved(SceneBuilder.buildTree(listOf(orphanClip), 50, 50, groupDeformations = mapOf(10 to definition())), 1))
+        val nested = SceneBuilder.buildTree(listOf(group), 50, 50, groupDeformations = mapOf(10 to definition(), 11 to definition()))
+        assertEquals(20f, meshDisplacement(nested, 1).first, .01f)
+        assertEquals(40f, meshDisplacement(nested, 2).first, .01f)   // внутренний и внешний деформеры складываются
+        assertTrue(SceneBuilder.buildTree(listOf(group), 50, 50, groupDeformations = mapOf(100 to definition())).meshIds.isEmpty())
+        val tiny = SceneBuilder.buildTree(listOf(group), 50, 50, groupDeformations = mapOf(10 to definition().copy(bounds = GroupDeformationMesh.Bounds(0f,0f,1f,1f))))
+        assertEquals(setOf(1, 2), tiny.meshIds.toSet())
+        assertTrue(tiny.meshVerts.all { it.isFinite() })
     }
 }
