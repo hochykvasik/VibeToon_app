@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import com.vibetoon.ui.projects.coachSession
 import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import com.vibetoon.ui.i18n.Text
