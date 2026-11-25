@@ -338,6 +338,10 @@ fun TimelinePanel(
             OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) {
                 Text(if (keySel.size == 1) "Кривая ключа" else "Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
+            // спринт 49: кривая выделенного ключа - в буфер; скопированная кривая - всем выделенным ключам (одна запись Undo)
+            val curveClip by vm.curveClipboard.collectAsStateWithLifecycle()
+            OutlinedButton(onClick = vm::copySelectedCurve, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Копировать кривую", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::pasteCurveToSelection, enabled = keySel.isNotEmpty() && curveClip != null && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вставить кривую", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             // спринт 43: все ключи только активного слоя - чтобы применить к ним общую кривую интерполяции
             OutlinedButton(onClick = vm::selectLayerKeys, enabled = selected != null && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Выбрать все ключи слоя", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::copySelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }

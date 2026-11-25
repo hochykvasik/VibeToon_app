@@ -1777,4 +1777,30 @@ Hold - резкая смена формы. Остальные переходы �
 Загрузка проекта…|Loading project…
 Отпустите - проект вернётся в «Мои работы»|Release to move the project back to My projects
 Перетащите сюда, чтобы убрать из папки|Drag here to remove from the folder
+Кривая скопирована: вставьте её в другой ключ или набор ключей|Curve copied: paste it onto another key or set of keys
+Выделите ключ: его кривая будет скопирована|Select a key: its curve will be copied
+Сначала скопируйте кривую: «Копировать» в редакторе кривой или «Копировать кривую»|Copy a curve first: Copy in the curve editor or Copy curve
+Кривая вставлена (ключей: {})|Curve pasted (keys: {})
+Копировать кривую|Copy curve
+Вставить кривую|Paste curve
+Сохранить…|Save…
+Мои кривые|My curves
+Удалить кривую «{}»?|Delete curve “{}”?
+Кривая пропадёт из «Моих кривых». Ключи, которым она уже назначена, не изменятся.|The curve will be removed from My curves. Keys that already use it will not change.
+Перезаписать|Overwrite
+Сохранить кривую|Save curve
+Кривая с таким названием уже есть - она будет перезаписана|A curve with this name exists - it will be overwritten
+Кривая появится в «Пресетах» → «Мои кривые» во всех проектах|The curve will appear in Presets → My curves in all projects
+Моя кривая|My curve
+Кривая перезаписана: {}|Curve overwritten: {}
+Кривая сохранена: {}|Curve saved: {}
+Точечный выбор|Point select
+Кости: точечный выбор|Bones: point select
+Точечный выбор: касайтесь слоёв - касание добавляет или снимает слой, удержание только добавляет|Point select: tap layers - a tap adds or removes a layer, a hold only adds
+Лассо: обведите слои пальцем|Lasso: draw around layers with your finger
+Слой закрыт замком|Layer is locked
+Под пальцем нет видимого слоя|No visible layer under your finger
+Добавлен слой «{}» (выбрано: {})|Added layer “{}” (selected: {})
+Снят слой «{}» (выбрано: {})|Removed layer “{}” (selected: {})
+Слой «{}» уже выбран (выбрано: {})|Layer “{}” is already selected (selected: {})
 """

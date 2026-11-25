@@ -160,6 +160,18 @@ class AppSettings(context: Context) {
     }
     fun resetHotkeys() { hotkeys.clear(); val e = p.edit(); for (a in com.vibetoon.domain.HotkeyAction.values()) e.remove("hk_" + a.name); e.apply() }
 
+    /**
+     * Спринт 49: свои кривые плавности (UserCurves) - общие для всех проектов. Лежат в «vt_app», поэтому попадают в
+     * «Резервную копию вручную» и восстанавливаются «Импортом копии»; при обновлении APK не теряются.
+     */
+    var userCurves by mutableStateOf(com.vibetoon.domain.anim.UserCurves.decode(p.getString(com.vibetoon.domain.anim.UserCurves.PREF, null)))
+        private set
+    fun saveUserCurves(list: List<com.vibetoon.domain.anim.UserCurves.Saved>) {
+        userCurves = list
+        // commit: своя кривая записана сразу (не теряется, если приложение закроют сразу после сохранения)
+        p.edit().putString(com.vibetoon.domain.anim.UserCurves.PREF, com.vibetoon.domain.anim.UserCurves.encode(list)).commit()
+    }
+
     val effectiveLang: String get() = com.vibetoon.domain.settings.AppLanguage.effective(lang, Locale.getDefault().language)
 
     fun save() {
@@ -269,6 +281,7 @@ class AppSettings(context: Context) {
         tap3Redo = p.getBoolean("tap3", false)
         hotkeys.clear()
         for (a in com.vibetoon.domain.HotkeyAction.values()) p.getInt("hk_" + a.name, -1).takeIf { it >= 0 }?.let { hotkeys[a] = it }
+        userCurves = com.vibetoon.domain.anim.UserCurves.decode(p.getString(com.vibetoon.domain.anim.UserCurves.PREF, null))   // спринт 49
     }
 }
 

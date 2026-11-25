@@ -661,6 +661,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // спринт 47: кэши прошлого проекта (участники символов, видимость, сетки, пиксели PSD для «Пластики») не держат память
         memberCache.clear(); memberCacheLayers = null; hiddenCacheKey = null; hiddenCache = emptySet()
         meshTrackCache.clear(); meshEdgeCache.clear(); liqPsdCache = null
+        // спринт 49: кэши по id слоя - у слоёв нового проекта те же маленькие id: границы содержимого (рамка выделения,
+        // лассо костей), «уже показанные» кадры ячеек, призраки и текст с эффектами прошлого проекта не должны к ним прилипать
+        contentBox.clear(); ghostShown.clear(); cellShown.clear(); textFxKeys.clear(); pauseCapture.clear()
+        _lassoLayers.value = emptySet(); lassoPts = ArrayList(); pointDownAt = 0L
+        brushLive = null; brushDirty.clear(); cutRemoved.clear(); meshLast = null; _brushCircle.value = null; meshActive = -1
         residency.clear(); everEdited.clear(); lastEvictable = null   // пакет 29: учёт памяти текстур - заново
         saveJob?.cancel()
         camera = Camera()
@@ -3287,6 +3292,61 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         selectedTimeTargets?.let { t -> applyTimeKeys(t, null) { keys, frames -> TimelineItemOps.withCurve(keys, frames, data) } }
         pushScene()
         markDirty()
+    }
+
+    // ---- спринт 49: копирование и вставка кривых (буфер живёт весь сеанс, между проектами тоже)
+    private val _curveClipboard = MutableStateFlow<List<Float>?>(null)
+    /** Скопированная кривая ([com.vibetoon.domain.anim.Curve.toList]) или null. */
+    val curveClipboard: StateFlow<List<Float>?> = _curveClipboard.asStateFlow()
+
+    /** «Копировать» в редакторе кривой. */
+    fun copyCurve(curve: com.vibetoon.domain.anim.Curve) {
+        _curveClipboard.value = curve.toList()
+        _state.value = UiState.Message("Кривая скопирована: вставьте её в другой ключ или набор ключей")
+    }
+
+    /**
+     * Ключи, которые получают кривую от «Вставить кривую»: выделенный ромб (только он), набор выделенных ромбов (на любых
+     * слоях и костях) и ключи времени символов в выделении; без выделения - ключи выделенного объекта на кадре плейхеда.
+     */
+    private fun pasteCurveTargets(): Pair<List<Pair<Int, Int>>, Map<Int, Set<Int>>> {
+        val tracks = _animation.value.tracks
+        val single = if (_keySel.value.size == 1) singleKey() else null
+        var layer = if (single != null) com.vibetoon.domain.anim.SingleKeyCurve.targets(single.first, single.second, tracks, isBoneId(single.first))
+            else com.vibetoon.domain.anim.SelectedKeyCurves.targets(_animation.value, _keySel.value)
+        var time = selectedTimeKeyTargets()
+        if (layer.isEmpty() && time.isEmpty() && _keySel.value.isEmpty()) {
+            layer = curveTargets().filter { tracks[it]?.keyAt(_frame.value) != null }.map { it to _frame.value }
+            time = timeCurveTargets()
+        }
+        return layer to time
+    }
+
+    /** «Копировать кривую» на таймлайне: кривая первого выделенного ключа (или ключа времени) в буфер. */
+    fun copySelectedCurve() {
+        val (layer, time) = pasteCurveTargets()
+        val curve = layer.firstOrNull()?.let { (id, f) ->
+            _animation.value.tracks[id]?.keyAt(f)?.let { k -> k.curve?.let { com.vibetoon.domain.anim.Curve.parse(it) } ?: com.vibetoon.domain.anim.Curve.of(k.easing) }
+        } ?: time.entries.firstOrNull()?.let { (inst, frames) ->
+            media.firstOrNull { it.id == inst }?.timeKeys?.filter { it.frame in frames }?.minByOrNull { it.frame }?.let { TimeEase.curveOf(it) }
+        }
+        if (curve == null) { _state.value = UiState.Message("Выделите ключ: его кривая будет скопирована"); return }
+        copyCurve(curve)
+    }
+
+    /** «Вставить кривую»: скопированная кривая всем ключам выделения одной записью Undo. */
+    fun pasteCurveToSelection() {
+        if (_playing.value) return
+        val data = com.vibetoon.domain.anim.CurveClipboard.valid(_curveClipboard.value)?.toList()
+            ?: run { _state.value = UiState.Message("Сначала скопируйте кривую: «Копировать» в редакторе кривой или «Копировать кривую»"); return }
+        val (layer, time) = pasteCurveTargets()
+        if (layer.isEmpty() && time.isEmpty()) { _state.value = UiState.Message("В выделении нет ключей: выделите ключи рамкой (кнопка выделения на таймлайне)"); return }
+        if (layer.any { isLockedId(it.first) } || time.keys.any { isLockedId(it) }) { lockedNotice(); return }
+        checkpoint("curve-paste", force = true)
+        if (layer.isNotEmpty()) _animation.value = com.vibetoon.domain.anim.SelectedKeyCurves.apply(_animation.value, layer, data)
+        if (time.isNotEmpty()) applyTimeKeys(time, null) { keys, frames -> TimelineItemOps.withCurve(keys, frames, data) }
+        pushScene(); refreshInspector(); markDirty()
+        _state.value = UiState.Message("Кривая вставлена (ключей: ${com.vibetoon.domain.anim.CurveClipboard.pastedCount(layer.size, time.values.sumOf { it.size })})")
     }
 
     fun setEasing(type: EasingType) {
@@ -11043,6 +11103,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
+    /**
+     * Спринт 49: матрицы скининга вершин слоя, привязанного к костям (null - без костей). Через них палец переводится в
+     * позу до скининга - кисть и перетаскивание вершин работают на рукаве, привязанном к кости, как на обычном слое.
+     */
+    private fun skinAffinesOf(t: Int, m: Mesh): FloatArray? =
+        if (t in skinLayers) scene?.skinAffines?.get(t)?.takeIf { it.size >= m.count * com.vibetoon.domain.anim.SkinEdit.STRIDE } else null
+
+    /** Смещения сетки, по которым ищется треугольник под пальцем: у слоя на костях - показанные (после скининга). */
+    private fun hitMeshOffsets(t: Int, m: Mesh): FloatArray =
+        (if (t in skinLayers) sceneMeshOffsets(t, m.count) else null) ?: MeshMath.offsets(t, m, _frame.value, base, _animation.value, _fx.value)
+
     private fun refreshMeshOverlay() {
         refreshPinOverlay()
         val t = warpTarget()
@@ -11147,7 +11218,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
         val (pu, pv) = meshLast ?: return
         meshLast = u to v
-        val off = MeshMath.offsets(t, m, _frame.value, base, _animation.value, _fx.value)
+        val off = hitMeshOffsets(t, m)   // спринт 49: на кости режем то, что видно
         val hit = MeshMath.trianglesHit(m, off, pu, pv, u, v)
         if (hit.isEmpty()) return
         if (m.tris.size / 3 - hit.size < 1) return   // последний треугольник не режем: для удаления сетки есть «Удалить»
@@ -11245,14 +11316,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = meshLayers[t] ?: return
         val q = scene?.selectionQuads?.get(t) ?: return
         val l = layers.firstOrNull { it.id == t } ?: return
-        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
-        val (pu, pv) = meshLast ?: return
-        meshLast = u to v
+        val (u0, v0) = unitOf(q, toCanvas(sx, sy)) ?: return
+        val (pu0, pv0) = meshLast ?: return
+        meshLast = u0 to v0
         _brushCircle.value = floatArrayOf(sx, sy, _brushRadius.value)
         // спринт 46: сетка обрезанного слоя лежит на видимой части - радиус в её пикселях
         val crop = com.vibetoon.domain.model.LayerCrop.of(layerProps[t]?.crop)
         val w = l.width * (crop?.let { it.r - it.l } ?: 1f); val h = l.height * (crop?.let { it.b - it.t } ?: 1f)
-        val (ru, rv) = unitOf(q, toCanvas(sx + _brushRadius.value, sy)) ?: return
+        val (ru0, rv0) = unitOf(q, toCanvas(sx + _brushRadius.value, sy)) ?: return
+        // спринт 49: слой на костях - мазок, его начало и радиус переводятся в позу до скининга матрицей ближайшей
+        // показанной вершины (Grab/Smooth/Bloat/Pinch работают по видимой форме, поза костей складывается с правкой)
+        val aff = skinAffinesOf(t, m)
+        val near = if (aff == null) -1 else nearestShownVertex(m.count, sx, sy)
+        fun back(a: Float, b: Float): Pair<Float, Float> = if (near < 0) a to b else com.vibetoon.domain.anim.SkinEdit.unskin(aff, near, a, b) ?: (a to b)
+        val (u, v) = back(u0, v0)
+        val (pu, pv) = back(pu0, pv0)
+        val (ru, rv) = back(ru0, rv0)
         val radiusPx = kotlin.math.hypot((ru - u) * w, (rv - v) * h)
         val live = brushLive?.takeIf { it.first == t && it.second.size == m.count * 2 }
             ?: (t to MeshMath.offsets(t, m, _frame.value, base, _animation.value, _fx.value)).also { brushLive = it }
@@ -11262,6 +11341,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         brushDirty.addAll(touched)
         val now = System.nanoTime()
         if (now - brushLastPush >= 16_000_000L) { brushLastPush = now; pushScene() }
+    }
+
+    /** Ближайшая к пальцу показанная вершина (точки оверлея сетки в экранных пикселях); -1 - оверлея нет. */
+    private fun nearestShownVertex(count: Int, sx: Float, sy: Float): Int {
+        val pts = _meshOverlay.value.points
+        if (pts.size < count * 2) return -1
+        return com.vibetoon.domain.anim.SkinEdit.nearest(count, { k -> pts[k * 2] to pts[k * 2 + 1] }, sx, sy)
     }
 
     /** Конец мазка: одна запись изменённых вершин (форма привязки или ключи кадра), буфер сбрасывается. */
@@ -11334,7 +11420,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val l = layers.firstOrNull { it.id == t } ?: return false
         val q = scene?.selectionQuads?.get(t) ?: return false
         val (pu, pv) = unitOf(q, toCanvas(sx, sy)) ?: return false
-        val cur = MeshMath.offsets(t, m, _frame.value, base, _animation.value, _fx.value)
+        val cur = hitMeshOffsets(t, m)   // спринт 49: у слоя на костях - треугольник видимой (скиннутой) сетки
         val bind = MeshMath.offsets(t, m, _frame.value, base, _animation.value, false)
         for (i in 0 until m.tris.size / 3) {
             val a = m.tris[i * 3]; val b = m.tris[i * 3 + 1]; val c = m.tris[i * 3 + 2]
@@ -11374,7 +11460,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = meshLayers[t] ?: return
         if (k !in 0 until m.count) return
         val q = scene?.selectionQuads?.get(t) ?: return
-        val (u, v) = unitOf(q, toCanvas(sx, sy)) ?: return
+        val (u0, v0) = unitOf(q, toCanvas(sx, sy)) ?: return
+        // спринт 49: вершина слоя на костях встаёт под палец ПОСЛЕ скининга: палец переводится через M_k⁻¹
+        val (u, v) = com.vibetoon.domain.anim.SkinEdit.unskin(skinAffinesOf(t, m), k, u0, v0) ?: (u0 to v0)
         // спринт 43: у пряди с пинами показанная вершина = своё смещение + добавка пинов/пути - вычитаем добавку,
         // чтобы вершина вставала ровно под палец и форма сохранялась ключом, а не отскакивала
         var ox = u - m.u(k); var oy = v - m.v(k)
@@ -11531,6 +11619,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun boneTap(sx: Float, sy: Float) {
+        if (_boneTool.value == BoneTool.LASSO && _boneSelectMode.value == com.vibetoon.domain.input.BoneSelectMode.POINT) { pointPick(sx, sy); return }
         if (_boneTool.value != BoneTool.SELECT) return
         val hit = hitBone(sx, sy, 32f)
         if (hit == null) applySelection(emptySet(), null) else applySelection(setOf(hit.id), hit.id)
@@ -11563,6 +11652,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 return true
             }
             BoneTool.LASSO -> {
+                // спринт 49: «Точечный выбор» - палец не рисует контур; касание уходит в boneTap -> pointPick,
+                // протяжка двигает камеру
+                if (_boneSelectMode.value == com.vibetoon.domain.input.BoneSelectMode.POINT) { pointDownAt = SystemClock.uptimeMillis(); return false }
                 lassoPts = arrayListOf(sx, sy)
                 grab = 4
                 refreshBoneOverlay()
@@ -11688,7 +11780,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun clearLasso() { _lassoLayers.value = emptySet(); updateSelectionFrame() }
+    fun clearLasso() { _lassoLayers.value = emptySet(); updateSelectionFrame(); refreshBoneOverlay() }
+
+    // ---- спринт 49: «Лассо» / «Точечный выбор» слоёв для привязки к кости
+    private val _boneSelectMode = MutableStateFlow(com.vibetoon.domain.input.BoneSelectMode.LASSO)
+    val boneSelectMode: StateFlow<com.vibetoon.domain.input.BoneSelectMode> = _boneSelectMode.asStateFlow()
+    private var pointDownAt = 0L
+    private val pointSeq = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Переключение режима выбора; уже выбранные слои сохраняются (можно добрать точечно после лассо). */
+    fun setBoneSelectMode(m: com.vibetoon.domain.input.BoneSelectMode) {
+        _boneSelectMode.value = m
+        lassoPts = ArrayList()
+        if (_boneTool.value != BoneTool.LASSO) _boneTool.value = BoneTool.LASSO
+        refreshBoneOverlay()
+        _state.value = UiState.Message(
+            if (m == com.vibetoon.domain.input.BoneSelectMode.POINT) "Точечный выбор: касайтесь слоёв - касание добавляет или снимает слой, удержание только добавляет"
+            else "Лассо: обведите слои пальцем"
+        )
+    }
+
+    /** Касание в «Точечном выборе»: слой под пальцем (верхний видимый, без призраков и закрытых) переключается в наборе. */
+    private fun pointPick(sx: Float, sy: Float) {
+        val held = com.vibetoon.domain.input.BonePointPick.isHold(pointDownAt, SystemClock.uptimeMillis())
+        pointDownAt = 0L
+        val view = RenderHost.view ?: return
+        val pid = projectId
+        val seq = pointSeq.incrementAndGet()
+        view.hitTest(sx, sy) { hit -> viewModelScope.launch {
+            if (pointSeq.get() != seq || projectId != pid || !_boneMode.value || _boneTool.value != BoneTool.LASSO) return@launch
+            val id = com.vibetoon.domain.input.BonePointPick.eligible(hit, GHOST_BASE, ::isLockedId, bindableLayerIds() - symbolContextIds())
+            if (id == null) {
+                _state.value = UiState.Message(if (hit >= 0 && hit < GHOST_BASE && isLockedId(hit)) "Слой закрыт замком" else "Под пальцем нет видимого слоя")
+                return@launch
+            }
+            val (next, r) = com.vibetoon.domain.input.BonePointPick.apply(_lassoLayers.value, id, held)
+            _lassoLayers.value = next
+            updateSelectionFrame()
+            refreshBoneOverlay()
+            val name = layers.firstOrNull { it.id == id }?.name ?: ""
+            _state.value = UiState.Message(when (r) {
+                com.vibetoon.domain.input.BonePointPick.Result.ADDED -> "Добавлен слой «$name» (выбрано: ${next.size})"
+                com.vibetoon.domain.input.BonePointPick.Result.REMOVED -> "Снят слой «$name» (выбрано: ${next.size})"
+                com.vibetoon.domain.input.BonePointPick.Result.SKIPPED -> "Слой «$name» уже выбран (выбрано: ${next.size})"
+            })
+        } }
+    }
 
     /** Привязывает обведённые слои к выбранной кости вручную. Эти слои больше не трогает автопривязка. */
     fun bindLassoToBone() {

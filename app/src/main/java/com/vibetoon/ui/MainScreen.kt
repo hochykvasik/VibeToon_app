@@ -205,7 +205,20 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
     val curveOpen by vm.curveEditor.collectAsStateWithLifecycle()
     val curveTitle by vm.curveTitle.collectAsStateWithLifecycle()
     val curveNote by vm.curveNote.collectAsStateWithLifecycle()
-    if (curveOpen) com.vibetoon.ui.timeline.CurveEditorDialog(vm.currentCurve(), onChange = { c, first -> vm.setCurve(c, first) }, title = curveTitle, note = curveNote) { vm.openCurveEditor(false) }
+    val curveClip by vm.curveClipboard.collectAsStateWithLifecycle()
+    val curveSettings = com.vibetoon.ui.theme.LocalAppSettings.current
+    // спринт 49: «Копировать»/«Вставить» и свои кривые («Сохранить…», «Пресеты» → «Мои кривые», удаление)
+    if (curveOpen) com.vibetoon.ui.timeline.CurveEditorDialog(
+        vm.currentCurve(), onChange = { c, first -> vm.setCurve(c, first) }, title = curveTitle, note = curveNote,
+        clipboard = curveClip, onCopy = vm::copyCurve,
+        userCurves = curveSettings?.userCurves.orEmpty(),
+        onSaveUser = curveSettings?.let { st -> { name: String, c: com.vibetoon.domain.anim.Curve ->
+            val had = com.vibetoon.domain.anim.UserCurves.exists(st.userCurves, name)
+            st.saveUserCurves(com.vibetoon.domain.anim.UserCurves.save(st.userCurves, name, c))
+            vm.showMessage(if (had) "Кривая перезаписана: $name" else "Кривая сохранена: $name")
+        } },
+        onDeleteUser = curveSettings?.let { st -> { name: String -> st.saveUserCurves(com.vibetoon.domain.anim.UserCurves.delete(st.userCurves, name)) } }
+    ) { vm.openCurveEditor(false) }
 
     ExportDialog(vm, showExport) { showExport = false }
 

@@ -212,8 +212,13 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
     // Полный экран: прячутся панели самого VibeToon (верхняя, инструменты, таймлайн, правая), остаётся холст и кнопка выхода;
     // системными панелями Android управляет Immersive Sticky в MainActivity
     fun toggleFullscreen() { full = !full }
+    val boneSelectNow by vm.boneSelectMode.collectAsStateWithLifecycle()
     val toolTitle = when {
-        boneMode -> when (boneToolNow) { BoneTool.ADD -> "Кости: добавить кость"; BoneTool.LASSO -> "Кости: лассо"; else -> "Кости: двигать кости" }
+        boneMode -> when (boneToolNow) {
+            BoneTool.ADD -> "Кости: добавить кость"
+            BoneTool.LASSO -> if (boneSelectNow == com.vibetoon.domain.input.BoneSelectMode.POINT) "Кости: точечный выбор" else "Кости: лассо"
+            else -> "Кости: двигать кости"
+        }
         mesh -> "Сетка"
         else -> ToolId.valueOf(tool).title
     }
@@ -225,7 +230,8 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
             containerColor = MaterialTheme.colorScheme.background
         ) { pad ->
             // Edge-to-Edge: холст тянется на весь экран; от выреза камеры и системных панелей отступают только панели с кнопками
-            BoxWithConstraints(Modifier.padding(pad).fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))) {
+            // спринт 49: без клавиатуры (safeDrawing включал её - холст и панели схлопывались при каждом вводе числа)
+            BoxWithConstraints(Modifier.padding(pad).fillMaxSize().windowInsetsPadding(WindowInsets.editorSafe.only(WindowInsetsSides.Vertical))) {
                 CompositionLocalProvider(LocalPhone provides (maxWidth < PHONE_MAX)) {
                 val wide = maxWidth >= WIDE
                 val phone = maxWidth < PHONE_MAX
@@ -476,7 +482,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                 visible = !full,
                                 enter = com.vibetoon.ui.motion.Motions.barEnter(fromTop = false),
                                 exit = com.vibetoon.ui.motion.Motions.barExit(toTop = false)
-                            ) { Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).opaqueToCanvas()) {   // спринт 42: непрозрачно поверх GL-поверхности
+                            ) { Column(Modifier.liftAboveKeyboard().fillMaxWidth().background(MaterialTheme.colorScheme.background).opaqueToCanvas()) {   // спринт 42: непрозрачно поверх GL-поверхности; спринт 49: над клавиатурой, пока в нём ввод
                                 if (timelineOpen) {
                                     val density = androidx.compose.ui.platform.LocalDensity.current
                                     Box(
@@ -1251,10 +1257,21 @@ private fun WarpToolRow(vm: MainViewModel) {
 private fun BoneToolRow(vm: MainViewModel) {
     val bindPose by vm.bindPose.collectAsStateWithLifecycle()
     val lasso by vm.lassoLayers.collectAsStateWithLifecycle()
+    val boneTool by vm.boneTool.collectAsStateWithLifecycle()
+    val selectMode by vm.boneSelectMode.collectAsStateWithLifecycle()
     Row(
         Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
     ) {
+        // спринт 49: как выбирать слои для привязки - обвести область или касаться конкретных слоёв
+        if (boneTool == com.vibetoon.ui.BoneTool.LASSO) {
+            FilterChip(selected = selectMode == com.vibetoon.domain.input.BoneSelectMode.LASSO,
+                onClick = { vm.setBoneSelectMode(com.vibetoon.domain.input.BoneSelectMode.LASSO) },
+                label = { Text("Лассо", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+            FilterChip(selected = selectMode == com.vibetoon.domain.input.BoneSelectMode.POINT,
+                onClick = { vm.setBoneSelectMode(com.vibetoon.domain.input.BoneSelectMode.POINT) },
+                label = { Text("Точечный выбор", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+        }
         if (lasso.isNotEmpty()) {
             Button(onClick = vm::bindLassoToBone, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp), modifier = Modifier.height(32.dp)) {
                 Text("Привязать (${lasso.size})", fontSize = 12.sp, maxLines = 1, softWrap = false)
@@ -1356,7 +1373,8 @@ private fun LeftToolbar(
 private fun RightPanel(vm: MainViewModel, add: AddActions, color: Long, onColor: () -> Unit, onClose: () -> Unit, modifier: Modifier) {
     val stub = LocalStub.current
     var tab by rememberSaveable { mutableStateOf(0) }
-    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, modifier = modifier) {
+    // спринт 49: поля инспектора прокручиваются над клавиатурой, холст рядом не сжимается
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, modifier = modifier.keyboardInsetPanel()) {
         Column(Modifier.fillMaxSize()) {
             // свайп вправо по шапке панели (вкладки) закрывает её
             TabRow(

@@ -82,9 +82,17 @@ class SceneData(
     /** Спринт 46: служебные поля сцены (формы, обрезка, фон) переносятся в пересобранную сцену. */
     fun copyExtrasTo(o: SceneData): SceneData {
         o.aliases = aliases; o.cropIds = cropIds; o.cropRects = cropRects; o.textureQuads = textureQuads
+        o.skinAffines = skinAffines
         o.backgroundOverride = backgroundOverride; o.beforeDraw = beforeDraw
         return o
     }
+
+    /**
+     * Спринт 49: слои сетки со скинингом -> по 6 float на вершину ([com.vibetoon.domain.anim.SkinEdit]): матрица M_k
+     * «точка до скининга -> показанная точка» в единицах квадрата слоя. Кисть сетки и перетаскивание вершин переводят
+     * палец через M_k⁻¹, чтобы правка складывалась с позой костей.
+     */
+    @Volatile var skinAffines: Map<Int, FloatArray> = emptyMap()
 
     /** Пакет 24: фон кадра на время перехода «Через чёрный/белый» (null - фон проекта). Едет вместе со сценой - и в экспорте. */
     @Volatile var backgroundOverride: Int? = null
@@ -198,7 +206,8 @@ object SceneBuilder {
      */
     private fun skinnedOffsets(
         id: Int, m: com.vibetoon.domain.anim.Mesh, off0: FloatArray, skinRest: Map<Int, Affine2D>, skins: Map<Int, Map<Int, Float>>,
-        bones: Map<Int, Pair<Float, Float>>, boneTails: Map<Int, Pair<Float, Float>>, delta: (Int) -> Affine2D
+        bones: Map<Int, Pair<Float, Float>>, boneTails: Map<Int, Pair<Float, Float>>, delta: (Int) -> Affine2D,
+        affOut: MutableMap<Int, FloatArray>? = null
     ): FloatArray {
         val rest = skinRest[id] ?: return off0
         val inv = rest.inverse() ?: return off0
@@ -212,6 +221,11 @@ object SceneBuilder {
         }
         if (segs.isEmpty()) return off0
         val off = off0.copyOf()
+        // спринт 49: матрицы скининга вершин (без весов - единичная) для правки сетки на кости
+        val aff = if (affOut != null) FloatArray(m.count * com.vibetoon.domain.anim.SkinEdit.STRIDE).also {
+            for (k in 0 until m.count) com.vibetoon.domain.anim.SkinEdit.write(it, k, Affine2D.IDENTITY)
+            affOut[id] = it
+        } else null
         for (k in 0 until m.count) {
             val u = m.u(k) + off0[k * 2]
             val v = m.v(k) + off0[k * 2 + 1]
@@ -219,6 +233,7 @@ object SceneBuilder {
             val px = rest.applyX(u, v); val py = rest.applyY(u, v)
             val w = SkinMath.weights(bx, by, segs)
             if (w.isEmpty()) continue
+            if (aff != null) com.vibetoon.domain.anim.SkinEdit.local(rest, SkinMath.blend(w, deltas))?.let { com.vibetoon.domain.anim.SkinEdit.write(aff, k, it) }
             var sx = 0f; var sy = 0f
             for ((bi, wi) in w) { sx += wi * deltas[bi].applyX(px, py); sy += wi * deltas[bi].applyY(px, py) }
             off[k * 2] = inv.applyX(sx, sy) - m.u(k)
@@ -690,6 +705,7 @@ object SceneBuilder {
         val nativePersp = LinkedHashMap(persp)
         val order = LinkedHashSet<Int>()
         order += meshes.keys; order += preparedGroupMeshes.keys; order += denseLeaves; order += leafStacks.keys
+        val skinAff = HashMap<Int, FloatArray>()   // спринт 49: матрицы скининга вершин (SkinEdit)
         val mIds = IntArray(order.size)
         val mCounts = IntArray(order.size * 2)
         val mVerts = FloatBuilder()
@@ -715,7 +731,7 @@ object SceneBuilder {
                 rm = r.mesh; ro = r.offsets
                 nativeWarps.remove(id); nativePersp.remove(id)
             } else {
-                val off = if (own != null) skinnedOffsets(id, own.first, own.second, skinRest, skins, bones, boneTails, ::delta) else null
+                val off = if (own != null) skinnedOffsets(id, own.first, own.second, skinRest, skins, bones, boneTails, ::delta, skinAff) else null
                 val dense = if (id in denseLeaves) denseWarps[id] else null
                 val cubic = if (own != null || dense != null || stack != null) warps[id] else null
                 // перспектива слоя запекается только под групповыми деформерами (иначе - шейдер, после сетки)
@@ -753,6 +769,7 @@ object SceneBuilder {
             groupLocalBounds, groupWorlds
         ).also { sd ->
             // спринт 46: таблица обрезки едет в той же сцене, по которой построена геометрия (никакого рассинхрона)
+            if (skinAff.isNotEmpty()) sd.skinAffines = skinAff
             if (crops.isNotEmpty()) {
                 val ids = IntArray(crops.size); val rects = FloatArray(crops.size * 4)
                 var i = 0
