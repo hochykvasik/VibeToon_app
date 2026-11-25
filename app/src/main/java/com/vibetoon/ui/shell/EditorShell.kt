@@ -1367,7 +1367,7 @@ private fun RightPanel(vm: MainViewModel, add: AddActions, color: Long, onColor:
                 }
             ) {
                 Tab(modifier = Modifier.coachTarget("Слои"), selected = tab == 0, onClick = { tab = 0 }, text = { Text("Слои", fontSize = 13.sp) })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Свойства", fontSize = 13.sp) })
+                Tab(modifier = Modifier.coachTarget("Свойства"), selected = tab == 1, onClick = { tab = 1 }, text = { Text("Свойства", fontSize = 13.sp) })
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 if (tab == 0) LayersTab(vm, add)

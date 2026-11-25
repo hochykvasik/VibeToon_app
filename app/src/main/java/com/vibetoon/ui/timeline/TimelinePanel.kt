@@ -309,7 +309,8 @@ fun TimelinePanel(
             OutlinedButton(
                 onClick = vm::toggleKey,
                 enabled = selected != null && !playing,
-                contentPadding = compact
+                contentPadding = compact,
+                modifier = Modifier.coachTarget("◆ Add Key")   // спринт 45: цель вводного тура
             ) { Text(if (hasKey) "◇ Delete Key" else "◆ Add Key", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             TlIcon(Icons.Default.HighlightAlt, "Выделение ключей рамкой", active = selectMode) { selectMode = !selectMode; if (!selectMode) vm.clearKeySelection() }
             if (phone) TlIcon(Icons.Default.MoreVert, "Ещё", active = toolsOpen) { toolsOpen = !toolsOpen }

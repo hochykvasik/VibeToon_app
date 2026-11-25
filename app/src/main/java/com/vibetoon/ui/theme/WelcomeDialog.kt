@@ -19,11 +19,15 @@ import com.vibetoon.ui.i18n.Text
 
 /** Первый запуск: язык, тема и акцентный цвет. Выбор применяется сразу (предпросмотр прямо в окне) и сохраняется кнопкой «Начать работу». */
 @Composable
-fun WelcomeDialog(s: AppSettings) {
+fun WelcomeDialog(s: AppSettings, onTour: (() -> Unit)? = null) {
     // спринт 41: адаптивное окно (телефон в альбомной ориентации, планшет), закрывается только кнопкой
     com.vibetoon.ui.shell.AdaptiveDialog(
         onDismissRequest = {}, title = "Добро пожаловать в VibeToon",
-        buttons = { Button({ s.onboarded = true; s.save() }) { Text("Начать работу") } }
+        buttons = {
+            // спринт 45: сразу короткий тур по интерфейсу на учебном проекте
+            if (onTour != null) androidx.compose.material3.TextButton({ s.onboarded = true; s.save(); onTour() }) { Text("Обзор интерфейса") }
+            Button({ s.onboarded = true; s.save() }) { Text("Начать работу") }
+        }
     ) {
         Text("Настройте внешний вид. Всё можно изменить позже в «Настройках» → «Внешний вид».", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
         AppearanceControls(s)

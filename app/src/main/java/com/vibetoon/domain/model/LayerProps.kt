@@ -32,7 +32,9 @@ data class LayerProps(
     val maskOff: Boolean = false,
     /** Спринт 38: слой прикреплён к слою-пути (id, -1 - нет); [pathOrient] - поворачивается по направлению пути. */
     val path: Int = -1,
-    val pathOrient: Boolean = false
+    val pathOrient: Boolean = false,
+    /** Спринт 45: обрезка (вкладка «Обрезка») - l, t, r, b в долях картинки слоя; null - картинка целиком (см. LayerCrop). */
+    val crop: List<Float>? = null
 ) {
     private fun c(v: Float) = if (v.isFinite()) v.coerceIn(-100f, 100f) else 0f
     fun normalized() = copy(
@@ -40,7 +42,8 @@ data class LayerProps(
         exposure = c(exposure), contrast = c(contrast), saturation = c(saturation), hue = c(hue),
         name = name?.trim()?.take(80)?.ifEmpty { null },
         depth = if (depth.isFinite()) depth.coerceIn(-0.5f, 5f) else 0f,
-        mask = if (mask < 0) -1 else mask, path = if (path < 0) -1 else path
+        mask = if (mask < 0) -1 else mask, path = if (path < 0) -1 else path,
+        crop = LayerCrop.of(crop)?.toList()
     )
     val hasColor get() = exposure != 0f || contrast != 0f || saturation != 0f || hue != 0f
 }

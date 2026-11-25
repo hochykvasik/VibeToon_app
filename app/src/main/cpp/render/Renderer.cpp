@@ -15,6 +15,8 @@
 #include "render/FxCachePolicy.h"
 #include "render/GroupCachePolicy.h"
 #include "render/FrameTargetPolicy.h"
+#include "render/BlendBindPolicy.h"
+#include "render/CropPolicy.h"
 #include "render/TexAlias.h"
 #include "render/UploadQueue.h"
 #include <EGL/egl.h>
@@ -80,6 +82,7 @@ uniform sampler2D uTex;
 uniform float uOpacity;
 uniform float uLodBias;               // экспорт: -0.5 (менее размытый mip при уменьшении), редактор: 0
 uniform vec4 uTurb;                   // intensity (доля слоя), size (ячеек на слой), complexity (октавы), seed; intensity = 0 - выкл
+uniform vec4 uCrop;                   // спринт 45: обрезка слоя (l, t, r, b в долях текстуры); r <= l - выкл
 in vec2 vUv;
 out vec4 outColor;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -94,6 +97,7 @@ float fbm(vec2 p, int oct) {
     return s;
 }
 void main() {
+    if (uCrop.z > uCrop.x && (vUv.x < uCrop.x || vUv.x > uCrop.z || vUv.y < uCrop.y || vUv.y > uCrop.w)) discard;
     vec2 uv = vUv;
     if (uTurb.x > 0.0) {
         vec2 p = uv * uTurb.y + vec2(uTurb.w * 7.31, uTurb.w * 3.17);
@@ -116,6 +120,7 @@ uniform int uMode;                    // 1 = multiply, 2 = screen, 3 = overlay, 
 uniform int uClip;                    // 1 = обтравка: src *= alpha подложки, альфа подложки не меняется
 uniform vec4 uTurb;
 uniform float uLodBias;
+uniform vec4 uCrop;                   // спринт 45: обрезка слоя (как в kFragTex)
 in vec2 vUv;
 out vec4 outColor;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -157,6 +162,7 @@ vec3 blendFn(vec3 cb, vec3 cs) {
     return mix(lo, hi, step(0.5, cs));
 }
 void main() {
+    if (uCrop.z > uCrop.x && (vUv.x < uCrop.x || vUv.x > uCrop.z || vUv.y < uCrop.y || vUv.y > uCrop.w)) discard;
     vec2 uv = vUv;
     if (uTurb.x > 0.0) {
         vec2 p = uv * uTurb.y + vec2(uTurb.w * 7.31, uTurb.w * 3.17);
@@ -488,6 +494,8 @@ int Renderer::initGL() {
     uBlH_ = glGetUniformLocation(progBlend_, "uH");
     uTexTurb_ = glGetUniformLocation(progTex_, "uTurb");
     uBlTurb_ = glGetUniformLocation(progBlend_, "uTurb");
+    uTexCrop_ = glGetUniformLocation(progTex_, "uCrop");
+    uBlCrop_ = glGetUniformLocation(progBlend_, "uCrop");
 
     // Mesh: динамический VBO (позиция + uv, обновляется при каждой отрисовке) и IBO.
     glGenVertexArrays(1, &meshVao_);
@@ -1054,6 +1062,8 @@ int Renderer::hitTest(float sx, float sy) const {
         const float rx = px - it.m[4], ry = py - it.m[5];
         const float u = (d * rx - c * ry) / det;
         const float v = (-b * rx + a * ry) / det;
+        const auto crIt = crops_.find(it.layerId);
+        const float* cropC = crIt == crops_.end() ? nullptr : crIt->second.data();
         // слой с сеткой: точка ищется на ДЕФОРМИРОВАННОЙ сетке (позиции u+dx, v+dy), текстурные координаты берутся из треугольника
         const auto mi = meshes_.find(it.layerId);
         if (mi != meshes_.end() && !mi->second.idx.empty()) {
@@ -1073,6 +1083,7 @@ int Renderer::hitTest(float sx, float sy) const {
                 if (it.flags & kFlagHitBbox || !hasAlpha) return it.layerId;
                 const float tu = w1 * A[2] + w2 * B[2] + w3 * C[2];
                 const float tv = w1 * A[3] + w2 * B[3] + w3 * C[3];
+                if (cropC && !croppolicy::inside(cropC, tu, tv)) continue;   // спринт 45: обрезанная часть не ловится
                 const Tex& tex = tm->second;
                 const int cx = std::min(tex.w - 1, std::max(0, static_cast<int>(tu * tex.w)));
                 const int cy = std::min(tex.h - 1, std::max(0, static_cast<int>(tv * tex.h)));
@@ -1085,6 +1096,7 @@ int Renderer::hitTest(float sx, float sy) const {
             continue;
         }
         if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) continue;
+        if (cropC && !aliases_.count(it.layerId) && !croppolicy::inside(cropC, u, v)) continue;   // спринт 45: вне рамки обрезки
         if (it.flags & kFlagHitBbox) return it.layerId;   // текст: достаточно попасть в рамку
         float rr[4];
         const Tex* tp = resolveTex(it.layerId, rr);
@@ -1210,6 +1222,21 @@ void Renderer::setTextureAliases(const int* ids, const int* prim, const int* fal
         if (prim[i] >= 0) texUse_[prim[i]] = useClock_;
         if (fallback[i] >= 0) texUse_[fallback[i]] = useClock_;
     }
+}
+
+// Спринт 45: обрезка слоёв (по 4 числа l, t, r, b на слой). Изменение - новая эпоха и сброс кэша эффектов слоя.
+void Renderer::setCrops(const int* ids, const float* rects, int n) {
+    std::unordered_map<int, std::array<float, 4>> next;
+    for (int i = 0; i < n; ++i) {
+        float r[4] = {rects[i * 4], rects[i * 4 + 1], rects[i * 4 + 2], rects[i * 4 + 3]};
+        if (!croppolicy::sanitize(r)) continue;
+        next[ids[i]] = {r[0], r[1], r[2], r[3]};
+    }
+    if (next == crops_) return;
+    for (const auto& kv : crops_) if (!next.count(kv.first) || next[kv.first] != kv.second) dropFxEntry(kv.first);
+    for (const auto& kv : next) if (!crops_.count(kv.first)) dropFxEntry(kv.first);
+    crops_.swap(next);
+    bumpEpoch();
 }
 
 // ---------------------------------------------------------------- пакет 29: бюджет и вытеснение текстур
@@ -1554,6 +1581,9 @@ void Renderer::releaseTargets() {
 
 void Renderer::ensureBackdrop() {
     if (backdropTex_) return;
+    // спринт 45: создание не меняет привязку активного блока (раньше затирало текстуру слоя - «мини-холст» в экспорте)
+    GLint prevTex = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
     glGenTextures(1, &backdropTex_);
     glBindTexture(GL_TEXTURE_2D, backdropTex_);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width_, height_);
@@ -1568,6 +1598,7 @@ void Renderer::ensureBackdrop() {
     glClear(GL_COLOR_BUFFER_BIT);
     if (sc) glEnable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_FRAMEBUFFER, curFbo_);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex));
 }
 
 bool Renderer::ensureEditorTarget() {
@@ -1637,11 +1668,11 @@ void Renderer::drawQuadOrGrid(const float* warp) {
 }
 
 void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int blend, bool clipMode, const float* warp) {
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tex);
     const bool shaderBlend = blend == kMultiply || blend == kScreen || blend == kOverlay || blend == kSoftLight ||
                              blend == kAdd || blend == kDarken || blend == kLighten || blend == kColorDodge || blend == kColorBurn;
     if (!shaderBlend) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tex);
         glUseProgram(progTex_);
         glEnable(GL_BLEND);
         if (clipMode)
@@ -1658,16 +1689,23 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
         if (curPersp_) glUniformMatrix3fv(uTexH_, 1, GL_FALSE, curPersp_);
         glUniform1i(uTexWarp_, warp ? 1 : 0);
         if (warp) glUniform2fv(uTexOff_, 16, warp);
+        float crop[4];
+        croppolicy::uniformValue(curCrop_, crop);
+        glUniform4fv(uTexCrop_, 1, crop);   // спринт 45: нули вне обрезанного слоя - остальные рисования программы не режутся
         drawQuadOrGrid(warp);
+        if (curCrop_) glUniform4f(uTexCrop_, 0.f, 0.f, 0.f, 0.f);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         return;
     }
-    copyBackdrop();
+    // Спринт 45: подложка готовится ДО привязки слоя (её создание меняет привязку активного блока), слой - последним.
+    // Иначе в первом кадре после смены цели (экспорт, снимки) слой рисовался копией всего кадра - «мини-холст».
+    struct GlBind {
+        void activeTexture(int unit) const { glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit)); }
+        void bindTexture(unsigned t) const { glBindTexture(GL_TEXTURE_2D, t); }
+    } gl;
+    blendbind::bindInputs(gl, tex, [this]() { copyBackdrop(); return static_cast<unsigned>(backdropTex_); });
     glUseProgram(progBlend_);
     glDisable(GL_BLEND);  // шейдер выдаёт готовый результат
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, backdropTex_);
-    glActiveTexture(GL_TEXTURE0);
     glUniform1i(uBlTex_, 0);
     glUniform1i(uBlBackdrop_, 1);
     glUniform1i(uBlMode_, blend);
@@ -1681,7 +1719,11 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
     if (curPersp_) glUniformMatrix3fv(uBlH_, 1, GL_FALSE, curPersp_);
     glUniform1i(uBlWarp_, warp ? 1 : 0);
     if (warp) glUniform2fv(uBlOff_, 16, warp);
+    float crop[4];
+    croppolicy::uniformValue(curCrop_, crop);
+    glUniform4fv(uBlCrop_, 1, crop);
     drawQuadOrGrid(warp);
+    if (curCrop_) glUniform4f(uBlCrop_, 0.f, 0.f, 0.f, 0.f);
     glEnable(GL_BLEND);
 }
 
@@ -1952,10 +1994,14 @@ void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool cli
     const auto tb = turbs_.find(it.layerId);
     curTurb_ = tb == turbs_.end() ? nullptr : tb->second.data();
     const auto w = warps_.find(it.layerId);
+    // спринт 45: обрезка - в долях текстуры самого слоя (у формы символа своя под-рамка - обрезка не применяется)
+    const auto cr = texalias::isFull(rect) ? crops_.find(it.layerId) : crops_.end();
+    curCrop_ = cr == crops_.end() ? nullptr : cr->second.data();
     drawTexture(t->id, mvp, opacity, blend, clipMode, curMesh_ || w == warps_.end() ? nullptr : w->second.data());
     curMesh_ = nullptr;
     curPersp_ = nullptr;
     curTurb_ = nullptr;
+    curCrop_ = nullptr;
 }
 
 // Слой внутри маски «Маски по слою» рисуется без шейдерных эффектов: кэш эффектов хранится по id слоя, а тот же слой
@@ -2059,6 +2105,8 @@ uint64_t Renderer::subtreeHash(size_t begin, size_t end, int& layers, bool& hasM
         if (p != persps_.end()) h = mixFloats(h, p->second.data(), p->second.size());
         const auto t = turbs_.find(id);
         if (t != turbs_.end()) h = mixFloats(h, t->second.data(), t->second.size());
+        const auto cr = crops_.find(id);
+        if (cr != crops_.end()) h = mixFloats(h, cr->second.data(), cr->second.size());
         const auto e = effects_.find(id);
         if (e != effects_.end()) {
             h = mix(h, e->second.size());

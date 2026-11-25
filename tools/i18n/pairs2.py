@@ -1709,4 +1709,45 @@ VibeToon: фоновая работа|VibeToon: background work
 Меняется только этот ключ, до следующего; остальные ключи не трогаются|Only this key changes, up to the next one; other keys are untouched
 Выберите один ключ: тапните ◆ на таймлайне|Select one key: tap ◆ on the timeline
 Только ключ кадра {}: остальные ключи не меняются|Only the key on frame {}: other keys stay unchanged
+Обзор приложения|App overview
+Минутный тур: где что лежит|A one-minute tour: where everything is
+Привет! Это VibeToon|Hi! This is VibeToon
+Минутный тур по экрану редактора: холст в центре, инструменты слева, слои и свойства справа, таймлайн внизу. Подробности - в остальных уроках «Обучения». «Пропустить» закрывает тур в любой момент.|A one-minute tour of the editor screen: canvas in the middle, tools on the left, layers and properties on the right, timeline at the bottom. Details are in the other Learn lessons. Skip closes the tour at any time.
+Сверху слева: добавить картинку, видео, звук, PSD, текст, камеру или новый слой. Рядом - «Отменить» и «Повторить».|Top left: add an image, video, sound, PSD, text, a camera or a new layer. Next to it are Undo and Redo.
+верхняя панель, слева|top bar, left
+Инструменты слева|Tools on the left
+«Трансформ» двигает, вращает и масштабирует; ниже - Кисть, Ластик, Заливка, Текст, Warp, Перспектива и Liquify. Набор меняется вместе с режимом.|Transform moves, rotates and scales; below are Brush, Eraser, Fill, Text, Warp, Perspective and Liquify. The set changes with the mode.
+Три режима|Three modes
+«Объект» - обычная работа со слоями, «Кости» - скелет персонажа, «Сетка» - Mesh для мягкой деформации картинки.|Object is regular layer work, Bones is the character skeleton, Mesh softly deforms the picture.
+Список слоёв справа: глаз скрывает, замок блокирует, перетаскивание меняет порядок и кладёт в группы. Зажмите строку - меню слоя.|The layer list is on the right: the eye hides, the lock locks, dragging reorders and puts layers into groups. Long-press a row for the layer menu.
+Свойства, эффекты и наложение|Properties, effects and blending
+Вкладка «Свойства»: положение, прозрачность, цвет, «Обрезка» и «Эффекты» (размытие, свечение, Turbulent). Режим наложения (Multiply, Screen...) - в меню слоя.|The Properties tab: position, opacity, color, Crop and Effects (blur, glow, Turbulent). The blend mode (Multiply, Screen...) is in the layer menu.
+Анимация ключами|Animating with keys
+Выберите объект, поставьте плейхед на кадр, измените его и нажмите «Add Key». Между ключами движение считается само; f(x) задаёт плавность.|Select an object, put the playhead on a frame, change it and tap Add Key. Motion between keys is computed automatically; f(x) sets the easing.
+В режиме «Кости» инструмент «+Кость» рисует скелет протяжкой по холсту, «Автопривязка» привязывает к нему слои. Тянете кость - двигается персонаж.|In Bones mode the +Bone tool draws the skeleton by dragging on the canvas, Auto bind attaches layers to it. Drag a bone and the character moves.
+Сетка (Mesh)|Mesh
+В режиме «Сетка» выберите слой и нажмите «Сгенерировать» или «По контуру»: вершины сетки гнут картинку плавно, как резину.|In Mesh mode select a layer and tap Generate or By contour: the mesh vertices bend the picture smoothly, like rubber.
+Проверка и экспорт|Preview and export
+«Играть» показывает анимацию, «Export» сохраняет MP4, GIF или картинки ровно так, как на холсте. Тур можно повторить из «Обучения».|Play shows the animation, Export saves MP4, GIF or images exactly as on the canvas. You can repeat the tour from Learn.
+Тур проходит на учебном проекте с тремя фигурами - можно смело пробовать.|The tour runs on the tutorial project with three shapes, so feel free to experiment.
+Каждая тема подробно - в карточках ниже: холст, текст, кости, Mesh, слои, липсинг, таймлайн.|Each topic in detail is in the cards below: canvas, text, bones, Mesh, layers, lip sync, timeline.
+Обзор интерфейса|Interface tour
+Выберите слой-картинку: обрезка работает с PNG, рисунками, текстом, видео и слоями PSD|Select a picture layer: crop works with PNG, drawings, text, video and PSD layers
+Видимая часть: {}×{} px из {}×{}|Visible part: {}×{} px of {}×{}
+Видимая часть картинки|Visible part of the picture
+Сверху|Top
+Снизу|Bottom
+По содержимому|Fit to content
+Рамка на холсте - предпросмотр: нажмите «Применить», чтобы сохранить обрезку|The frame on the canvas is a preview: tap Apply to save the crop
+Файл картинки не меняется: края скрываются на холсте и в экспорте и едут вместе с поворотом, сеткой и анимацией|The image file is not changed: edges are hidden on the canvas and in export and follow rotation, mesh and animation
+Картинка слоя ещё не загружена|The layer picture is not loaded yet
+Содержимое занимает всю картинку: обрезать нечего|The content fills the whole picture: nothing to crop
+Рамка не менялась|The frame has not changed
+Обрезка снята|Crop removed
+Обрезка применена|Crop applied
+Кривая выбранных ключей ({})|Curve of selected keys ({})
+Ключей: {} на слоях: {} - одна кривая всем, остальные ключи не меняются|Keys: {} on layers: {} - one curve for all, other keys stay unchanged
+Ключей: {} - одна кривая всем, остальные ключи не меняются|Keys: {} - one curve for all, other keys stay unchanged
+У выбранных ключей разные кривые: выбор задаст одну всем|The selected keys have different curves: a choice sets one for all
+Выделите ключи на таймлайне|Select keys on the timeline
 """

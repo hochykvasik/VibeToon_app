@@ -102,6 +102,7 @@ object ProjectJson {
                 // спринт 38: маска слоя и прикрепление к пути (поля только при использовании)
                 if (p.mask >= 0) { m["mk"] = p.mask; if (p.maskInvert) m["mi"] = true; if (p.maskOff) m["mo"] = true }
                 if (p.path >= 0) { m["pa"] = p.path; if (p.pathOrient) m["po"] = true }
+                p.crop?.let { c -> m["cr"] = c.map { it.toDouble() } }   // спринт 45: обрезка слоя
             }
         }
         if (d.skins.isNotEmpty()) root["skins"] = d.skins.entries.associate { (id, m) ->
@@ -314,7 +315,8 @@ object ProjectJson {
                     visible = o["vis"] != false, locked = o["lk"] == true, name = o["n"] as? String,
                     depth = (o["dp"] as? Number)?.toFloat() ?: 0f,
                     mask = (o["mk"] as? Number)?.toInt() ?: -1, maskInvert = o["mi"] == true, maskOff = o["mo"] == true,
-                    path = (o["pa"] as? Number)?.toInt() ?: -1, pathOrient = o["po"] == true
+                    path = (o["pa"] as? Number)?.toInt() ?: -1, pathOrient = o["po"] == true,
+                    crop = (o["cr"] as? List<*>)?.mapNotNull { (it as? Number)?.toFloat() }
                 ).normalized()
             }
             val scenes = com.vibetoon.domain.anim.SceneMath.normalize((root["scenes"] as? List<*>).orEmpty().mapNotNull { item ->

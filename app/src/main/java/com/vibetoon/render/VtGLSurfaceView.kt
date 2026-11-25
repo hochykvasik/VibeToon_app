@@ -208,6 +208,7 @@ class VtRenderer(
         RenderNative.setEffects(handle, s.fxIds, s.fxCounts, s.fxData)
         val a = s.aliases   // неизменяемый набор: формы и сцена применяются одним кадром
         RenderNative.setTextureAliases(handle, a.ids, a.primary, a.fallback, a.rects)
+        RenderNative.setCrops(handle, s.cropIds, s.cropRects)   // спринт 45: обрезка слоёв - вместе со сценой
     }
 
     /** Только из GL-потока. */

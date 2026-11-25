@@ -63,6 +63,13 @@ class SceneData(
      */
     @Volatile var aliases: TextureAliases = TextureAliases.EMPTY
 
+    /**
+     * Спринт 45: обрезка слоёв (вкладка «Обрезка»): id и по 4 числа l, t, r, b в долях текстуры (LayerCrop.scene).
+     * Едет вместе со сценой - холст, экспорт и снимки обрезаны одинаково.
+     */
+    @Volatile var cropIds: IntArray = IntArray(0)
+    @Volatile var cropRects: FloatArray = FloatArray(0)
+
     /** Пакет 24: фон кадра на время перехода «Через чёрный/белый» (null - фон проекта). Едет вместе со сценой - и в экспорте. */
     @Volatile var backgroundOverride: Int? = null
 

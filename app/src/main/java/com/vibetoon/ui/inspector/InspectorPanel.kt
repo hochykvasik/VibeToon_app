@@ -23,6 +23,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -90,7 +91,9 @@ private const val TAB_COLOR = "Цветокоррекция"
 private const val TAB_EFFECTS = "Эффекты"
 private const val TAB_TIME = "Время"
 private const val TAB_VOLUME = "Громкость"
-private val STUB_TABS = listOf("Обрезка", TAB_EFFECTS, "Рисование")
+private const val TAB_CROP = "Обрезка"
+// спринт 45: заглушка рисования убрана (рисование - инструменты кисти), «Обрезка» - настоящая вкладка
+private val STUB_TABS = listOf(TAB_CROP, TAB_EFFECTS)
 
 private val EFFECTS = listOf(
     "Gaussian Blur", "Adjustments", "Pixelate", "Chroma Key", "Sharpness", "Halftone", "Turbulent Displace", "Bones",
@@ -226,8 +229,7 @@ private val TEXT_COLORS = listOf(
 
 /**
  * Панель "Инспектор" под таймлайном. Вкладки: "Трансформация" (X, Y, Scale X/Y с цепочкой, Rotation,
- * Opacity), "Текст" (появляется, когда выделен текстовый слой) и заглушки "Обрезка", "Эффекты",
- * "Рисование" под будущие этапы. Числа в полях и положение слоя на холсте синхронизированы в обе стороны.
+ * Opacity), "Текст" (появляется, когда выделен текстовый слой), "Обрезка" (спринт 45) и "Эффекты". Числа в полях и положение слоя на холсте синхронизированы в обе стороны.
  */
 @Composable
 fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
@@ -285,14 +287,63 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
                 TAB_CLIP -> ClipTab(vm, selectedId, clips, animation.settings.durationFrames, !playing)
                 TAB_COLOR -> ColorTab(vm, selectedId, colors)
                 TAB_EFFECTS -> EffectsTab(vm)
-                else -> Text(
-                    "«${com.vibetoon.ui.i18n.L(tabs[selectedIndex])}» появится на одном из следующих этапов",   // имя вкладки тоже переводится (раньше в EN оставалось «Рисование»)
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(8.dp)
-                )
+                TAB_CROP -> CropTab(vm, selectedId, !playing)
+                else -> Unit
             }
         }
+    }
+}
+
+/**
+ * Спринт 45: вкладка «Обрезка». Рамка видимой части картинки слоя (PNG, рисунок, текст, видео, слой PSD): отступы краёв
+ * ползунками, «По содержимому» - рамка по непрозрачным пикселям. Изменения сразу видны на холсте (черновик), в проект
+ * попадают кнопкой «Применить» (одна запись Undo). Файл не меняется: «Сбросить» + «Применить» возвращают картинку целиком.
+ */
+@Composable
+private fun CropTab(vm: MainViewModel, selectedId: Int?, enabled: Boolean) {
+    val draft by vm.cropDraft.collectAsStateWithLifecycle()
+    val lprops by vm.layerPropsState.collectAsStateWithLifecycle()
+    val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    if (selectedId == null || !vm.croppable(selectedId)) {
+        Text("Выберите слой-картинку: обрезка работает с PNG, рисунками, текстом, видео и слоями PSD",
+            fontSize = 13.sp, color = muted, modifier = Modifier.padding(8.dp))
+        return
+    }
+    val id = selectedId
+    // ушли со вкладки или со слоя - неприменённая рамка отбрасывается
+    androidx.compose.runtime.DisposableEffect(id) { onDispose { vm.cancelCropDraft() } }
+    val applied = remember(lprops, id) { vm.cropOf(id) }
+    val pending = draft?.takeIf { it.first == id }
+    val c = (if (pending != null) pending.second else applied) ?: com.vibetoon.domain.model.LayerCrop.FULL
+    val src = remember(lprops, id) { vm.cropSourceSize(id) }
+    val (pw, ph) = c.pixelSize(src.first.coerceAtLeast(1), src.second.coerceAtLeast(1))
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
+        Text(if (src.first > 0) "Видимая часть: $pw×$ph px из ${src.first}×${src.second}" else "Видимая часть картинки",
+            fontSize = 12.sp, maxLines = 1)
+        // отступы краёв в долях картинки: слева/сверху - сам край, справа/снизу - 1 - край
+        val edges = listOf("Слева" to c.l, "Сверху" to c.t, "Справа" to 1f - c.r, "Снизу" to 1f - c.b)
+        edges.forEachIndexed { edge, (title, inset) ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(title, fontSize = 12.sp, maxLines = 1, modifier = Modifier.width(60.dp))
+                Slider(
+                    value = inset.coerceIn(0f, 0.99f), valueRange = 0f..0.99f, enabled = enabled,
+                    onValueChange = { v -> vm.setCropEdge(id, edge, if (edge < 2) v else 1f - v) },
+                    modifier = Modifier.weight(1f)
+                )
+                Text("${(inset * 100).toInt()} %", fontSize = 11.sp, color = muted, maxLines = 1)
+            }
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { vm.cropToContent(id) }, enabled = enabled) { Text("По содержимому", fontSize = 12.sp, maxLines = 1) }
+            OutlinedButton(onClick = { vm.resetCropDraft(id) }, enabled = enabled && (applied != null || pending?.second != null)) { Text("Сбросить", fontSize = 12.sp, maxLines = 1) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = vm::cancelCropDraft, enabled = pending != null) { Text("Отмена", fontSize = 12.sp, maxLines = 1) }
+            androidx.compose.material3.Button(onClick = { vm.applyCrop(id) }, enabled = enabled && pending != null) { Text("Применить", fontSize = 12.sp, maxLines = 1) }
+        }
+        Text(if (pending != null) "Рамка на холсте - предпросмотр: нажмите «Применить», чтобы сохранить обрезку"
+            else "Файл картинки не меняется: края скрываются на холсте и в экспорте и едут вместе с поворотом, сеткой и анимацией",
+            fontSize = 10.sp, color = muted)
     }
 }
 
@@ -323,6 +374,8 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
         )
         // спринт 44: кривая только выбранного ключа (тап по ромбу или плейхед на ключе)
         if (s.count == 1) com.vibetoon.ui.timeline.KeyCurveSection(vm, s.id)
+        // спринт 45: несколько ромбов (в том числе на разных слоях) - одна кривая всему набору
+        com.vibetoon.ui.timeline.SelectedKeysCurveSection(vm)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             NumberField("X", s.x, "px", on, { vm.setProperty(Prop.X, it) }, Modifier.weight(1f), perPx = 1f)
             NumberField("Y", s.y, "px", on, { vm.setProperty(Prop.Y, it) }, Modifier.weight(1f), perPx = 1f)

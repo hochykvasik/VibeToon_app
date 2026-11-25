@@ -358,6 +358,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var rasterRecoveryRequired = false
     // Версии не удаляются: JSON и снимки истории могут ещё ссылаться на любую из них.
     private val versionedRasterIds = HashSet<Int>()
+    // спринт 45: вкладка «Обрезка» - черновик рамки (слой, рамка): виден на холсте сразу, в проект попадает кнопкой «Применить»
+    private val _cropDraft = MutableStateFlow<Pair<Int, com.vibetoon.domain.model.LayerCrop?>?>(null)
+    val cropDraft: StateFlow<Pair<Int, com.vibetoon.domain.model.LayerCrop?>?> = _cropDraft.asStateFlow()
     private val undoStack = ArrayDeque<Snapshot>()
     private val redoStack = ArrayDeque<Snapshot>()
     private val _canUndo = MutableStateFlow(false)
@@ -3042,6 +3045,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_keySel.value.size == 1 && singleKey() != null) { openSingleKeyCurve(); return }
         _curveTitle.value = "Общая кривая"; _curveNote.value = null
         val targets = com.vibetoon.domain.anim.SelectedKeyCurves.targets(_animation.value, _keySel.value)
+        // спринт 45: ключи на разных слоях - один набор: заголовок с числом ромбов и сколько слоёв затронуто
+        com.vibetoon.domain.anim.SelectedKeyCurves.keysWithTracks(_animation.value, _keySel.value).takeIf { it.size > 1 }?.let { ks ->
+            _curveTitle.value = com.vibetoon.domain.anim.SelectedKeyCurves.title(ks.size)
+            _curveNote.value = com.vibetoon.domain.anim.SelectedKeyCurves.note(ks.size, ks.mapTo(HashSet()) { it.first }.size)
+        }
         val timeTargets = selectedTimeKeyTargets()
         if (targets.isEmpty() && timeTargets.isEmpty()) {
             _state.value = UiState.Message(
@@ -3087,6 +3095,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         com.vibetoon.domain.anim.SingleKeyCurve.info(id, f, _animation.value.tracks, isBoneId(id))
     }
 
+    /** Спринт 45: выделенные ромбы (2 и больше, на любых слоях/костях) как один набор, или null. */
+    fun selectedKeysInfo(): com.vibetoon.domain.anim.SelectedKeyCurves.SetInfo? =
+        com.vibetoon.domain.anim.SelectedKeyCurves.info(_animation.value, _keySel.value)
+
+    /** Пресет плавности всем ромбам набора (ключи на разных слоях), одной записью Undo. */
+    fun setSelectedKeysEasing(type: EasingType) {
+        if (_playing.value) return
+        val keys = com.vibetoon.domain.anim.SelectedKeyCurves.keysWithTracks(_animation.value, _keySel.value)
+        if (keys.size < 2) { _state.value = UiState.Message("Выделите ключи на таймлайне"); return }
+        val locked = keys.firstOrNull { isLockedId(it.first) }
+        if (locked != null) { lockedNotice(); return }
+        checkpoint("keysease", force = true)
+        val targets = com.vibetoon.domain.anim.SelectedKeyCurves.targets(_animation.value, keys)
+        _animation.value = com.vibetoon.domain.anim.SelectedKeyCurves.withEasing(_animation.value, targets, type)
+        pushScene(); refreshInspector(); markDirty()
+    }
+
     /** Редактор кривой только для одного ключа: остальные ключи слоя и другие слои не меняются. */
     fun openSingleKeyCurve() {
         if (_playing.value) return
@@ -3113,6 +3138,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _curveTitle.value = "Кривая плавности"; _curveNote.value = null
         // спринт 44: на таймлайне выбран один ромб - f(x) правит именно его, а не все ключи выделенного на кадре плейхеда
         if (on && _keySel.value.size == 1 && singleKey() != null) { openSingleKeyCurve(); return }
+        // спринт 45: выделено несколько ромбов (в том числе на разных слоях) - f(x) правит их набор, а не ключи слоя под
+        // плейхедом (раньше: «На этом кадре нет ключа у выделенного объекта», если плейхед стоял не на ключах)
+        if (on && selectedKeysInfo() != null) { openSelectedCurveEditor(); return }
         if (on && curveTargets().isEmpty()) { _state.value = UiState.Message("На этом кадре нет ключа у выделенного объекта"); return }
         _curveEditor.value = on
     }
@@ -3285,6 +3313,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val sc = applySymbolContext(sc0)   // пакет 22: главная сцена вокруг открытого символа
         // формы символов едут вместе со сценой: на любом кадре экземпляр показывает форму именно этого кадра
         if (projectId != null && !appBackground) sc.aliases = buildAliases(_frame.value)
+        // спринт 45: обрезка слоёв (и черновик рамки вкладки «Обрезка» - предпросмотр до «Применить»)
+        com.vibetoon.domain.model.LayerCrop.scene(layerProps, _cropDraft.value).let { (ids, rects) -> sc.cropIds = ids; sc.cropRects = rects }
         scene = sc
         RenderHost.view?.setScene(sc)
         // Во время Play панели (инспектор, эффекты, турбулентность) не пересчитываются каждый кадр: их перерисовка в Compose
@@ -3746,6 +3776,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun restore(snap: Snapshot) {
         val oldMedia = media.toList()
         lastCheckKey = null
+        _cropDraft.value = null   // спринт 45: черновик рамки «Обрезки» не переживает Undo/Redo
         base.clear(); base.putAll(snap.base)
         override.clear()
         _animation.value = snap.animation
@@ -7799,6 +7830,84 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         rebuildLayers()
         pushScene()
         markDirty()
+    }
+
+    // ---- спринт 45: вкладка «Обрезка» (неразрушающая обрезка картинки слоя, см. LayerCrop)
+    // (_cropDraft объявлен в начале класса: pushScene может вызываться при инициализации)
+
+    /** Можно ли обрезать слой: картинка (и рисунок, вектор)/текст/видео/слой PSD (не группа, не символ, не звук, не кость). */
+    fun croppable(id: Int): Boolean {
+        val m = media.firstOrNull { it.id == id }
+        if (m != null) return m.kind == MediaKind.IMAGE || m.kind == MediaKind.VIDEO || m.kind == MediaKind.TEXT
+        val l = layers.firstOrNull { it.id == id } ?: return false
+        return l.kind == LayerKind.LAYER && !l.isEmpty
+    }
+
+    /** Применённая рамка слоя (null - картинка целиком). */
+    fun cropOf(id: Int): com.vibetoon.domain.model.LayerCrop? = com.vibetoon.domain.model.LayerCrop.of(layerProps[id]?.crop)
+
+    /** Размер картинки слоя в пикселях (для подписей вкладки), 0×0 - неизвестен. */
+    fun cropSourceSize(id: Int): Pair<Int, Int> {
+        val m = media.firstOrNull { it.id == id }
+        if (m != null && m.srcWidth > 0 && m.srcHeight > 0) return m.srcWidth to m.srcHeight
+        val l = layers.firstOrNull { it.id == id } ?: return 0 to 0
+        return l.width to l.height
+    }
+
+    /** Ползунок края рамки: меняет черновик (предпросмотр на холсте), проект не трогает. */
+    fun setCropEdge(id: Int, edge: Int, value: Float) {
+        if (_playing.value || !croppable(id)) return
+        val cur = _cropDraft.value?.takeIf { it.first == id }?.second ?: cropOf(id)
+        _cropDraft.value = id to com.vibetoon.domain.model.LayerCrop.withEdge(cur, edge, value)
+        pushScene()
+    }
+
+    /** «По содержимому»: рамка вокруг непрозрачных пикселей картинки (черновик). */
+    fun cropToContent(id: Int) {
+        if (_playing.value || !croppable(id)) return
+        val view = RenderHost.view ?: return
+        view.layerAlpha(id) { bytes ->   // карта прозрачности слоя: 8 байт размера + альфа построчно
+            viewModelScope.launch {
+                if (bytes == null) { _state.value = UiState.Message("Картинка слоя ещё не загружена"); return@launch }
+                val c = com.vibetoon.domain.model.LayerCrop.trimToContentMap(bytes)
+                    ?: run { _state.value = UiState.Message("Содержимое занимает всю картинку: обрезать нечего"); return@launch }
+                _cropDraft.value = id to c
+                pushScene()
+            }
+        }
+    }
+
+    /** «Применить»: черновик рамки записывается в проект одной записью Undo. */
+    fun applyCrop(id: Int) {
+        if (_playing.value) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        val d = _cropDraft.value?.takeIf { it.first == id } ?: run { _state.value = UiState.Message("Рамка не менялась"); return }
+        _cropDraft.value = null
+        val next = d.second?.toList()
+        val cur = layerPropsOf(id)
+        val upd = cur.copy(crop = next).normalized()
+        if (upd != cur) {
+            checkpoint("crop$id", force = true)
+            setProps(layerProps + (id to upd))
+            rebuildLayers()
+            markDirty()
+        }
+        pushScene()
+        _state.value = UiState.Message(if (com.vibetoon.domain.model.LayerCrop.of(next) == null) "Обрезка снята" else "Обрезка применена")
+    }
+
+    /** «Отмена»: черновик сбрасывается, на холсте - применённая рамка. */
+    fun cancelCropDraft() {
+        if (_cropDraft.value == null) return
+        _cropDraft.value = null
+        pushScene()
+    }
+
+    /** «Сбросить»: черновик - картинка целиком (применяется кнопкой «Применить»). */
+    fun resetCropDraft(id: Int) {
+        if (_playing.value || !croppable(id)) return
+        _cropDraft.value = id to null
+        pushScene()
     }
 
     /** «Новый слой»: пустая прозрачная картинка размером с холст (не больше 2048 по длинной стороне), на ней можно рисовать. */
@@ -12813,6 +12922,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val session = if (shadow) null else ExportSession(maxOf(cw, ch)).also { synchronized(exportSessions) { exportSessions += it } }
         val sceneRange = if (symbol == null) range else null   // пакет 9: экспорт только текущей сцены
         val exportDeformCache = com.vibetoon.domain.render.DeformCache()   // спринт 43: свой кэш сеток у экспорта
+        val cropsExp = com.vibetoon.domain.model.LayerCrop.scene(layerProps)   // спринт 45: обрезка слоёв - как на холсте
         val sceneAtFn = { i: Int ->
             // Внутренний кадр символа берётся как есть (раньше обрезался длительностью проекта - формы за её концом
             // снимались как последний кадр).
@@ -12886,6 +12996,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 pathPlaces = sceneOptions.pathPlaces { lid -> com.vibetoon.domain.anim.PathLayerMath.progressId(lid).let { pidP -> anim.evaluate(pidP, pf, baseCopy[pidP]).dx } },
                 deformCache = exportDeformCache).also { sc ->
                 sc.backgroundOverride = lookExp.background
+                sc.cropIds = cropsExp.first; sc.cropRects = cropsExp.second
                 if (formAliases.isNotEmpty()) sc.aliases = com.vibetoon.domain.project.ExportSymbolForms.aliases(formAliases)
                 if (batch != null && session != null) sc.beforeDraw = { session.textures.commit(batch) }
             }

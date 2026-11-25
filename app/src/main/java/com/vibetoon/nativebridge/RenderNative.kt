@@ -47,6 +47,8 @@ object RenderNative {
     external fun setInteractive(renderer: Long, on: Boolean)
     /** Формы символов (см. SceneData.aliasIds); вызывается вместе со сценой из GL-потока. */
     external fun setTextureAliases(renderer: Long, ids: IntArray, primary: IntArray, fallback: IntArray, rects: FloatArray)
+    /** Спринт 45: обрезка слоёв - [rects] по 4 числа (l, t, r, b в долях текстуры) на каждый id из [ids]. */
+    external fun setCrops(renderer: Long, ids: IntArray, rects: FloatArray)
     /** Удалить текстуры форм символов (только GL-поток). */
     external fun dropTextures(renderer: Long, ids: IntArray)
     /** Пакет 29: бюджет GPU-памяти под текстуры в байтах (см. TextureBudget). Только GL-поток. */

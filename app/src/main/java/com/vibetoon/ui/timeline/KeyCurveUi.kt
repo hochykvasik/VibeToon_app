@@ -31,7 +31,8 @@ fun KeyCurveSection(vm: MainViewModel, id: Int) {
     val keySel by vm.keySelection.collectAsStateWithLifecycle()
     val frame by vm.frame.collectAsStateWithLifecycle()
     val playing by vm.playing.collectAsStateWithLifecycle()
-    val info = remember(animation, keySel, frame, id) { vm.singleKeyInfo()?.takeIf { it.id == id } } ?: return
+    // спринт 45: выделен набор ромбов - его правит «Кривая выбранных ключей», а не ключ одного слоя из набора
+    val info = remember(animation, keySel, frame, id) { if (vm.selectedKeysInfo() != null) null else vm.singleKeyInfo()?.takeIf { it.id == id } } ?: return
     val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text("Кривая ключа: кадр ${info.frame + 1}", fontSize = 12.sp, maxLines = 1)
@@ -46,6 +47,34 @@ fun KeyCurveSection(vm: MainViewModel, id: Int) {
             )
         }
         Text(if (info.mixed) "У дорожек этого ключа разные кривые: выбор задаст одну всем" else "Меняется только этот ключ, до следующего; остальные ключи не трогаются",
+            fontSize = 10.sp, color = muted)
+    }
+}
+
+/**
+ * Спринт 45: «Кривая выбранных ключей (N)» в свойствах. Выделено несколько ромбов - в том числе по одному на разных
+ * слоях: пресет плавности и «График…» задают одну кривую всему набору (только этим ключам, до следующего ключа каждого).
+ */
+@Composable
+fun SelectedKeysCurveSection(vm: MainViewModel) {
+    val animation by vm.animation.collectAsStateWithLifecycle()
+    val keySel by vm.keySelection.collectAsStateWithLifecycle()
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val info = remember(animation, keySel) { vm.selectedKeysInfo() } ?: return
+    val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(com.vibetoon.domain.anim.SelectedKeyCurves.title(info.keys), fontSize = 12.sp, maxLines = 1)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            for ((type, title) in EASING_TITLES) FilterChip(
+                selected = !info.custom && !info.mixed && info.easing == type, enabled = !playing, onClick = { vm.setSelectedKeysEasing(type) },
+                label = { Text(title, fontSize = 11.sp, maxLines = 1, softWrap = false) }, modifier = Modifier.height(30.dp)
+            )
+            FilterChip(
+                selected = info.custom && !info.mixed, enabled = !playing, onClick = vm::openSelectedCurveEditor,
+                label = { Text("График…", fontSize = 11.sp, maxLines = 1, softWrap = false) }, modifier = Modifier.height(30.dp)
+            )
+        }
+        Text(if (info.mixed) "У выбранных ключей разные кривые: выбор задаст одну всем" else com.vibetoon.domain.anim.SelectedKeyCurves.note(info.keys, info.layers),
             fontSize = 10.sp, color = muted)
     }
 }

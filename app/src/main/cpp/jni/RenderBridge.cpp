@@ -234,6 +234,21 @@ Java_com_vibetoon_nativebridge_RenderNative_setTextureAliases(JNIEnv* env, jobje
                             reinterpret_cast<const int*>(c.data()), r.data(), static_cast<int>(n));
 }
 
+// Спринт 45: обрезка слоёв (вкладка «Обрезка»): id и по 4 числа l, t, r, b в долях текстуры.
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setCrops(JNIEnv* env, jobject, jlong h, jintArray ids, jfloatArray rects) {
+    if (!ids || !rects) { R(h)->setCrops(nullptr, nullptr, 0); return; }
+    const jsize n = env->GetArrayLength(ids);
+    if (env->GetArrayLength(rects) < n * 4) return;
+    std::vector<jint> a(n);
+    std::vector<jfloat> r(static_cast<size_t>(n) * 4);
+    if (n > 0) {
+        env->GetIntArrayRegion(ids, 0, n, a.data());
+        env->GetFloatArrayRegion(rects, 0, n * 4, r.data());
+    }
+    R(h)->setCrops(reinterpret_cast<const int*>(a.data()), r.data(), static_cast<int>(n));
+}
+
 JNIEXPORT void JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_dropTextures(JNIEnv* env, jobject, jlong h, jintArray ids) {
     if (!ids) return;

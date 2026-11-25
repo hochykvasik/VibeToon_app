@@ -143,6 +143,8 @@ public:
     // в под-прямоугольнике своего квадрата rects[8*i..] (x, y, w, h для основной и для запасной; доли квадрата).
     // Список задаётся вместе со сценой, поэтому картинка формы и кадр сцены меняются в одном кадре GL.
     void setTextureAliases(const int* ids, const int* prim, const int* fallback, const float* rects, int n);
+    // Спринт 45: обрезка слоёв - 4 числа (l, t, r, b в долях текстуры) на id; вне рамки слой не рисуется и не ловится.
+    void setCrops(const int* ids, const float* rects, int n);
     // Удаляет текстуры форм (id не переиспользуются: поздние загрузки этих id отбрасываются).
     void dropTextures(const int* ids, int n);
     // Пакет 29: бюджет GPU-памяти под текстуры (байты; считает Kotlin по памяти устройства), см. TextureBudgetPolicy.h.
@@ -231,6 +233,7 @@ private:
     const Tex* findTex(int layerId) const;       // теневая текстура (в снимке символа) или текстура слоя
     struct TexAlias { int primary = -1, fallback = -1; float pr[4] = {0.f, 0.f, 1.f, 1.f}; float fr[4] = {0.f, 0.f, 1.f, 1.f}; };
     std::unordered_map<int, TexAlias> aliases_;
+    std::unordered_map<int, std::array<float, 4>> crops_;   // спринт 45: обрезка слоёв
     std::unordered_set<int> droppedTex_;
     // --- кэш результата эффектов (см. FxCachePolicy.h) ---
     struct FxEntry {
@@ -300,6 +303,7 @@ private:
     GLint uTexMesh_ = -1, uBlMesh_ = -1, uTexPersp_ = -1, uTexH_ = -1, uBlPersp_ = -1, uBlH_ = -1;
     std::unordered_map<int, std::array<float, 9>> persps_;
     GLint uTexTurb_ = -1, uBlTurb_ = -1;
+    GLint uTexCrop_ = -1, uBlCrop_ = -1;   // спринт 45: обрезка слоя
     // --- рисование ---
     GLuint progDab_ = 0;
     GLint uDabSize_ = -1, uDabColor_ = -1, uDabHard_ = -1, uDabShape_ = -1, uDabErase_ = -1;
@@ -327,6 +331,7 @@ private:
     std::unordered_map<int, std::vector<std::array<float, 10>>> effects_;
     std::unordered_map<int, std::array<float, 4>> turbs_;
     const float* curTurb_ = nullptr;    // параметры турбулентности рисуемого слоя
+    const float* curCrop_ = nullptr;    // спринт 45: рамка обрезки рисуемого слоя (null - нет)
     const float* curPersp_ = nullptr;   // гомография слоя, который рисуется сейчас
     std::unordered_map<int, std::array<float, 32>> warps_;
     struct MeshGeom {
