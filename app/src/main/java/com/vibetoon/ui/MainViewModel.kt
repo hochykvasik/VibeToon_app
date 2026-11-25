@@ -463,14 +463,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * false при импорте нового PSD: id слоёв другие, прежняя анимация потеряла бы смысл.
      */
     private fun loadPsd(keepState: Boolean, source: suspend () -> Result<ParseSummary>) {
-        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) return
+        if (importJob?.isActive == true || _state.value == UiState.Loading || _state.value is UiState.Rendering) { psdLoaded(); return }
         pause()  // Choreographer - только с главного потока
         _state.value = UiState.Loading
         viewModelScope.launch {
-            source()
-                .onSuccess { renderPsd(it, keepState) }
-                .onFailure { _state.value = UiState.Error(it.message ?: it.javaClass.simpleName) }
+            try {
+                source()
+                    .onSuccess { renderPsd(it, keepState) }
+                    .onFailure { _state.value = UiState.Error(it.message ?: it.javaClass.simpleName) }
+            } finally {
+                psdLoaded()
+            }
         }
+    }
+
+    /**
+     * Спринт 48: PSD разобран (или не разобрался). Слои PSD - участники символов - теперь в списке слоёв: формы, снятые
+     * без них (пустые), переснимаются; ожидающие формы снимаются.
+     */
+    private fun psdLoaded() {
+        val was = psdPending
+        psdPending = false
+        if (projectId == null) return
+        // формы, ждавшие PSD, снимаются заново с участниками (кэш форм без них - пустые картинки)
+        if (was) invalidateForms() else invalidateFormsIfChanged()
     }
 
     // ---------------------------------------------------------------- проект
@@ -486,6 +502,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _openProgress = MutableStateFlow(-1f)
     val openProgress: StateFlow<Float> = _openProgress.asStateFlow()
     private var openToken = 0
+    /**
+     * Спринт 48: PSD проекта ещё разбирается (открытие проекта с PSD). Пока true, формы символов не снимаются: участники
+     * символа - слои PSD - ещё не в списке слоёв, и снимок первой формы получался пустым (пропадал закрытый рот).
+     */
+    @Volatile private var psdPending = false
 
     /** Открывает проект: размер холста, fps, фон, сохранённые трансформации и ключи, затем PSD. */
     fun openProject(id: String, psdAfterOpen: Uri? = null) {
@@ -495,6 +516,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val token = ++openToken
         _opening.value = true; _openProgress.value = -1f
         openJob = viewModelScope.launch {
+          var psdStarted = false
           try {
             rasterTransactionGate.run { resetEditor() }
             val data = withContext(Dispatchers.IO) { projects.load(id) }.getOrElse {
@@ -505,6 +527,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             meta = data.meta
             _loop.value = data.meta.loop; _magnet.value = data.meta.magnet
             psdRef = data.psd
+            psdPending = data.psd != null   // спринт 48: до разбора PSD формы символов не снимаются
             canvasW = data.meta.width
             canvasH = data.meta.height
             restoreGuides()
@@ -580,6 +603,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 psdW = ref.width
                 psdH = ref.height
                 fit = ProjectMath.fit(psdW, psdH, canvasW, canvasH)
+                psdStarted = true
                 loadPsd(keepState = true) { repo.parseFile(projects.assetFile(id), ref.name) }
             }
             if (com.vibetoon.ui.shell.Lesson.pending) {
@@ -590,6 +614,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
           } finally {
             // ошибка, отмена или готово: индикатор снимается (если не начато новое открытие)
             if (openToken == token) { _opening.value = false; _openProgress.value = -1f }
+            // спринт 48: PSD так и не начал разбираться (ошибка, отмена) - формы снимаются без него
+            if (openToken == token && !psdStarted && psdPending) { psdPending = false; if (!closing) regenFormsSoon() }
           }
         }
     }
@@ -627,6 +653,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         markerThumbJobs.values.toList().forEach { it.cancel() }; markerThumbJobs.clear()
         _markerThumbs.value = emptyMap()
         resetForms(dropTextures = true)
+        psdPending = false
         thumbGen++; thumbs.clear(); thumbPending.clear()   // миниатюры прошлого проекта не должны всплывать у новых слоёв
         stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null
         paintSizes.clear(); paintDirty.clear(); versionedRasterIds.clear(); mediaIds.reset()
@@ -4430,6 +4457,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Спринт 47: не больше смесей форм на один символ в экспорте (16 шагов на переход - десятки переходов). */
     private val EXPORT_BLEND_LIMIT = 384
     private val FORM_PROVISIONAL_RETRIES = 4
+    private val PROVISIONAL_RETRY_MS = 1200L
     /** Спринт 47: обрезанные снимки форм для растворения (символ, кадр, поколение) - смеси одного перехода не переснимают формы. */
     private val formSources = LinkedHashMap<Triple<Int, Int, Int>, com.vibetoon.domain.project.FormBlend.Pixels>(8, 0.75f, true)
     private val FORM_SOURCE_BYTES = 24L * 1024 * 1024
@@ -4645,13 +4673,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Спринт 47: формы, снятые до конца загрузки текстур, переснимаются, когда загрузка закончилась. */
-    private fun retryProvisionalForms() {
-        if (formProvisional.isEmpty() || _playing.value || RenderNative.pendingUploadBytes() > 0L || _opening.value) return
+    private fun retryProvisionalForms(): Boolean {
+        if (formProvisional.isEmpty() || _playing.value || RenderNative.pendingUploadBytes() > 0L || _opening.value || psdPending) return false
+        reloadNonResident(includeSymbolMembers = true)   // спринт 48: вытесненные текстуры участников - снова на GPU
         for (key in formProvisional.keys.toList()) {
             formWaits.remove(key)
             if (key !in formQueue) formQueue.addLast(key)
         }
         kickFormWorker()
+        return true
+    }
+
+    private var provisionalRetryJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Спринт 48: временные формы (снятые «как есть» или пустые формы маркеров) переснимаются сами через ~1 с после
+     * загрузки текстур. Раньше повтор шёл только при смене кадра - стоящий на кадре 0 проект так и показывал пустоту.
+     */
+    private fun scheduleProvisionalRetry() {
+        if (provisionalRetryJob?.isActive == true) return
+        val pid = projectId ?: return
+        provisionalRetryJob = viewModelScope.launch {
+            while (formProvisional.isNotEmpty() && projectId == pid) {
+                delay(PROVISIONAL_RETRY_MS)
+                if (formWorker?.isActive == true || appBackground) continue
+                if (retryProvisionalForms()) break
+            }
+        }
     }
 
     /** Подставляет в экземпляры символов нужные формы на кадре [f] (мгновенно, если форма уже снята). */
@@ -4678,6 +4726,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Текстуры потеряны (новый GL-контекст, другой проект): кэш форм пуст, запасных картинок нет. */
     private fun resetForms(dropTextures: Boolean) {
         formWorker?.cancel(); formWorker = null
+        provisionalRetryJob?.cancel(); provisionalRetryJob = null
         val ids = formCache.clear()
         if (dropTextures && ids.isNotEmpty()) RenderHost.view?.dropTextures(ids.toIntArray())
         formQueue.clear(); formShown.clear(); formWaits.clear(); formFails.clear()
@@ -4720,21 +4769,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (formWorker?.isActive == true || appBackground || projectId == null) return
         formWorker = viewModelScope.launch {
             while (true) {
-                if (appBackground || projectId == null) break
+                // спринт 48: пока разбирается PSD проекта, формы не снимаются - очередь ждёт psdLoaded()
+                if (appBackground || projectId == null || psdPending) break
                 val key = formQueue.removeFirstOrNull() ?: break
                 if (formCache.fresh(key) != null && key !in formProvisional) continue
                 val def = media.firstOrNull { it.id == key.def && it.symDur > 0 } ?: continue
                 val gen = formCache.gen
                 val strict = (formWaits[key] ?: 0) < SYMBOL_WAIT_LIMIT
+                var blank = false   // спринт 48: снимок формы маркера вышел пустым
                 val made = try {
                     // спринт 47: смесь двух форм (растворение по кривой ключа) - из двух снимков; обычная форма - как раньше
                     if (key.blended) blendedForm(def.id, key, strict)
-                    else symbolBitmap(def.id, key.local, 0, strict)?.let { b -> withContext(Dispatchers.Default) { prepareForm(b, key.crop) } }
+                    else symbolBitmap(def.id, key.local, 0, strict)?.let { b ->
+                        withContext(Dispatchers.Default) {
+                            val marker = def.markers.any { it.target == key.local }
+                            if (marker && !key.crop) blank = bitmapBlank(b)
+                            prepareForm(b, key.crop).also { if (marker && key.crop) blank = it.first.width == 1 && it.first.height == 1 }
+                        }
+                    }
                 } catch (t: SymbolNotReady) {
                     // текстуры участников ещё грузятся: прежняя картинка остаётся, снимок чуть позже. Спринт 47: пока идёт
                     // загрузка проекта (очередь текстур не пуста), ожидание не считается - большой проект больше не
                     // снимается «как есть» с пустыми участниками; вытесненные текстуры участников загружаются заново.
-                    if (RenderNative.pendingUploadBytes() == 0L && !_opening.value) formWaits[key] = (formWaits[key] ?: 0) + 1
+                    if (com.vibetoon.domain.project.SymbolReadiness.waitCounts(RenderNative.pendingUploadBytes(), _opening.value, psdPending)) formWaits[key] = (formWaits[key] ?: 0) + 1
                     reloadNonResident(includeSymbolMembers = true)
                     if (key !in formQueue) formQueue.addLast(key)
                     kotlinx.coroutines.delay(300)
@@ -4759,8 +4816,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 formWaits.remove(key); formFails.remove(key); formFailAt.remove(key); formWarnedDefs.remove(key.def)
                 // спринт 47: снимок «как есть» - временный, переснимется после загрузки текстур
-                if (strict) formProvisional.remove(key)
-                else { val n = (formProvisional[key] ?: 0) + 1; if (n > FORM_PROVISIONAL_RETRIES) formProvisional.remove(key) else formProvisional[key] = n }
+                // спринт 48: пустой снимок формы маркера тоже временный - переснимется сам, без скраббинга
+                val suspicious = strict && com.vibetoon.domain.project.SymbolReadiness.suspiciousBlank(blank, key.local, def.markers)
+                if (strict && !suspicious) formProvisional.remove(key)
+                else {
+                    val n = (formProvisional[key] ?: 0) + 1
+                    if (n > FORM_PROVISIONAL_RETRIES) formProvisional.remove(key) else { formProvisional[key] = n; scheduleProvisionalRetry() }
+                    if (suspicious) Log.i("VT/Symbols", "form ${def.name}:${key.local} blank, retry $n")
+                }
                 val prepared = made
                 val id = nextFormTexId++
                 val uploaded = runCatching { RenderNative.uploadBitmap(id, prepared.first) }.getOrDefault(false)
@@ -4879,7 +4942,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             bmp.recycle()
             com.vibetoon.domain.project.FormBlend.crop(px, w, h)
         }
-        if (!keep) return p
+        // спринт 48: пустой снимок формы маркера не кэшируется (участники могли ещё не загрузиться)
+        val markerBlank = p.empty && media.firstOrNull { it.id == defId }?.markers.orEmpty().any { it.target == local }
+        if (!keep || markerBlank) return p
         if (formSources.keys.any { it.third != formCache.gen }) formSources.keys.removeAll { it.third != formCache.gen }
         formSources[k] = p
         var total = formSources.values.sumOf { it.bytes }
@@ -4961,6 +5026,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Спринт 48: участники символа [defId], которых ещё нет в списке слоёв (см. SymbolReadiness). */
+    private fun symbolMissingMembers(defId: Int): Set<Int> =
+        com.vibetoon.domain.project.SymbolReadiness.missingMembers(
+            defId, regroup, layers.mapTo(HashSet()) { it.id }, deletedPsd,
+            known = HashSet<Int>().apply { media.forEach { add(it.id) }; psdLayers.forEach { add(it.id) } }
+        )
+
+    /** Спринт 48: на картинке ничего не видно (полностью прозрачная). */
+    private fun bitmapBlank(b: android.graphics.Bitmap): Boolean {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h)
+        b.getPixels(px, 0, w, 0, 0, w, h)
+        return SymbolForms.opaqueBounds(px, w, h) == null
+    }
+
     /** Картинка вложенной сцены [defId] на внутреннем кадре [local] (прозрачный фон). Сериализовано: вложенные снимки не гоняются. */
     private suspend fun symbolBitmap(defId: Int, local: Int, depth: Int, strict: Boolean = true): android.graphics.Bitmap? =
         symbolMutex.withLock { symbolBitmapLocked(defId, local, depth, strict) }
@@ -4973,6 +5053,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun symbolBitmapLocked(defId: Int, local: Int, depth: Int, strict: Boolean): android.graphics.Bitmap? {
         if (!glUsable()) return null   // спринт 41: в фоне при идущем импорте/экспорте снимок делается во внеэкранном контексте
+        // спринт 48: участники символа ещё не загружены (PSD разбирается, слоя нет в списке) - снимок был бы пустым
+        if (!com.vibetoon.domain.project.SymbolReadiness.canSnapshot(psdPending, if (strict) symbolMissingMembers(defId) else emptySet())) throw SymbolNotReady()
         val nested = nestedSymbolBitmaps(defId, local, depth, strict)
         try {
             val fps = _animation.value.settings.fps
@@ -5475,6 +5557,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (previous?.isActive == true && !force) return
         val job = viewModelScope.launch {
             if (previous?.isActive == true) previous.join()
+            while (psdPending && projectId == pid) delay(150)   // спринт 48: миниатюры - после разбора PSD (иначе пустые)
             if (projectId != pid) return@launch
             val def = media.firstOrNull { it.id == defId && it.symDur > 0 } ?: return@launch
             val got = HashMap<Int, String>()
