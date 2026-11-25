@@ -27,7 +27,7 @@ class Sprint43WiringTest {
 
     @Test fun editorAndExportKeepSeparateDeformCaches() {
         assertTrue(vm.contains("private val deformCache = com.vibetoon.domain.render.DeformCache()"))
-        assertTrue(vm.contains("deformCache = deformCache)"))
+        assertTrue(vm.contains("deformCache = deformCache, crops = cropTable())"))   // спринт 46: обрезка в сцене
         assertTrue(vm.contains("val exportDeformCache = com.vibetoon.domain.render.DeformCache()"))
         assertTrue(vm.contains("deformCache = exportDeformCache"))
         assertTrue(vm.contains("deformCache.clear()"))

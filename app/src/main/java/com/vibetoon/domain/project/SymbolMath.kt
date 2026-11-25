@@ -20,8 +20,12 @@ class FramesPlan(val clips: List<Triple<Int, Int, Int>>, val markers: List<Frame
  * Ключ времени экземпляра символа (Time Remapping): с кадра сцены [frame] символ показывает свой внутренний кадр [value].
  * [ease] - переход к СЛЕДУЮЩЕМУ ключу: [TimeEase.HOLD] (резкая смена формы, по умолчанию), [TimeEase.LINEAR] или
  * [TimeEase.SMOOTH] (внутренние кадры между значениями проигрываются по кривой).
+ *
+ * Спринт 46: [curve] - своя кривая сегмента (как у обычных ключей, формат [com.vibetoon.domain.anim.Curve.toList]);
+ * задаётся редактором «График…» и включает [TimeEase.CUSTOM]. Между ключами на РАЗНЫЕ формы кривая тоже действует:
+ * внутренний кадр символа идёт от значения ключа к значению следующего по кривой (как у любого ключа), Hold - резкая смена.
  */
-data class TimeKey(val frame: Int, val value: Int, val ease: Int = TimeEase.HOLD)
+data class TimeKey(val frame: Int, val value: Int, val ease: Int = TimeEase.HOLD, val curve: List<Float>? = null)
 
 /** Переход между ключами времени (кривая сегмента). */
 object TimeEase {
@@ -30,7 +34,47 @@ object TimeEase {
     const val SMOOTH = 2
     const val EASE_IN = 3
     const val EASE_OUT = 4
-    fun valid(e: Int) = e in HOLD..EASE_OUT
+    /** Спринт 46: своя кривая ключа ([TimeKey.curve]); без кривой - линейно. */
+    const val CUSTOM = 5
+    fun valid(e: Int) = e in HOLD..CUSTOM
+
+    /** Доля перехода сегмента ключа [k] на доле времени [t]: своя кривая (может выходить за 0..1 - перелёт) или пресет. */
+    fun value(k: TimeKey, t: Float): Float {
+        if (k.ease == CUSTOM || k.curve != null) {
+            val c = com.vibetoon.domain.anim.Curve.parse(k.curve)
+            if (c != null) return c.eval(t.coerceIn(0f, 1f))
+            if (k.ease == CUSTOM) return t.coerceIn(0f, 1f)
+        }
+        return curve(k.ease, t)
+    }
+
+    /** Пресет плавности обычных ключей -> переход ключа времени (одинаковые кнопки для всех ключей). */
+    fun fromEasing(e: com.vibetoon.domain.anim.EasingType): Int = when (e) {
+        com.vibetoon.domain.anim.EasingType.LINEAR -> LINEAR
+        com.vibetoon.domain.anim.EasingType.EASE_IN -> EASE_IN
+        com.vibetoon.domain.anim.EasingType.EASE_OUT -> EASE_OUT
+        com.vibetoon.domain.anim.EasingType.EASE_IN_OUT -> SMOOTH
+        com.vibetoon.domain.anim.EasingType.STEP -> HOLD
+    }
+
+    /** Переход ключа времени -> пресет плавности (подсветка кнопки; своя кривая - null). */
+    fun toEasing(e: Int): com.vibetoon.domain.anim.EasingType? = when (e) {
+        LINEAR -> com.vibetoon.domain.anim.EasingType.LINEAR
+        EASE_IN -> com.vibetoon.domain.anim.EasingType.EASE_IN
+        EASE_OUT -> com.vibetoon.domain.anim.EasingType.EASE_OUT
+        SMOOTH -> com.vibetoon.domain.anim.EasingType.EASE_IN_OUT
+        HOLD -> com.vibetoon.domain.anim.EasingType.STEP
+        else -> null
+    }
+
+    /** Кривая для редактора «График…»: своя или кривая пресета (Hold показывается линией - редактор задаст плавность). */
+    fun curveOf(k: TimeKey): com.vibetoon.domain.anim.Curve =
+        com.vibetoon.domain.anim.Curve.parse(k.curve) ?: when (k.ease) {
+            EASE_IN -> com.vibetoon.domain.anim.Curve.of(com.vibetoon.domain.anim.EasingType.EASE_IN)
+            EASE_OUT -> com.vibetoon.domain.anim.Curve.of(com.vibetoon.domain.anim.EasingType.EASE_OUT)
+            SMOOTH -> com.vibetoon.domain.anim.Curve.of(com.vibetoon.domain.anim.EasingType.EASE_IN_OUT)
+            else -> com.vibetoon.domain.anim.Curve.LINEAR
+        }
     /** Доля перехода 0..1 по кривой. */
     fun curve(e: Int, t: Float): Float {
         val x = t.coerceIn(0f, 1f)
@@ -107,7 +151,7 @@ object SymbolMath {
         val b = sorted.getOrNull(i + 1) ?: return a.value
         if (a.ease == TimeEase.HOLD || !TimeEase.valid(a.ease) || b.frame <= a.frame) return a.value
         val t = (frame - a.frame).toFloat() / (b.frame - a.frame)
-        return Math.round(a.value + (b.value - a.value) * TimeEase.curve(a.ease, t))
+        return Math.round(a.value + (b.value - a.value) * TimeEase.value(a, t))
     }
 
     /**

@@ -199,8 +199,11 @@ fun SymbolTimeTab(vm: MainViewModel, instId: Int) {
                         com.vibetoon.domain.project.TimeEase.EASE_IN, com.vibetoon.domain.project.TimeEase.EASE_OUT))
                     AssistChip(onClick = { vm.setTimeKeyEase(instId, e) }, label = { Text(vm.timeEaseName(e), fontSize = 11.sp) },
                         border = if (e == ease) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF7E57C2)) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline))
+                // спринт 46: своя кривая (редактор f(x)), как у обычных ключей
+                AssistChip(onClick = { vm.openTimeKeysCurveEditor(instId) }, label = { Text("График…", fontSize = 11.sp) },
+                    border = if (ease == com.vibetoon.domain.project.TimeEase.CUSTOM) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF7E57C2)) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline))
             }
-            Text("Hold - резкая смена формы. Плавно/Линейно - кадры символа между двумя ключами проигрываются по кривой.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            Text("Hold - резкая смена формы. Остальные переходы и своя кривая - кадры символа идут к следующему ключу по кривой, в том числе между разными формами.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         }
         // Спринт 37: режим без ключей времени - Hold / Цикл / Один раз (Play Once)
         Text("Без ключей времени:", fontSize = 12.sp)

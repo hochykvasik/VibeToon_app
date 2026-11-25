@@ -78,3 +78,31 @@ fun SelectedKeysCurveSection(vm: MainViewModel) {
             fontSize = 10.sp, color = muted)
     }
 }
+
+/**
+ * Спринт 46: «Кривая ключа времени» в свойствах экземпляра символа - те же пресеты и «График…», что у обычных ключей.
+ * Правит выделенные ромбы символа или ключ на кадре плейхеда (переход до следующего ключа).
+ */
+@Composable
+fun TimeKeysCurveSection(vm: MainViewModel, id: Int) {
+    val keys by vm.timeKeys.collectAsStateWithLifecycle()
+    val keySel by vm.keySelection.collectAsStateWithLifecycle()
+    val frame by vm.frame.collectAsStateWithLifecycle()
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val info = remember(keys, keySel, frame, id) { if (keys.containsKey(id)) vm.timeKeysCurveInfo(id) else null } ?: return
+    val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(com.vibetoon.domain.anim.TimeKeyCurves.title(info.keys), fontSize = 12.sp, maxLines = 1)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            for ((type, title) in EASING_TITLES) FilterChip(
+                selected = !info.custom && !info.mixed && info.easing == type, enabled = !playing, onClick = { vm.setTimeKeysEasing(id, type) },
+                label = { Text(title, fontSize = 11.sp, maxLines = 1, softWrap = false) }, modifier = Modifier.height(30.dp)
+            )
+            FilterChip(
+                selected = info.custom && !info.mixed, enabled = !playing, onClick = { vm.openTimeKeysCurveEditor(id) },
+                label = { Text("График…", fontSize = 11.sp, maxLines = 1, softWrap = false) }, modifier = Modifier.height(30.dp)
+            )
+        }
+        Text(com.vibetoon.domain.anim.TimeKeyCurves.NOTE, fontSize = 10.sp, color = muted)
+    }
+}

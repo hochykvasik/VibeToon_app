@@ -42,13 +42,15 @@ uniform mat3 uH;
 uniform int uMesh;                    // 1 - рисуется Mesh: aPos уже смещена, aUv - исходное положение
 uniform int uWarp;                    // 1 - слой деформирован (рисуется сеткой)
 uniform vec2 uOff[16];                // смещения контрольных точек 4x4 в долях размера слоя
+uniform vec4 uUvRect;                 // спринт 46: обрезка - квадрат слоя = видимая рамка (x, y, w, h доли текстуры); w <= 0 - вся текстура
 out vec2 vUv;
 vec4 bernstein(float t) {
     float s = 1.0 - t;
     return vec4(s * s * s, 3.0 * s * s * t, 3.0 * s * t * t, t * t * t);
 }
 void main() {
-    vUv = uMesh != 0 ? aUv : aPos;    // строка 0 текстуры = верх слоя
+    vec2 base = uMesh != 0 ? aUv : aPos;   // строка 0 текстуры = верх слоя
+    vUv = uUvRect.z > 0.0 ? uUvRect.xy + base * uUvRect.zw : base;
     vec2 pos = aPos;
     if (uWarp != 0 && uMesh == 0) {
         vec4 bu = bernstein(aPos.x);
@@ -496,6 +498,8 @@ int Renderer::initGL() {
     uBlTurb_ = glGetUniformLocation(progBlend_, "uTurb");
     uTexCrop_ = glGetUniformLocation(progTex_, "uCrop");
     uBlCrop_ = glGetUniformLocation(progBlend_, "uCrop");
+    uTexUv_ = glGetUniformLocation(progTex_, "uUvRect");
+    uBlUv_ = glGetUniformLocation(progBlend_, "uUvRect");
 
     // Mesh: динамический VBO (позиция + uv, обновляется при каждой отрисовке) и IBO.
     glGenVertexArrays(1, &meshVao_);
@@ -1081,9 +1085,9 @@ int Renderer::hitTest(float sx, float sy) const {
                 const float w3 = 1.f - w1 - w2;
                 if (w1 < -1e-4f || w2 < -1e-4f || w3 < -1e-4f) continue;
                 if (it.flags & kFlagHitBbox || !hasAlpha) return it.layerId;
-                const float tu = w1 * A[2] + w2 * B[2] + w3 * C[2];
-                const float tv = w1 * A[3] + w2 * B[3] + w3 * C[3];
-                if (cropC && !croppolicy::inside(cropC, tu, tv)) continue;   // спринт 45: обрезанная часть не ловится
+                float tu = w1 * A[2] + w2 * B[2] + w3 * C[2];
+                float tv = w1 * A[3] + w2 * B[3] + w3 * C[3];
+                if (cropC) croppolicy::toTexture(cropC, tu, tv, tu, tv);   // спринт 46: сетка лежит на видимой рамке
                 const Tex& tex = tm->second;
                 const int cx = std::min(tex.w - 1, std::max(0, static_cast<int>(tu * tex.w)));
                 const int cy = std::min(tex.h - 1, std::max(0, static_cast<int>(tv * tex.h)));
@@ -1095,15 +1099,16 @@ int Renderer::hitTest(float sx, float sy) const {
             }
             continue;
         }
-        if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) continue;
-        if (cropC && !aliases_.count(it.layerId) && !croppolicy::inside(cropC, u, v)) continue;   // спринт 45: вне рамки обрезки
+        if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) continue;   // спринт 46: квадрат обрезанного слоя = видимая рамка
         if (it.flags & kFlagHitBbox) return it.layerId;   // текст: достаточно попасть в рамку
         float rr[4];
         const Tex* tp = resolveTex(it.layerId, rr);
         if (!tp || tp->alpha.empty()) continue;
         const Tex& tex = *tp;
         float su = 0.f, sv = 0.f;
-        if (!texalias::toForm(u, v, rr, su, sv)) continue;   // форма символа - в своём под-прямоугольнике
+        float qu = u, qv = v;
+        if (cropC) croppolicy::toTexture(cropC, u, v, qu, qv);   // спринт 46: доля полного квадрата (картинки) слоя
+        if (!texalias::toForm(qu, qv, rr, su, sv)) continue;   // форма символа - в своём под-прямоугольнике
         const int tx = std::min(tex.w - 1, static_cast<int>(su * tex.w));
         const int ty = std::min(tex.h - 1, static_cast<int>(sv * tex.h));
         if (tex.alpha[static_cast<size_t>(ty) * tex.w + tx] > 20) return it.layerId;
@@ -1692,8 +1697,12 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
         float crop[4];
         croppolicy::uniformValue(curCrop_, crop);
         glUniform4fv(uTexCrop_, 1, crop);   // спринт 45: нули вне обрезанного слоя - остальные рисования программы не режутся
+        float uvr[4];
+        croppolicy::uvRect(curUv_, uvr);
+        glUniform4fv(uTexUv_, 1, uvr);      // спринт 46: квадрат слоя - видимая рамка (нули - вся текстура)
         drawQuadOrGrid(warp);
         if (curCrop_) glUniform4f(uTexCrop_, 0.f, 0.f, 0.f, 0.f);
+        if (curUv_) glUniform4f(uTexUv_, 0.f, 0.f, 0.f, 0.f);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         return;
     }
@@ -1722,8 +1731,12 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
     float crop[4];
     croppolicy::uniformValue(curCrop_, crop);
     glUniform4fv(uBlCrop_, 1, crop);
+    float uvr[4];
+    croppolicy::uvRect(curUv_, uvr);
+    glUniform4fv(uBlUv_, 1, uvr);
     drawQuadOrGrid(warp);
     if (curCrop_) glUniform4f(uBlCrop_, 0.f, 0.f, 0.f, 0.f);
+    if (curUv_) glUniform4f(uBlUv_, 0.f, 0.f, 0.f, 0.f);
     glEnable(GL_BLEND);
 }
 
@@ -1973,8 +1986,18 @@ void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool cli
     // Форма символа, обрезанная по содержимому: рисуется в своём под-прямоугольнике квадрата экземпляра.
     float sub[6];
     const float* M = it.m;
+    // спринт 46: обрезка - квадрат слоя в сцене уже равен видимой рамке (SceneBuilder), текстура берётся из неё
+    const auto cr = crops_.find(it.layerId);
+    const float* cropC = cr == crops_.end() ? nullptr : cr->second.data();
+    float formCrop[4];
     if (!texalias::isFull(rect)) {
-        texalias::subRect(it.m, rect, sub);
+        float r2[4] = {rect[0], rect[1], rect[2], rect[3]};
+        if (cropC) {
+            // форма символа обрезанного экземпляра: под-прямоугольник формы - в долях рамки, вне рамки - отбрасывается
+            croppolicy::aliasRect(cropC, rect, r2);
+            croppolicy::formCrop(cropC, rect, formCrop);
+        }
+        texalias::subRect(it.m, r2, sub);
         M = sub;
     }
     // Отсечение: слой без деформаций целиком вне цели не рисуется (зум/панорама на большом холсте).
@@ -1994,14 +2017,16 @@ void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool cli
     const auto tb = turbs_.find(it.layerId);
     curTurb_ = tb == turbs_.end() ? nullptr : tb->second.data();
     const auto w = warps_.find(it.layerId);
-    // спринт 45: обрезка - в долях текстуры самого слоя (у формы символа своя под-рамка - обрезка не применяется)
-    const auto cr = texalias::isFull(rect) ? crops_.find(it.layerId) : crops_.end();
-    curCrop_ = cr == crops_.end() ? nullptr : cr->second.data();
+    // спринт 46: обычный слой - текстурная рамка квадрата (uUvRect); форма символа - отбрасывание вне рамки в её текстуре
+    const bool full = texalias::isFull(rect);
+    curUv_ = full ? cropC : nullptr;
+    curCrop_ = !full && cropC ? formCrop : nullptr;
     drawTexture(t->id, mvp, opacity, blend, clipMode, curMesh_ || w == warps_.end() ? nullptr : w->second.data());
     curMesh_ = nullptr;
     curPersp_ = nullptr;
     curTurb_ = nullptr;
     curCrop_ = nullptr;
+    curUv_ = nullptr;
 }
 
 // Слой внутри маски «Маски по слою» рисуется без шейдерных эффектов: кэш эффектов хранится по id слоя, а тот же слой

@@ -39,6 +39,15 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.draw.zIndex
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -92,20 +101,114 @@ fun ProjectsScreen(app: AppViewModel) {
     val starterId by app.starterId.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
     var searchOn by remember { mutableStateOf(false) }
-    var sortBy by remember { mutableStateOf(com.vibetoon.domain.project.ProjectSort.DATE) }
+    // спринт 46: список прочитан (до этого - индикатор, а не «Проектов пока нет»), сортировка и свой порядок сохраняются
+    val loaded by app.loaded.collectAsStateWithLifecycle()
+    val sortBy by app.sort.collectAsStateWithLifecycle()
+    val manual by app.manualOrder.collectAsStateWithLifecycle()
+    /** Открытая папка (отдельная вкладка библиотеки); пусто - корень «Мои работы». */
     var folder by remember { mutableStateOf("") }
     var sortMenu by remember { mutableStateOf(false) }
     var exportMenu by remember { mutableStateOf(false) }
     var newFolder by remember { mutableStateOf(false) }
-    var moving by remember { mutableStateOf<ProjectMeta?>(null) }
+    var moving by remember { mutableStateOf<List<String>?>(null) }
     var backupFor by remember { mutableStateOf<String?>(null) }
+    /** Спринт 46: выделение долгим нажатием (удалить / перенести несколько проектов). */
+    var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var deletingMany by remember { mutableStateOf<List<String>?>(null) }
     val folderNames = remember(storedFolders, allProjects) {
         com.vibetoon.domain.project.ProjectListMath.folders(storedFolders, allProjects)
     }
-    val projects = remember(allProjects, query, folder, sortBy, sizes) {
+    // поиск - и по исходному имени, и по показанному (переведённому): «New project 2» находится по «new»
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val lang = com.vibetoon.ui.theme.LocalAppSettings.current?.effectiveLang
+    val projects = remember(allProjects, query, folder, sortBy, sizes, manual, lang) {
         com.vibetoon.domain.project.ProjectListMath.sort(
-            com.vibetoon.domain.project.ProjectListMath.filter(allProjects, query, folder), sortBy, sizes
+            com.vibetoon.domain.project.ProjectListMath.visible(allProjects, query, folder) { com.vibetoon.ui.i18n.translate(ctx, lang, it.name) },
+            sortBy, sizes, manual
         )
+    }
+    val searching = query.isNotBlank()
+    // папка исчезла (удалена) - назад в корень; выделение без удалённых проектов
+    androidx.compose.runtime.LaunchedEffect(folderNames, folder) { if (folder.isNotEmpty() && folder !in folderNames) folder = "" }
+    androidx.compose.runtime.LaunchedEffect(allProjects) { selected = com.vibetoon.domain.project.ProjectListMath.pruneSelection(selected, allProjects) }
+    androidx.activity.compose.BackHandler(enabled = selected.isNotEmpty() || folder.isNotEmpty()) {
+        if (selected.isNotEmpty()) selected = emptySet() else folder = ""
+    }
+    // ---- спринт 46: перетаскивание карточек (свой порядок, перенос на карточку папки)
+    val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    var dragId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var dragMoved by remember { mutableStateOf(false) }
+    var dropFolder by remember { mutableStateOf<String?>(null) }
+    var live by remember { mutableStateOf<List<String>?>(null) }
+    var expectSlot by remember { mutableStateOf<androidx.compose.ui.unit.IntOffset?>(null) }
+    val byId = remember(allProjects) { allProjects.associateBy { it.id } }
+    val shown = live?.mapNotNull { byId[it] } ?: projects
+    androidx.compose.runtime.LaunchedEffect(projects) { if (dragId == null) live = null }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    // обработчик жеста создаётся один раз на карточку: текущий список и поиск - через rememberUpdatedState
+    val projectsNow by androidx.compose.runtime.rememberUpdatedState(projects)
+    val searchingNow by androidx.compose.runtime.rememberUpdatedState(searching)
+    fun hover() {
+        val id = dragId ?: return
+        val info = grid.layoutInfo.visibleItemsInfo
+        val me = info.firstOrNull { it.key == id } ?: return
+        val slot = expectSlot
+        if (slot != null) {   // ждём раскладку после прошлой перестановки
+            if (me.offset != slot) return
+            expectSlot = null
+        }
+        val cx = me.offset.x + me.size.width / 2f + dragOffset.x
+        val cy = me.offset.y + me.size.height / 2f + dragOffset.y
+        val hit = info.firstOrNull { it.key != id && cx >= it.offset.x && cx < it.offset.x + it.size.width && cy >= it.offset.y && cy < it.offset.y + it.size.height }
+        val key = hit?.key as? String
+        dropFolder = key?.takeIf { it.startsWith(FOLDER_KEY) }?.removePrefix(FOLDER_KEY)
+        if (hit == null || key == null || dropFolder != null || searchingNow) return
+        val cur = live ?: return
+        if (key !in cur) return
+        val next = com.vibetoon.domain.project.ProjectListMath.move(cur, id, key)
+        if (next == cur) return
+        // карточка встаёт на место цели: смещение пальца пересчитывается, чтобы она не прыгала
+        dragOffset += androidx.compose.ui.geometry.Offset((me.offset.x - hit.offset.x).toFloat(), (me.offset.y - hit.offset.y).toFloat())
+        expectSlot = hit.offset
+        live = next
+    }
+    fun endDrag(cancel: Boolean) {
+        val id = dragId ?: return
+        val target = dropFolder
+        val order = live
+        dragId = null; dropFolder = null; expectSlot = null; dragOffset = androidx.compose.ui.geometry.Offset.Zero
+        when {
+            cancel -> live = null
+            !dragMoved -> { live = null; selected = com.vibetoon.domain.project.ProjectListMath.toggle(selected, id) }   // долгое нажатие без движения - выделение
+            target != null -> {
+                live = null
+                val ids = if (id in selected) selected.toList() else listOf(id)
+                app.moveToFolder(ids, target)
+                selected = emptySet()
+            }
+            order != null && order != projectsNow.map { it.id } -> app.reorder(order)   // live сбросится, когда придёт новый порядок
+            else -> live = null
+        }
+    }
+    val dragHandlers: (String) -> Modifier = { id ->
+        Modifier.pointerInput(id) {
+            detectDragGesturesAfterLongPress(
+                onDragStart = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    dragId = id; dragMoved = false; dragOffset = androidx.compose.ui.geometry.Offset.Zero
+                    live = projectsNow.map { it.id }
+                },
+                onDrag = { change, amount ->
+                    change.consume()
+                    dragOffset += amount
+                    if (!dragMoved && dragOffset.getDistance() > 12f * density) dragMoved = true
+                    if (dragMoved) hover()
+                },
+                onDragEnd = { endDrag(false) },
+                onDragCancel = { endDrag(true) }
+            )
+        }
     }
     val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) app.importBackup(uri)
@@ -196,6 +299,19 @@ fun ProjectsScreen(app: AppViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
+                    if (selected.isNotEmpty()) {
+                        // спринт 46: режим выделения (долгое нажатие): перенос в папку и удаление нескольких проектов
+                        IconButton(onClick = { selected = emptySet() }) { Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Снять выделение")) }
+                        Text(com.vibetoon.ui.i18n.L("Выбрано: ${selected.size}"), fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1)
+                        TextButton({ selected = selected + shown.map { it.id } }) { Text("Выбрать все", maxLines = 1) }
+                        TextButton({ moving = selected.toList() }) {
+                            Icon(Icons.Default.Folder, null, Modifier.size(18.dp)); Text("В папку", Modifier.padding(start = 4.dp), maxLines = 1)
+                        }
+                        TextButton({ deletingMany = selected.toList() }) {
+                            Icon(Icons.Default.Delete, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
+                            Text("Удалить", Modifier.padding(start = 4.dp), maxLines = 1, color = MaterialTheme.colorScheme.error)
+                        }
+                    } else {
                     Text("Ваши проекты", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = { showNew = true }) { Icon(Icons.Default.Add, com.vibetoon.ui.i18n.L("Создать проект")) }
                     if (searchOn) androidx.compose.material3.OutlinedTextField(
@@ -206,8 +322,9 @@ fun ProjectsScreen(app: AppViewModel) {
                     Box {
                         IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.SwapVert, com.vibetoon.ui.i18n.L("Сортировка")) }
                         DropdownMenu(sortMenu, { sortMenu = false }) {
-                            for ((s, t) in listOf(com.vibetoon.domain.project.ProjectSort.DATE to "По дате", com.vibetoon.domain.project.ProjectSort.NAME to "По имени", com.vibetoon.domain.project.ProjectSort.SIZE to "По размеру"))
-                                DropdownMenuItem(text = { Text((if (sortBy == s) "✓ " else "") + com.vibetoon.ui.i18n.L(t)) }, onClick = { sortBy = s; sortMenu = false })
+                            // спринт 46: дата и размер в обе стороны, имя, свой порядок (перетаскивание карточек)
+                            for (s in com.vibetoon.domain.project.ProjectSort.values())
+                                DropdownMenuItem(text = { Text((if (sortBy == s) "✓ " else "") + com.vibetoon.ui.i18n.L(com.vibetoon.domain.project.ProjectListMath.sortLabel(s))) }, onClick = { app.setSort(s); sortMenu = false })
                         }
                     }
                     IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Download, com.vibetoon.ui.i18n.L("Импорт")) }
@@ -222,17 +339,20 @@ fun ProjectsScreen(app: AppViewModel) {
                     IconButton(onClick = { newFolder = true }) { Icon(Icons.Default.CreateNewFolder, com.vibetoon.ui.i18n.L("Создать папку")) }
                     IconButton(onClick = { article = TUTORIALS.firstOrNull() }) { Icon(Icons.Default.HelpOutline, com.vibetoon.ui.i18n.L("Справка")) }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, com.vibetoon.ui.i18n.L("Настройки")) }
+                    }
                 }
             }
             LazyVerticalGrid(
+                state = grid,
                 columns = GridCells.Adaptive(minSize = 200.dp),
                 contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Явная рекомендация не зависит от фильтра папки или поиска.
-                if (allProjects.any { it.id == starterId }) item(span = { GridItemSpan(maxLineSpan) }) {
+                // Явная рекомендация не зависит от поиска; спринт 46: пока список читается, баннер не прячется
+                val starterShown = starterId != null && (!loaded || allProjects.any { it.id == starterId })
+                if (folder.isEmpty() && starterShown) item(span = { GridItemSpan(maxLineSpan) }, key = "starter") {
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Column(Modifier.weight(1f)) {
@@ -244,38 +364,66 @@ fun ProjectsScreen(app: AppViewModel) {
                     }
                 }
                 // раздел «Обучение»: карточки статей (открываются на весь экран)
-                item(span = { GridItemSpan(maxLineSpan) }) { TutorialRow(onOpen = { article = it }) }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text("Мои работы", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                }
-                if (folderNames.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        androidx.compose.material3.FilterChip(selected = folder.isEmpty(), onClick = { folder = "" }, label = { Text("Все") })
-                        for (f in folderNames) androidx.compose.material3.FilterChip(
-                            selected = folder == f, onClick = { folder = if (folder == f) "" else f },
-                            label = { Text(f, maxLines = 1) },
-                            trailingIcon = if (folder == f) { { Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Удалить папку"), Modifier.size(16.dp).clickable { app.deleteFolder(f); folder = "" }) } } else null
-                        )
+                if (folder.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }, key = "tutorials") { TutorialRow(onOpen = { article = it }) }
+                item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
+                    if (folder.isEmpty()) Text("Мои работы", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    else Row(verticalAlignment = Alignment.CenterVertically) {
+                        // спринт 46: папка открыта отдельной вкладкой: назад, имя, число проектов, удаление папки
+                        IconButton(onClick = { folder = ""; selected = emptySet() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, com.vibetoon.ui.i18n.L("Назад")) }
+                        Text("Мои работы", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), modifier = Modifier.clickable { folder = ""; selected = emptySet() })
+                        Text("  /  ", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        Icon(Icons.Default.Folder, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                        Text(folder, Modifier.padding(start = 4.dp).weight(1f, fill = false), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("  (${projects.size})", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        Box(Modifier.weight(1f))
+                        TextButton({ app.deleteFolder(folder); folder = "" }) { Text("Удалить папку") }
                     }
                 }
-                if (projects.isEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
+                // спринт 46: папки - карточки с превью проектов (как папки iOS); на карточку можно перетащить проект
+                val folderCounts = com.vibetoon.domain.project.ProjectListMath.folderCounts(allProjects)
+                if (folder.isEmpty() && !searching) items(folderNames, key = { FOLDER_KEY + it }) { f ->
+                    FolderCard(
+                        f, folderCounts[f] ?: 0,
+                        com.vibetoon.domain.project.ProjectListMath.folderPreview(allProjects, f, sortBy, sizes, manual),
+                        app, dropTarget = dropFolder == f,
+                        onOpen = { folder = f; selected = emptySet() },
+                        onDelete = { app.deleteFolder(f) },
+                        modifier = Modifier.animateItem()
+                    )
+                }
+                if (!loaded) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "loading") {
+                        androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    }
+                } else if (shown.isEmpty() && (folder.isNotEmpty() || searching || folderNames.isEmpty())) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
                         Text(
-                            "Проектов пока нет. Нажмите «+» сверху, чтобы создать первый.",
+                            when {
+                                searching -> "Ничего не найдено"
+                                folder.isNotEmpty() -> "Папка пуста. Перетащите сюда проект (долгое нажатие и перенос на папку) или выделите проекты и нажмите «В папку»."
+                                else -> "Проектов пока нет. Нажмите «+» сверху, чтобы создать первый."
+                            },
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 14.sp
                         )
                     }
                 }
-                items(projects, key = { it.id }) { p ->
+                items(shown, key = { it.id }) { p ->
+                    val dragging = dragId == p.id
+                    val itemMod = if (dragging) Modifier.zIndex(1f).graphicsLayer {
+                        translationX = dragOffset.x; translationY = dragOffset.y; scaleX = 1.04f; scaleY = 1.04f; alpha = 0.92f
+                    } else Modifier.animateItem()
                     ProjectCard(
                         p, app,
-                        onOpen = { app.open(p.id) },
+                        onOpen = { if (selected.isNotEmpty()) selected = com.vibetoon.domain.project.ProjectListMath.toggle(selected, p.id) else app.open(p.id) },
                         onRename = { renaming = p },
                         onDuplicate = { app.duplicate(p.id) },
                         onDelete = { deleting = p },
-                        onMove = { moving = p },
+                        onMove = { moving = listOf(p.id) },
                         onBackup = { backupFor = p.id; exportLauncher.launch("${p.name}.tsproj") },
-                        sizeText = sizes[p.id]?.let { com.vibetoon.domain.project.ProjectListMath.sizeLabel(it) }
+                        sizeText = sizes[p.id]?.let { com.vibetoon.domain.project.ProjectListMath.sizeLabel(it) },
+                        selected = p.id in selected, selectionMode = selected.isNotEmpty(),
+                        modifier = itemMod, cardModifier = dragHandlers(p.id),
+                        showFolder = searching && folder.isEmpty()
                     )
                 }
             }
@@ -297,7 +445,7 @@ fun ProjectsScreen(app: AppViewModel) {
 
     if (showNew) {
         NewProjectSheet(
-            defaultName = "Новый проект ${projects.size + 1}",
+            defaultName = "Новый проект ${allProjects.size + 1}",
             onDismiss = { showNew = false },
             onCreate = { spec -> showNew = false; app.create(spec) }
         )
@@ -314,18 +462,37 @@ fun ProjectsScreen(app: AppViewModel) {
             dismissButton = { TextButton({ newFolder = false }) { Text("Отмена") } }
         )
     }
-    moving?.let { p ->
+    moving?.let { ids ->
+        // спринт 46: перенос одного или нескольких проектов; новую папку можно создать прямо здесь
+        var fresh by remember(ids) { mutableStateOf("") }
+        val done = { f: String -> app.moveToFolder(ids, f); moving = null; selected = emptySet() }
         AlertDialog(
             onDismissRequest = { moving = null },
-            title = { Text("В папку") },
+            title = { Text(if (ids.size == 1) "В папку" else com.vibetoon.ui.i18n.L("В папку (проектов: ${ids.size})")) },
             text = {
-                Column {
-                    TextButton({ app.moveToFolder(p.id, ""); moving = null }) { Text("Без папки") }
-                    for (f in folderNames) TextButton({ app.moveToFolder(p.id, f); moving = null }) { Text(f) }
-                    if (folderNames.isEmpty()) Text("Папок пока нет: создайте её кнопкой сверху.", fontSize = 12.sp)
+                Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    TextButton({ done("") }) { Text("Без папки") }
+                    for (f in folderNames) TextButton({ done(f) }) { Icon(Icons.Default.Folder, null, Modifier.size(18.dp)); Text(f, Modifier.padding(start = 4.dp)) }
+                    OutlinedTextField(fresh, { fresh = it }, singleLine = true, label = { Text("Новая папка") },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                            val n = com.vibetoon.domain.project.ProjectListMath.cleanFolderName(fresh); if (n.isNotEmpty()) done(n)
+                        }))
                 }
             },
-            confirmButton = { TextButton({ moving = null }) { Text("Отмена") } }
+            confirmButton = {
+                TextButton({ val n = com.vibetoon.domain.project.ProjectListMath.cleanFolderName(fresh); if (n.isNotEmpty()) done(n) }, enabled = fresh.isNotBlank()) { Text("Создать и перенести") }
+            },
+            dismissButton = { TextButton({ moving = null }) { Text("Отмена") } }
+        )
+    }
+    deletingMany?.let { ids ->
+        AlertDialog(
+            onDismissRequest = { deletingMany = null },
+            title = { Text(com.vibetoon.ui.i18n.L("Удалить проекты (${ids.size})?")) },
+            text = { Text("Выбранные проекты и все их файлы будут удалены без возможности восстановления. Сначала сохраните нужные копии .tsproj.") },
+            confirmButton = { TextButton({ app.deleteMany(ids); deletingMany = null; selected = emptySet() }) { Text("Удалить", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton({ deletingMany = null }) { Text("Отмена") } }
         )
     }
     renaming?.let { p ->
@@ -354,21 +521,13 @@ fun ProjectsScreen(app: AppViewModel) {
 private fun ProjectCard(
     p: ProjectMeta, app: AppViewModel,
     onOpen: () -> Unit, onRename: () -> Unit, onDuplicate: () -> Unit, onDelete: () -> Unit,
-    onMove: () -> Unit = {}, onBackup: () -> Unit = {}, sizeText: String? = null
+    onMove: () -> Unit = {}, onBackup: () -> Unit = {}, sizeText: String? = null,
+    selected: Boolean = false, selectionMode: Boolean = false,
+    modifier: Modifier = Modifier, cardModifier: Modifier = Modifier, showFolder: Boolean = false
 ) {
     var menu by remember { mutableStateOf(false) }
     // Декодирование и обращение к диску не должны задерживать открытие списка на UI-потоке.
-    val thumb = androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
-        null, p.id, p.updatedAt, app
-    ) {
-        value = null
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                val f = app.thumbnailFile(p.id)
-                if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
-            }.getOrNull()
-        }
-    }.value
+    val thumb = rememberThumb(app, p)
     // Свайп влево открывает меню действий, карточка возвращается на место
     val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
         if (v == SwipeToDismissBoxValue.EndToStart) menu = true
@@ -376,7 +535,9 @@ private fun ProjectCard(
     })
     SwipeToDismissBox(
         state = swipe,
+        modifier = modifier,
         enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = !selectionMode,
         backgroundContent = {
             Row(
                 Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.secondaryContainer).padding(end = 16.dp),
@@ -389,8 +550,10 @@ private fun ProjectCard(
         }
     ) {
         Card(
-            modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            // спринт 46: долгое нажатие - выделение, долгое нажатие и перенос - порядок или папка (обработчик глубже клика)
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen).then(cardModifier),
+            colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
+            border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
         ) {
             Column {
                 Box(
@@ -402,12 +565,18 @@ private fun ProjectCard(
                     } else {
                         Text("Нет превью", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                     }
+                    if (selectionMode) Icon(
+                        if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        com.vibetoon.ui.i18n.L(if (selected) "Выбран" else "Не выбран"),
+                        Modifier.align(Alignment.TopStart).padding(6.dp).size(26.dp).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), androidx.compose.foundation.shape.CircleShape),
+                        tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
                 }
                 Row(Modifier.padding(start = 10.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(p.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "${ProjectMath.ratioLabel(p.width, p.height)} · ${p.fps} fps · %.1f c".format(ProjectMath.durationSeconds(p.durationFrames, p.fps)) + (sizeText?.let { " · $it" } ?: "") + (if (p.folder.isNotEmpty()) " · ${p.folder}" else ""),
+                            "${ProjectMath.ratioLabel(p.width, p.height)} · ${p.fps} fps · %.1f c".format(ProjectMath.durationSeconds(p.durationFrames, p.fps)) + (sizeText?.let { " · $it" } ?: "") + (if (showFolder && p.folder.isNotEmpty()) " · ${p.folder}" else ""),
                             fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                         )
                     }
@@ -420,6 +589,76 @@ private fun ProjectCard(
                             DropdownMenuItem(text = { Text("Резервная копия .tsproj") }, onClick = { menu = false; onBackup() })
                             DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onDelete() })
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Спринт 46: ключ карточки папки в сетке (id проектов - 8 символов, с префиксом не совпадают). */
+private const val FOLDER_KEY = "folder:"
+
+/** Превью проекта: декодируется на IO, не задерживает список. [sample] - уменьшение (2 - для мини-превью в папке). */
+@Composable
+private fun rememberThumb(app: AppViewModel, p: ProjectMeta, sample: Int = 1): androidx.compose.ui.graphics.ImageBitmap? =
+    androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, p.id, p.updatedAt, app, sample) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val f = app.thumbnailFile(p.id)
+                if (f.exists()) BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap() else null
+            }.getOrNull()
+        }
+    }.value
+
+/**
+ * Спринт 46: карточка папки как папка iOS: превью до 4 проектов сеткой 2×2, имя и число проектов. Тап открывает папку
+ * отдельной вкладкой; на карточку можно перетащить проект (подсветка - [dropTarget]).
+ */
+@Composable
+private fun FolderCard(
+    name: String, count: Int, preview: List<ProjectMeta>, app: AppViewModel, dropTarget: Boolean,
+    onOpen: () -> Unit, onDelete: () -> Unit, modifier: Modifier = Modifier
+) {
+    var menu by remember { mutableStateOf(false) }
+    Card(
+        modifier = modifier.fillMaxWidth().clickable(onClick = onOpen),
+        colors = CardDefaults.cardColors(containerColor = if (dropTarget) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
+        border = if (dropTarget) androidx.compose.foundation.BorderStroke(3.dp, MaterialTheme.colorScheme.primary) else null
+    ) {
+        Column {
+            Column(
+                Modifier.fillMaxWidth().aspectRatio(16f / 9f).padding(8.dp).clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)).padding(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                for (row in 0 until 2) Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (col in 0 until 2) {
+                        val p = preview.getOrNull(row * 2 + col)
+                        Box(
+                            Modifier.weight(1f).fillMaxSize().clip(RoundedCornerShape(6.dp))
+                                .background(if (p != null) MaterialTheme.colorScheme.surface else Color.Transparent),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (p != null) {
+                                val t = rememberThumb(app, p, sample = 2)
+                                if (t != null) Image(t, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            }
+                        }
+                    }
+                }
+            }
+            Row(Modifier.padding(start = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Folder, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                Column(Modifier.weight(1f).padding(start = 6.dp)) {
+                    Text(name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(com.vibetoon.ui.i18n.L("Проектов: $count"), fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                }
+                Box {
+                    IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.MoreVert, com.vibetoon.ui.i18n.L("Действия")) }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(text = { Text("Открыть") }, onClick = { menu = false; onOpen() })
+                        DropdownMenuItem(text = { Text("Удалить папку (проекты останутся)") }, onClick = { menu = false; onDelete() })
                     }
                 }
             }

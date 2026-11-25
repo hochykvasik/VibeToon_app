@@ -38,8 +38,8 @@ class SymbolFormSyncTest {
         for (f in 0 until 80) {
             val local = SymbolForms.frameAt(keys, f, dur, animated = false, loop = false, markers = markers)
             assertEquals("кадр $f: ровно одна форма", 1, visibleForms(local).size)
-            // форма = значение последнего ключа (переход между разными формами - Hold)
-            val expected = keys.last { it.frame <= f }.value
+            // спринт 46: переход ключа действует как у обычных ключей - Hold держит форму, кривые ведут кадр к следующему ключу
+            val expected = SymbolMath.timeAt(keys, f)!!.coerceIn(0, dur - 1)
             assertEquals("кадр $f: форма выбранного ключа", expected, local)
             // панель подсвечивает ту же форму, что видна на холсте
             assertEquals(local, SymbolForms.shownMarker(markers, local)!!.frame)
@@ -51,10 +51,12 @@ class SymbolFormSyncTest {
         val m = listOf(FrameMarker(0, "A"), FrameMarker(10, "B"))
         val keys = listOf(TimeKey(0, 0, TimeEase.LINEAR), TimeKey(8, 8))
         assertEquals(4, SymbolForms.frameAt(keys, 4, 20, animated = true, loop = false, markers = m))
-        // A -> B: резкая смена на кадре ключа, без промежуточных кадров
+        // спринт 46: A -> B с Linear тоже интерполирует (кривые ключей символа работают), Hold - резкая смена на ключе
         val cross = listOf(TimeKey(0, 0, TimeEase.LINEAR), TimeKey(8, 10))
-        for (f in 0..7) assertEquals(0, SymbolForms.frameAt(cross, f, 20, animated = true, loop = false, markers = m))
+        assertEquals(5, SymbolForms.frameAt(cross, 4, 20, animated = true, loop = false, markers = m))
         assertEquals(10, SymbolForms.frameAt(cross, 8, 20, animated = true, loop = false, markers = m))
+        val hold = listOf(TimeKey(0, 0, TimeEase.HOLD), TimeKey(8, 10))
+        for (f in 0..7) assertEquals(0, SymbolForms.frameAt(hold, f, 20, animated = true, loop = false, markers = m))
         // без маркеров - прежняя интерполяция
         assertEquals(5, SymbolForms.frameAt(cross, 4, 20, animated = true, loop = false, markers = emptyList()))
     }

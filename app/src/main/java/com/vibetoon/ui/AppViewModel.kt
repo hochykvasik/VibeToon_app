@@ -63,6 +63,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Короткие сообщения о результате (очистка, импорт, экспорт) для строки-уведомления экрана проектов. */
     val note: kotlinx.coroutines.flow.SharedFlow<String> = _note
 
+    private val _loaded = MutableStateFlow(false)
+    /** Спринт 46: список проектов уже прочитан (до этого экран не показывает «Проектов пока нет» и не прячет баннер). */
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+
+    private val _sort = MutableStateFlow(com.vibetoon.domain.project.ProjectSort.of(prefs.getString("sort", null)))
+    /** Спринт 46: сортировка библиотеки (сохраняется). */
+    val sort: StateFlow<com.vibetoon.domain.project.ProjectSort> = _sort.asStateFlow()
+    private val _order = MutableStateFlow(com.vibetoon.domain.project.ProjectListMath.decodeOrder(prefs.getString("manual_order", null)))
+    /** Спринт 46: свой порядок проектов (перетаскивание карточек), id сверху вниз. */
+    val manualOrder: StateFlow<List<String>> = _order.asStateFlow()
+
     // Спринт 41: init стоит ПОСЛЕ всех полей. Раньше он был выше _sizes/_folders/prefs, и refresh(), успевший
     // завершиться до их инициализации (быстрый диск, Dispatchers.Main.immediate), падал с NPE на _sizes.value.
     init {
@@ -70,11 +81,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    fun setSort(s: com.vibetoon.domain.project.ProjectSort) {
+        _sort.value = s
+        prefs.edit().putString("sort", s.name).apply()
+    }
+
+    /**
+     * Перетаскивание карточек: [visible] - новый порядок проектов этого вида (папки или корня). Остальные проекты
+     * сохраняют места; сортировка становится «Свой порядок».
+     */
+    fun reorder(visible: List<String>) {
+        val base = _order.value.ifEmpty {
+            com.vibetoon.domain.project.ProjectListMath.sort(_projects.value, _sort.value, _sizes.value).map { it.id }
+        }
+        val next = com.vibetoon.domain.project.ProjectListMath.mergeOrder(base, visible)
+        _order.value = next
+        prefs.edit().putString("manual_order", com.vibetoon.domain.project.ProjectListMath.encodeOrder(next)).apply()
+        if (_sort.value != com.vibetoon.domain.project.ProjectSort.MANUAL) setSort(com.vibetoon.domain.project.ProjectSort.MANUAL)
+    }
+
     fun refresh() {
         viewModelScope.launch {
-            val (list, sz) = withContext(Dispatchers.IO) { val l = repo.list(); l to l.associate { it.id to repo.sizeOf(it.id) } }
+            // спринт 46: список публикуется сразу, размеры (обход папок) - следом; прежний список не сбрасывается
+            val list = withContext(Dispatchers.IO) { repo.list() }
             _projects.value = list
-            _sizes.value = sz
+            _loaded.value = true
+            val alive = list.mapTo(HashSet()) { it.id }
+            if (_order.value.any { it !in alive }) {
+                _order.value = com.vibetoon.domain.project.ProjectListMath.pruneOrder(_order.value, alive)
+                prefs.edit().putString("manual_order", com.vibetoon.domain.project.ProjectListMath.encodeOrder(_order.value)).apply()
+            }
+            _sizes.value = withContext(Dispatchers.IO) { list.associate { it.id to repo.sizeOf(it.id) } }
         }
     }
 
@@ -94,8 +131,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun moveToFolder(id: String, folder: String) {
-        viewModelScope.launch { withContext(Dispatchers.IO) { repo.moveToFolder(id, folder) }; refresh() }
+    fun moveToFolder(id: String, folder: String) = moveToFolder(listOf(id), folder)
+
+    /** Спринт 46: несколько проектов в папку (выделение долгим нажатием или перетаскивание на карточку папки). */
+    fun moveToFolder(ids: Collection<String>, folder: String) {
+        if (ids.isEmpty()) return
+        if (folder.isNotBlank() && folder !in _folders.value) addFolder(folder)
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { ids.forEach { repo.moveToFolder(it, folder) } }
+            refresh()
+            _note.tryEmit(if (folder.isBlank()) "Проектов перенесено из папки: ${ids.size}" else "Проектов перенесено в «$folder»: ${ids.size}")
+        }
+    }
+
+    /** Спринт 46: удаление выделенных проектов (после подтверждения на экране). */
+    fun deleteMany(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { ids.forEach { repo.delete(it) } }
+            refresh()
+            _note.tryEmit("Удалено проектов: ${ids.size}")
+        }
     }
 
     /** Очистка кэша (волны звука, временные файлы) и осиротевших ассетов всех проектов. */

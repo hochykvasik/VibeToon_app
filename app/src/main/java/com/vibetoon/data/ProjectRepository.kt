@@ -36,14 +36,23 @@ class ProjectRepository(context: Context) {
     /** Папка assets проекта (библиотека ассетов). */
     fun mediaDir(id: String): File = File(dir(id), "assets").also { it.mkdirs() }
 
-    /** Все проекты, новые правки сверху. Повреждённые проекты пропускаются. */
+    /**
+     * Все проекты, новые правки сверху. Повреждённые проекты пропускаются.
+     * Спринт 46: заголовок проекта кэшируется по времени изменения и размеру project.json - повторный вход на экран
+     * проектов не разбирает заново JSON всех проектов (раньше список и баннер урока пропадали на несколько секунд).
+     */
     fun list(): List<ProjectMeta> =
         (root.listFiles { f -> f.isDirectory }.orEmpty()).mapNotNull { d ->
             val f = File(d, "project.json")
             if (!f.exists()) return@mapNotNull null
+            val stamp = f.lastModified() to f.length()
+            metaCache[d.name]?.takeIf { it.first == stamp }?.let { return@mapNotNull it.second }
             ProjectJson.decode(f.readText()).onFailure { Log.w(TAG, "skip ${d.name}: ${it.message}") }
-                .getOrNull()?.meta
+                .getOrNull()?.meta?.also { metaCache[d.name] = stamp to it }
         }.sortedByDescending { it.updatedAt }
+
+    /** Спринт 46: id папки проекта -> (время изменения и размер project.json, заголовок). */
+    private val metaCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Pair<Long, Long>, ProjectMeta>>()
 
     fun load(id: String): Result<ProjectData> = runCatching {
         val f = jsonFile(id)
@@ -141,6 +150,7 @@ class ProjectRepository(context: Context) {
 
     fun delete(id: String) {
         dir(id).deleteRecursively()
+        metaCache.remove(id)
     }
 
     /** Размер проекта на диске, байты. */

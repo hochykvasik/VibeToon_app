@@ -441,6 +441,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Ручная трансформация слоёв БЕЗ анимации (если у слоя есть трек, она игнорируется). */
     private val base = HashMap<Int, LayerTransform>()
+    /** Спринт 46: дорожки вершин сеток на кадре (жест на одном слое не пересчитывает дорожки всех сеток). Главный поток. */
+    private val meshTrackCache = com.vibetoon.domain.anim.MeshTrackCache()
     /** Временная правка слоя с треком на кадре без ключа; живёт до смены кадра или Add Key. */
     private val override = HashMap<Int, LayerTransform>()
 
@@ -2074,7 +2076,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Мир слоя-пути: точка пути (координаты холста без трансформации) -> холст с трансформацией слоя. */
     private fun pathWorld(m: MediaItem): Affine2D? {
-        val q = scene?.selectionQuads?.get(m.id) ?: return null
+        val q = texQuad(m.id) ?: return null
         return com.vibetoon.domain.anim.PathLayerMath.quadMap(q, m.x.roundToInt().toFloat(), m.y.roundToInt().toFloat(),
             m.w.roundToInt().coerceAtLeast(1).toFloat(), m.h.roundToInt().coerceAtLeast(1).toFloat())
     }
@@ -3056,10 +3058,68 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (_editingSymbol.value != null && _markerSel.value.isNotEmpty()) "Выделенные формы ещё не выбраны ни одним ключом времени: выберите маркер в панели символа на сцене"
                 else "В выделении нет ключей: выделите ключи рамкой (кнопка выделения на таймлайне)"); return
         }
-        if (targets.isEmpty()) { _timeEaseDialog.value = true; return }   // только ключи времени символа: общий переход
+        if (targets.isEmpty()) { _timeEaseDialog.value = true; return }   // только ключи времени символа: пресеты и «График…»
         selectedCurveTargets = targets
+        // спринт 46: ключи времени символа в том же выделении получают ту же кривую (как любые ключи)
+        selectedTimeTargets = timeTargets.ifEmpty { null }
         _curveEditor.value = true
-        if (timeTargets.isNotEmpty()) _state.value = UiState.Message("Кривая - для ключей слоёв; переход ключей времени символа задаётся кнопками «Переход»")
+    }
+
+    /** Спринт 46: ключи времени, которые правит открытый редактор кривой (вместе с ключами слоёв или одни). */
+    private var selectedTimeTargets: Map<Int, Set<Int>>? = null
+
+    /**
+     * Ключи времени для кривой: выделенные ромбы символов (или ключи выделенных форм открытого символа), иначе ключ
+     * выбранного экземпляра на кадре плейхеда или перед ним (переход к следующему ключу).
+     */
+    private fun timeCurveTargets(instId: Int? = null): Map<Int, Set<Int>> {
+        selectedTimeKeyTargets().let { if (it.isNotEmpty() && (instId == null || instId in it)) return if (instId == null) it else mapOf(instId to it.getValue(instId)) }
+        val id = instId ?: _selected.value ?: return emptyMap()
+        val inst = media.firstOrNull { it.id == id && it.kind == MediaKind.SYMBOL } ?: return emptyMap()
+        val k = inst.timeKeys.filter { it.frame <= _frame.value }.maxByOrNull { it.frame } ?: return emptyMap()
+        return mapOf(id to setOf(k.frame))
+    }
+
+    /** Спринт 46: «График…» для ключей времени символа - тот же редактор f(x), что у обычных ключей. */
+    fun openTimeKeysCurveEditor(instId: Int? = null) {
+        _timeEaseDialog.value = false
+        if (_playing.value) return
+        val t = timeCurveTargets(instId)
+        if (t.isEmpty()) { _state.value = UiState.Message("На этом кадре нет ключа времени: сначала выберите маркер"); return }
+        if (t.keys.any { isLockedId(it) }) { lockedNotice(); return }
+        selectedCurveTargets = emptyList()
+        selectedTimeTargets = t
+        val n = t.values.sumOf { it.size }
+        _curveTitle.value = com.vibetoon.domain.anim.TimeKeyCurves.title(n)
+        _curveNote.value = com.vibetoon.domain.anim.TimeKeyCurves.NOTE
+        _curveEditor.value = true
+    }
+
+    /** Спринт 46: пресет плавности (те же кнопки, что у обычных ключей) ключам времени: выделенным или ключу на плейхеде. */
+    fun setTimeKeysEasing(instId: Int?, type: EasingType) {
+        if (_playing.value) return
+        val t = timeCurveTargets(instId)
+        if (t.isEmpty()) { _state.value = UiState.Message("На этом кадре нет ключа времени: сначала выберите маркер"); return }
+        if (t.keys.any { isLockedId(it) }) { lockedNotice(); return }
+        applyTimeKeys(t, "timeease") { keys, frames -> TimelineItemOps.withEase(keys, frames, TimeEase.fromEasing(type)) }
+        _state.value = UiState.Message("Переход: ${timeEaseName(TimeEase.fromEasing(type))} (ключей: ${t.values.sumOf { it.size }})")
+    }
+
+    /** Состояние кривой ключей времени для панели свойств выбранного экземпляра; null - ключа нет. */
+    fun timeKeysCurveInfo(instId: Int): com.vibetoon.domain.anim.TimeKeyCurves.Info? {
+        val t = timeCurveTargets(instId)[instId] ?: return null
+        val keys = media.firstOrNull { it.id == instId }?.timeKeys?.filter { it.frame in t } ?: return null
+        return com.vibetoon.domain.anim.TimeKeyCurves.info(keys)
+    }
+
+    /** Ключи времени [t] через [change] одной записью Undo ([undoKey] null - без новой точки, жест редактора). */
+    private fun applyTimeKeys(t: Map<Int, Set<Int>>, undoKey: String?, force: Boolean = true, change: (List<TimeKey>, Set<Int>) -> List<TimeKey>) {
+        if (undoKey != null) checkpoint(undoKey, force = force)
+        for ((inst, frames) in t) {
+            val i = media.indexOfFirst { it.id == inst && it.kind == MediaKind.SYMBOL }
+            if (i >= 0) media[i] = media[i].copy(timeKeys = change(media[i].timeKeys, frames))
+        }
+        refreshSymbolState(); markDirty(); updateSymbols(_frame.value)
     }
 
     fun closeTimeEaseDialog() { _timeEaseDialog.value = false }
@@ -3135,6 +3195,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openCurveEditor(on: Boolean) {
         selectedCurveTargets = null
+        selectedTimeTargets = null
         _curveTitle.value = "Кривая плавности"; _curveNote.value = null
         // спринт 44: на таймлайне выбран один ромб - f(x) правит именно его, а не все ключи выделенного на кадре плейхеда
         if (on && _keySel.value.size == 1 && singleKey() != null) { openSingleKeyCurve(); return }
@@ -3147,6 +3208,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Текущая кривая первого ключа или кривая его пресета плавности. */
     fun currentCurve(): com.vibetoon.domain.anim.Curve {
+        // спринт 46: редактор открыт только для ключей времени - кривая первого из них
+        if (selectedCurveTargets?.isEmpty() == true) selectedTimeTargets?.entries?.firstOrNull()?.let { (inst, frames) ->
+            media.firstOrNull { it.id == inst }?.timeKeys?.filter { it.frame in frames }?.minByOrNull { it.frame }?.let { return TimeEase.curveOf(it) }
+        }
         val target = selectedCurveTargets?.firstOrNull() ?: curveTargets().firstOrNull()?.let { it to _frame.value }
             ?: return com.vibetoon.domain.anim.Curve.LINEAR
         val k = _animation.value.tracks[target.first]?.keyAt(target.second) ?: return com.vibetoon.domain.anim.Curve.LINEAR
@@ -3163,6 +3228,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (chosen != null) a = com.vibetoon.domain.anim.SelectedKeyCurves.apply(a, chosen, data)
         else for (id in curveTargets()) a = a.withCurve(id, _frame.value, data)
         _animation.value = a
+        // спринт 46: ключи времени символа - та же кривая (внутренний кадр идёт по ней к следующему ключу)
+        selectedTimeTargets?.let { t -> applyTimeKeys(t, null) { keys, frames -> TimelineItemOps.withCurve(keys, frames, data) } }
         pushScene()
         markDirty()
     }
@@ -3298,8 +3365,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxLayers, _animation.value, _frame.value),
             layerMasks = options.layerMasks, maskSources = options.maskSources,
             pathPlaces = options.pathPlaces { lid -> effective(com.vibetoon.domain.anim.PathLayerMath.progressId(lid)).dx },
-            deformCache = deformCache)
+            deformCache = deformCache, crops = cropTable())
     }
+
+    /** Спринт 46: обрезка слоёв для сцены (и черновик рамки вкладки «Обрезка» - предпросмотр до «Применить»). */
+    private fun cropTable(): Map<Int, com.vibetoon.domain.model.LayerCrop> =
+        com.vibetoon.domain.render.CropGeometry.table(layerProps, _cropDraft.value)
+
+    /** Спринт 46: рамка КАРТИНКИ слоя на холсте (у обрезанного - полная, видимая часть - selectionQuads): кисть, лассо, векторы. */
+    private fun texQuad(id: Int): FloatArray? = scene?.texQuad(id)
 
     private fun pushScene() {
         refreshGridView()
@@ -3313,8 +3387,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val sc = applySymbolContext(sc0)   // пакет 22: главная сцена вокруг открытого символа
         // формы символов едут вместе со сценой: на любом кадре экземпляр показывает форму именно этого кадра
         if (projectId != null && !appBackground) sc.aliases = buildAliases(_frame.value)
-        // спринт 45: обрезка слоёв (и черновик рамки вкладки «Обрезка» - предпросмотр до «Применить»)
-        com.vibetoon.domain.model.LayerCrop.scene(layerProps, _cropDraft.value).let { (ids, rects) -> sc.cropIds = ids; sc.cropRects = rects }
+        // спринт 45/46: обрезка слоёв уже в сцене (SceneBuilder: геометрия и таблица cropIds из одной рамки)
         scene = sc
         RenderHost.view?.setScene(sc)
         // Во время Play панели (инспектор, эффекты, турбулентность) не пересчитываются каждый кадр: их перерисовка в Compose
@@ -4267,9 +4340,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun needsAllFrames(inst: MediaItem, def: MediaItem): Boolean =
         (inst.timeKeys.isEmpty() && SymbolPlayback.needsAllFrames(symbolPlaybackOf(inst), false, symbolCycles(def.id))) ||
             inst.timeKeys.sortedBy { it.frame }.zipWithNext().any { (a, b) ->
-                // переход между разными формами - Hold (SymbolForms.frameAt): промежуточные кадры не нужны
-                a.ease != TimeEase.HOLD && a.value != b.value &&
-                    (def.markers.none { !it.isAlias } || SymbolForms.formStart(def.markers, a.value) == SymbolForms.formStart(def.markers, b.value))
+                // спринт 46: кривая перехода действует и между разными формами - нужны промежуточные кадры символа
+                a.ease != TimeEase.HOLD && a.value != b.value
             }
 
     private fun computeSymbolDuration(gid: Int): Int {
@@ -4997,7 +5069,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun timeKeyEaseAt(instId: Int, frame: Int): Int? = media.firstOrNull { it.id == instId }?.timeKeys?.lastOrNull { it.frame <= frame }?.ease
     fun timeEaseName(e: Int): String = when (e) {
-        TimeEase.LINEAR -> "Линейно"; TimeEase.SMOOTH -> "Плавно"; TimeEase.EASE_IN -> "Плавное начало"; TimeEase.EASE_OUT -> "Плавный конец"; else -> "Hold (резко)"
+        TimeEase.LINEAR -> "Линейно"; TimeEase.SMOOTH -> "Плавно"; TimeEase.EASE_IN -> "Плавное начало"; TimeEase.EASE_OUT -> "Плавный конец"
+        TimeEase.CUSTOM -> "Своя кривая"; else -> "Hold (резко)"
     }
 
     // ---- маркеры кадров открытого символа как ключи: выделение, сдвиг, копия/вставка, дубликат, зеркало, удаление
@@ -6824,7 +6897,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         swallowTap = false
         if (_playing.value) return false
         val tg = liqTarget() ?: run { _state.value = UiState.Message("Liquify: выберите один слой (картинка или слой PSD)"); return false }
-        val q = scene?.selectionQuads?.get(tg.id) ?: return false
+        val q = texQuad(tg.id) ?: return false
         if (!liqPrepare(tg)) return false
         val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         liqLast = p
@@ -6838,7 +6911,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun liquifyMove(sx: Float, sy: Float) {
-        val q = scene?.selectionQuads?.get(liqLayer) ?: return
+        val q = texQuad(liqLayer) ?: return
         val last = liqLast ?: return
         val p = unitOf(q, toCanvas(sx, sy)) ?: return
         // длина стороны слоя на экране -> радиус кисти в пикселях картинки
@@ -7025,7 +7098,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val points = assistPoints ?: return null
         val q = assistQuad ?: return null
         val params = assistParams ?: return null
-        if (scene?.selectionQuads?.get(layer)?.contentEquals(q) != true || paintTargetId() != layer ||
+        if (texQuad(layer)?.contentEquals(q) != true || paintTargetId() != layer ||
             camera != assistCamera || viewW != assistViewW || viewH != assistViewH) return null
         val density = getApplication<Application>().resources.displayMetrics.density
         val held = SystemClock.uptimeMillis() - assistLastMove
@@ -7444,7 +7517,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (stroker != null || vecLayer >= 0 || !paintToolActive()) return
         val id = paintTargetId() ?: run { clearPaintHover(); return }
         val size = paintSizes[id] ?: run { requestPaintSize(id); clearPaintHover(); return }
-        val q = scene?.selectionQuads?.get(id) ?: run { clearPaintHover(); return }
+        val q = texQuad(id) ?: run { clearPaintHover(); return }
         val unit = unitOf(q, toCanvas(sx, sy)) ?: run { clearPaintHover(); return }
         if (unit.first !in 0f..1f || unit.second !in 0f..1f) { clearPaintHover(); return }
         val ex = toScreen(q[2], q[3]).first - toScreen(q[0], q[1]).first; val ey = toScreen(q[2], q[3]).second - toScreen(q[0], q[1]).second
@@ -7489,7 +7562,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = UiState.Message("Градиент недоступен для деформированного слоя или текстуры больше 4 Мп")
             return false
         }
-        val q = scene?.selectionQuads?.get(id) ?: return false
+        val q = texQuad(id) ?: return false
         val view = RenderHost.view ?: return false
         val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         val params = tiltParams(paintParams())   // спринт 40: плоское перо сплющивает штамп по наклону
@@ -7550,7 +7623,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (vecLayer >= 0) { vectorMove(sx, sy, pressure); return }
         val st = stroker ?: return
         applyTilt(st)
-        val q = scene?.selectionQuads?.get(strokeLayer) ?: return
+        val q = texQuad(strokeLayer) ?: return
         val p = unitOf(q, toCanvas(sx, sy)) ?: return
         if (rulerQuad != null) {
             val g = _rulerGuide.value
@@ -7578,7 +7651,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (rulerQuad != null) {
             val q = rulerQuad!!; val guide = _rulerGuide.value; val params = rulerParams
             val valid = guide.size == 4 && params != null && view != null && paintTargetId() == layer &&
-                camera == rulerCamera && viewW == rulerViewW && viewH == rulerViewH && scene?.selectionQuads?.get(layer)?.contentEquals(q) == true
+                camera == rulerCamera && viewW == rulerViewW && viewH == rulerViewH && texQuad(layer)?.contentEquals(q) == true
             if (_gradientMode.value) {
                 if (!valid || guide.any { !it.isFinite() } || kotlin.math.hypot(guide[2] - guide[0], guide[3] - guide[1]) < 2f) { paintCancel(); return }
                 val screenQuad = FloatArray(8) { index -> if (index % 2 == 0) toScreen(q[index], q[index + 1]).first else toScreen(q[index - 1], q[index]).second }
@@ -8079,7 +8152,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun vectorDown(id: Int, sx: Float, sy: Float, pressure: Float = 1f): Boolean {
-        val q = scene?.selectionQuads?.get(id) ?: return false
+        val q = texQuad(id) ?: return false
         val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         vecLayer = id
         vecPts.clear(); vecPts += p.first * canvasW; vecPts += p.second * canvasH
@@ -8089,7 +8162,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun vectorMove(sx: Float, sy: Float, pressure: Float = 1f) {
-        val q = scene?.selectionQuads?.get(vecLayer) ?: return
+        val q = texQuad(vecLayer) ?: return
         val p = unitOf(q, toCanvas(sx, sy)) ?: return
         vecPts += p.first * canvasW; vecPts += p.second * canvasH
         vecPressures += pressure * tiltSizeFactor()
@@ -8413,7 +8486,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Точка экрана -> пиксель слоя [id] (учитывает поворот, масштаб и положение слоя). */
     private fun layerPoint(id: Int, sx: Float, sy: Float): Pair<Float, Float>? {
         val size = paintSizes[id] ?: return null
-        val q = scene?.selectionQuads?.get(id) ?: return null
+        val q = texQuad(id) ?: return null
         val p = unitOf(q, toCanvas(sx, sy)) ?: return null
         return p.first * size[0] to p.second * size[1]
     }
@@ -8531,7 +8604,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun pendingLassoValid(id: Int): Boolean = _pendingLasso.value && id == selDragId &&
         _frame.value == pendingFrame && manualLassoClose() && _selMode.value == SelMode.LASSO &&
-        pendingQuad?.contentEquals(scene?.selectionQuads?.get(id)) == true
+        pendingQuad?.contentEquals(texQuad(id)) == true
 
     private fun finishPendingLasso() {
         if (!pendingLassoValid(selDragId)) { cancelPendingLasso(); return }
@@ -8635,7 +8708,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 com.vibetoon.domain.raster.LassoClosure.Result.OPEN -> {
                     if (selPts.size >= 20_000) { cancelPendingLasso(); selPts.clear(); selLayerPts.clear(); _toolDrag.value = null; _state.value = UiState.Message("Контур слишком длинный; начните заново"); return }
                     _pendingLasso.value = true
-                    pendingQuad = scene?.selectionQuads?.get(id)?.copyOf()
+                    pendingQuad = texQuad(id)?.copyOf()
                     pendingFrame = _frame.value
                     _toolDrag.value = ToolDrag(5, screen)
                     _state.value = UiState.Message("Продолжите от конца контура или коснитесь начала; отмена — в панели инструмента")
@@ -8742,7 +8815,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!src.file.endsWith(".png", ignoreCase = true) || !safeSelectionSource(src, separating = false)) return false
         val a = layerPoint(s.id, ax, ay) ?: return false; val b = layerPoint(s.id, bx, by) ?: return false
         if (kotlin.math.hypot(a.first - b.first, a.second - b.second) < 4f) return false
-        val q = scene?.selectionQuads?.get(s.id)?.copyOf() ?: return false
+        val q = texQuad(s.id)?.copyOf() ?: return false
         selectionGestureStart = SelectionGestureStart(s, com.vibetoon.domain.raster.FreeSelectionTransform.Point(a.first, a.second),
             com.vibetoon.domain.raster.FreeSelectionTransform.Point(b.first, b.second), q, camera, _frame.value, viewW, viewH)
         selShiftX = 0f; selShiftY = 0f; refreshSelOverlay(); rasterMode = 0
@@ -8753,7 +8826,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         selectionGestureStart = null
         val s = start.selection
         if (cancel || sel !== s || camera != start.camera || _frame.value != start.frame || viewW != start.viewW || viewH != start.viewH ||
-            scene?.selectionQuads?.get(s.id)?.contentEquals(start.quad) != true) return
+            texQuad(s.id)?.contentEquals(start.quad) != true) return
         val a = layerPoint(s.id, ax, ay) ?: return; val b = layerPoint(s.id, bx, by) ?: return
         val gesture = com.vibetoon.domain.raster.FreeSelectionTransform.Gesture(start.a, start.b,
             com.vibetoon.domain.raster.FreeSelectionTransform.Point(a.first, a.second), com.vibetoon.domain.raster.FreeSelectionTransform.Point(b.first, b.second))
@@ -9036,9 +9109,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val frame = _frame.value
         val sourceTransform = base[s.id] ?: LayerTransform()
         val sourceParent = layers.firstOrNull { it.id == s.id }?.parentId ?: return
-        val sourceQuad = scene?.selectionQuads?.get(s.id)?.copyOf()
+        val sourceQuad = texQuad(s.id)?.copyOf()
         fun sourceUnchanged(): Boolean = layers.firstOrNull { it.id == s.id }?.parentId == sourceParent &&
-            sourceQuad != null && sourceQuad.contentEquals(scene?.selectionQuads?.get(s.id))
+            sourceQuad != null && sourceQuad.contentEquals(texQuad(s.id))
         val src = media.firstOrNull { it.id == s.id }
         if (src == null || !src.file.endsWith(".png", ignoreCase = true) || !safeSelectionSource(src) || _selected.value != s.id || _selection.value.size != 1) {
             _state.value = UiState.Message(if (src != null && !src.file.endsWith(".png", ignoreCase = true))
@@ -9282,7 +9355,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun vecNodeAt(id: Int, sx: Float, sy: Float): Pair<Int, Int>? {
         val m = media.firstOrNull { it.id == id } ?: return null
-        val q = scene?.selectionQuads?.get(id) ?: return null
+        val q = texQuad(id) ?: return null
         var best: Pair<Int, Int>? = null
         var bestD = 34f
         for ((i, s) in m.vectors.withIndex()) for (k in 0 until s.pts.size / 2) {
@@ -9299,7 +9372,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = media.firstOrNull { it.id == id } ?: return null
         val s = m.vectors.getOrNull(nodeShape) ?: return null
         if (!com.vibetoon.domain.vector.VectorBezier.hasHandles(s)) return null
-        val q = scene?.selectionQuads?.get(id) ?: return null
+        val q = texQuad(id) ?: return null
         var best: Pair<Int, Int>? = null
         var bestD = 34f
         for (k in 0 until s.pts.size / 2) {
@@ -9315,7 +9388,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun vecNodeDist(id: Int, hit: Pair<Int, Int>, sx: Float, sy: Float): Float {
-        val q = scene?.selectionQuads?.get(id) ?: return Float.MAX_VALUE
+        val q = texQuad(id) ?: return Float.MAX_VALUE
         val s = media.firstOrNull { it.id == id }?.vectors?.getOrNull(hit.first) ?: return Float.MAX_VALUE
         val (px, py) = canvasToScreen(q, s.pts[hit.second * 2], s.pts[hit.second * 2 + 1])
         return kotlin.math.hypot(sx - px, sy - py)
@@ -9345,7 +9418,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val draft = nodeDraft ?: return
         val shape = draft.getOrNull(nodeShape) ?: return
         if (nodePt !in 0 until shape.pts.size / 2) return
-        val q = scene?.selectionQuads?.get(original.id) ?: return
+        val q = texQuad(original.id) ?: return
         val p = unitOf(q, toCanvas(sx, sy)) ?: return
         nodeDraft = (if (nodeHandle >= 0) com.vibetoon.domain.vector.VectorBezier.moveHandle(draft, nodeShape, nodePt, nodeHandle, p.first * canvasW, p.second * canvasH)
             else com.vibetoon.domain.vector.VectorMath.moveNode(draft, nodeShape, nodePt, p.first * canvasW, p.second * canvasH)) ?: return
@@ -9586,7 +9659,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun vecBoxCanvas(id: Int, sx: Float, sy: Float): com.vibetoon.domain.raster.TransformBox.P? {
-        val q = scene?.selectionQuads?.get(id) ?: return null
+        val q = texQuad(id) ?: return null
         val p = unitOf(q, toCanvas(sx, sy)) ?: return null
         return com.vibetoon.domain.raster.TransformBox.P(p.first.toDouble() * canvasW, p.second.toDouble() * canvasH)
     }
@@ -9616,7 +9689,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val box = vecBox
         if (box == null) { if (_vecTransform.value != null) _vecTransform.value = null; return }
         if (_rasterTool.value != RasterTool.PATH || selectedVectorId() != vecBoxLayer) { cancelVectorTransform(); return }
-        val q = scene?.selectionQuads?.get(vecBoxLayer) ?: run { cancelVectorTransform(); return }
+        val q = texQuad(vecBoxLayer) ?: run { cancelVectorTransform(); return }
         _vecTransform.value = FloatArray(10).also { out ->
             (box.corners + box.pivot).forEachIndexed { i, pt ->
                 val sc = canvasToScreen(q, pt.x.toFloat(), pt.y.toFloat()); out[i * 2] = sc.first; out[i * 2 + 1] = sc.second
@@ -9702,7 +9775,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return false
         }
         if (isLockedId(id)) { lockedNotice(); return false }
-        val q = scene?.selectionQuads?.get(id) ?: return false
+        val q = texQuad(id) ?: return false
         val p = unitOf(q, toCanvas(sx, sy)) ?: return false
         swallowTap = true
         val cx = p.first * canvasW; val cy = p.second * canvasH
@@ -9724,7 +9797,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Пакет 20: протяжка после постановки точки - выход ручки по пальцу, вход зеркально (короткая протяжка - без ручек). */
     private fun penDragMove(sx: Float, sy: Float) {
         val id = selectedVectorId() ?: return
-        val q = scene?.selectionQuads?.get(id) ?: return
+        val q = texQuad(id) ?: return
         val p = unitOf(q, toCanvas(sx, sy)) ?: return
         val k = penPts.size / 2 - 1
         if (k < 0) return
@@ -9767,7 +9840,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun refreshPenOverlay() {
         val id = selectedVectorId()
-        val q = if (id != null) scene?.selectionQuads?.get(id) else null
+        val q = if (id != null) texQuad(id) else null
         if (q != null && penPts.isEmpty() && _rasterTool.value == RasterTool.PATH && id != null) {
             // нет контура в работе: показываем узлы готовых примитивов, выбранный подсвечен
             val m = media.firstOrNull { it.id == id }
@@ -9840,7 +9913,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Смещения вершин слоя с учётом ручных правок вершин и пинов на кадре. */
     private fun fullMeshOffsets(id: Int, m: Mesh, frame: Int, fx: Boolean): FloatArray {
-        val v = brushLive?.takeIf { it.first == id && it.second.size == m.count * 2 }?.second ?: MeshMath.offsets(id, m, frame, base, _animation.value, fx)
+        val v = brushLive?.takeIf { it.first == id && it.second.size == m.count * 2 }?.second ?: MeshMath.offsets(id, m, frame, base, _animation.value, fx, meshTrackCache)
         val pins = pinLayers[id] ?: return v
         val (w, h) = layerSize(id) ?: return v
         val poff = PuppetMath.offsets(id, pins.size, frame, base, _animation.value, fx)
@@ -10155,7 +10228,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (b == null) { contentBoxScheduled(id); return q }
         if (b.isEmpty()) return null
         if (b.size < 4) return q
-        return com.vibetoon.domain.raster.RasterMath.subQuad(q, b)
+        // спринт 46: у обрезанного слоя - содержимое в пределах видимой рамки (границы - в долях картинки)
+        val crop = com.vibetoon.domain.model.LayerCrop.of(layerProps[id]?.crop)
+        if (crop == null) return com.vibetoon.domain.raster.RasterMath.subQuad(q, b)
+        val vb = com.vibetoon.domain.render.CropGeometry.visibleBox(b, crop)
+        if (vb.isEmpty()) return null
+        val tq = texQuad(id) ?: return q
+        return com.vibetoon.domain.raster.RasterMath.subQuad(tq, vb)
     }
 
     // ---------------------------------------------------------------- эффекты слоёв (FBO-цепочка)
@@ -10563,8 +10642,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var swallowTap = false
     private var meshActive = -1
 
-    private fun meshesNow(): Map<Int, Pair<Mesh, FloatArray>> =
-        meshLayers.mapValues { (id, m) -> m to fullMeshOffsets(id, m, _frame.value, _fx.value) }
+    private fun meshesNow(): Map<Int, Pair<Mesh, FloatArray>> {
+        if (meshTrackCache.size() > meshLayers.size) meshTrackCache.retain(meshLayers.keys)
+        return meshLayers.mapValues { (id, m) -> m to fullMeshOffsets(id, m, _frame.value, _fx.value) }
+    }
 
     /** Сетка удалённых слоёв: вершины, форма привязки и ключи. */
     private fun dropMeshData(layerIds: Set<Int>) {
@@ -10861,7 +10942,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val (pu, pv) = meshLast ?: return
         meshLast = u to v
         _brushCircle.value = floatArrayOf(sx, sy, _brushRadius.value)
-        val w = l.width.toFloat(); val h = l.height.toFloat()
+        // спринт 46: сетка обрезанного слоя лежит на видимой части - радиус в её пикселях
+        val crop = com.vibetoon.domain.model.LayerCrop.of(layerProps[t]?.crop)
+        val w = l.width * (crop?.let { it.r - it.l } ?: 1f); val h = l.height * (crop?.let { it.b - it.t } ?: 1f)
         val (ru, rv) = unitOf(q, toCanvas(sx + _brushRadius.value, sy)) ?: return
         val radiusPx = kotlin.math.hypot((ru - u) * w, (rv - v) * h)
         val live = brushLive?.takeIf { it.first == t && it.second.size == m.count * 2 }
@@ -10892,12 +10975,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun generateMeshContour() {
         val l = meshTargetLayer() ?: run { _state.value = UiState.Message("Выберите один слой"); return }
         val view = RenderHost.view ?: return
-        view.layerAlpha(l.id) { bytes ->
+        view.layerAlpha(l.id) { bytes0 ->
             viewModelScope.launch {
+                // спринт 46: у обрезанного слоя сетка строится по видимой части (квадрат слоя = рамка обрезки)
+                val crop = com.vibetoon.domain.model.LayerCrop.of(layerProps[l.id]?.crop)
+                val bytes = if (bytes0 == null) null else com.vibetoon.domain.render.CropGeometry.cropAlphaMap(bytes0, crop)
                 if (bytes == null || bytes.size < 9) { generateMesh(); return@launch }
                 fun i32(o: Int) = (bytes[o].toInt() and 0xFF) or ((bytes[o + 1].toInt() and 0xFF) shl 8) or ((bytes[o + 2].toInt() and 0xFF) shl 16) or ((bytes[o + 3].toInt() and 0xFF) shl 24)
                 val aw = i32(0); val ah = i32(4)
-                val mesh = MeshMath.fromContourAuto(l.width, l.height, bytes.copyOfRange(8, bytes.size), aw, ah, _meshHigh.value)
+                val (lw, lh) = crop?.pixelSize(l.width, l.height) ?: (l.width to l.height)
+                val mesh = MeshMath.fromContourAuto(lw, lh, bytes.copyOfRange(8, bytes.size), aw, ah, _meshHigh.value)
                 if (mesh == null) { _state.value = UiState.Message("Слой полностью прозрачен"); return@launch }
                 checkpoint("mesh-gen-contour", force = true)
                 meshLayers[l.id]?.let { old -> clearMeshOffsets(MeshMath.ids(l.id, old)) }
@@ -10915,12 +11002,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val l = meshTargetLayer() ?: run { _state.value = UiState.Message("Выберите один слой"); return }
         val view = RenderHost.view ?: return
         val density = _meshDensity.value
-        view.layerAlpha(l.id) { bytes ->
+        view.layerAlpha(l.id) { bytes0 ->
             viewModelScope.launch {
+                val crop = com.vibetoon.domain.model.LayerCrop.of(layerProps[l.id]?.crop)   // спринт 46: по видимой части
+                val bytes = if (bytes0 == null) null else com.vibetoon.domain.render.CropGeometry.cropAlphaMap(bytes0, crop)
                 if (bytes == null || bytes.size < 9) { _state.value = UiState.Message("Слой ещё не загружен"); return@launch }
                 fun i32(o: Int) = (bytes[o].toInt() and 0xFF) or ((bytes[o + 1].toInt() and 0xFF) shl 8) or ((bytes[o + 2].toInt() and 0xFF) shl 16) or ((bytes[o + 3].toInt() and 0xFF) shl 24)
                 val aw = i32(0); val ah = i32(4)
-                val mesh = MeshMath.fromAlpha(l.width, l.height, bytes.copyOfRange(8, bytes.size), aw, ah, density)
+                val (lw, lh) = crop?.pixelSize(l.width, l.height) ?: (l.width to l.height)
+                val mesh = MeshMath.fromAlpha(lw, lh, bytes.copyOfRange(8, bytes.size), aw, ah, density)
                 if (mesh == null) { _state.value = UiState.Message("Слой полностью прозрачен"); return@launch }
                 checkpoint("mesh-gen-alpha", force = true)
                 meshLayers[l.id]?.let { old -> clearMeshOffsets(MeshMath.ids(l.id, old)) }
@@ -12723,7 +12813,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val clip = clipOf(m.id)
             videoFrames.request(
                 m.id, projects.mediaFile(pid, m.file.removePrefix("assets/")), videoSourceMs(clip, f, fps),
-                m.srcWidth, m.srcHeight, side
+                m.srcWidth, m.srcHeight, side, playing   // спринт 46: последовательный декодер, при Play - быстрый перевод кадра
             )
         }
     }
@@ -12811,6 +12901,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         frameCallback?.let { Choreographer.getInstance().removeFrameCallback(it) }
         frameCallback = null
         refreshPanelsAfterPlay()
+        // спринт 46: кадр видео при Play был уменьшенным и быстрым - на паузе тот же момент перечитывается чётко
+        if (projectId != null) { for (m in media) if (m.kind == MediaKind.VIDEO) videoFrames.forget(m.id); updateVideoFrames(_frame.value) }
         Log.i("VT/Anim", "pause at frame ${_frame.value}")
     }
 
@@ -12922,7 +13014,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val session = if (shadow) null else ExportSession(maxOf(cw, ch)).also { synchronized(exportSessions) { exportSessions += it } }
         val sceneRange = if (symbol == null) range else null   // пакет 9: экспорт только текущей сцены
         val exportDeformCache = com.vibetoon.domain.render.DeformCache()   // спринт 43: свой кэш сеток у экспорта
-        val cropsExp = com.vibetoon.domain.model.LayerCrop.scene(layerProps)   // спринт 45: обрезка слоёв - как на холсте
+        val cropsExp = com.vibetoon.domain.render.CropGeometry.table(layerProps)   // спринт 45/46: обрезка слоёв - как на холсте (геометрия и текстура)
         val sceneAtFn = { i: Int ->
             // Внутренний кадр символа берётся как есть (раньше обрезался длительностью проекта - формы за её концом
             // снимались как последний кадр).
@@ -12994,9 +13086,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 stretchMasks = com.vibetoon.domain.anim.EffectTracks.stretchMasks(fxl, anim, pf),
                 layerMasks = sceneOptions.layerMasks, maskSources = sceneOptions.maskSources,
                 pathPlaces = sceneOptions.pathPlaces { lid -> com.vibetoon.domain.anim.PathLayerMath.progressId(lid).let { pidP -> anim.evaluate(pidP, pf, baseCopy[pidP]).dx } },
-                deformCache = exportDeformCache).also { sc ->
+                deformCache = exportDeformCache, crops = cropsExp).also { sc ->
                 sc.backgroundOverride = lookExp.background
-                sc.cropIds = cropsExp.first; sc.cropRects = cropsExp.second
                 if (formAliases.isNotEmpty()) sc.aliases = com.vibetoon.domain.project.ExportSymbolForms.aliases(formAliases)
                 if (batch != null && session != null) sc.beforeDraw = { session.textures.commit(batch) }
             }

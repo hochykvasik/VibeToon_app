@@ -374,6 +374,8 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
         )
         // спринт 44: кривая только выбранного ключа (тап по ромбу или плейхед на ключе)
         if (s.count == 1) com.vibetoon.ui.timeline.KeyCurveSection(vm, s.id)
+        // спринт 46: ключи времени символа - те же пресеты и «График…»
+        if (s.count == 1) com.vibetoon.ui.timeline.TimeKeysCurveSection(vm, s.id)
         // спринт 45: несколько ромбов (в том числе на разных слоях) - одна кривая всему набору
         com.vibetoon.ui.timeline.SelectedKeysCurveSection(vm)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {

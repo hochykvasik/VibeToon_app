@@ -167,10 +167,12 @@ fun TimelinePanel(
         title = { Text("Общая кривая: ключи времени символа") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Переход от каждого выделенного ключа к следующему. Между разными формами символ всегда меняет форму резко (Hold) - промежуточные формы не показываются.", fontSize = 12.sp)
+                Text("Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - кадры символа идут к следующему ключу по кривой (как у обычных ключей).", fontSize = 12.sp)
                 for (e in listOf(com.vibetoon.domain.project.TimeEase.HOLD, com.vibetoon.domain.project.TimeEase.LINEAR, com.vibetoon.domain.project.TimeEase.SMOOTH,
                         com.vibetoon.domain.project.TimeEase.EASE_IN, com.vibetoon.domain.project.TimeEase.EASE_OUT))
                     TextButton(onClick = { vm.applyTimeEaseToSelection(e) }) { Text(vm.timeEaseName(e)) }
+                // спринт 46: своя кривая ключей времени - тот же редактор f(x), что у обычных ключей
+                TextButton(onClick = { vm.openTimeKeysCurveEditor() }) { Text("График…") }
             }
         },
         confirmButton = { TextButton(vm::closeTimeEaseDialog) { Text("Отмена") } }
@@ -350,8 +352,10 @@ fun TimelinePanel(
             val tkInst = keySel.firstOrNull { (id, f) -> timeKeyMap[id]?.any { it.frame == f } == true }?.first
             if (tkInst != null) {
                 Text("Переход:", fontSize = 12.sp, maxLines = 1, softWrap = false)
-                for ((e, t) in listOf(com.vibetoon.domain.project.TimeEase.HOLD to "Hold", com.vibetoon.domain.project.TimeEase.SMOOTH to "Плавно", com.vibetoon.domain.project.TimeEase.LINEAR to "Линейно"))
+                for ((e, t) in listOf(com.vibetoon.domain.project.TimeEase.HOLD to "Hold", com.vibetoon.domain.project.TimeEase.SMOOTH to "Плавно", com.vibetoon.domain.project.TimeEase.LINEAR to "Линейно",
+                        com.vibetoon.domain.project.TimeEase.EASE_IN to "Плавное начало", com.vibetoon.domain.project.TimeEase.EASE_OUT to "Плавный конец"))
                     OutlinedButton(onClick = { vm.setTimeKeyEase(tkInst, e) }, enabled = !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                OutlinedButton(onClick = { vm.openTimeKeysCurveEditor(tkInst) }, enabled = !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("График…", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             }
         }
         // ---- Маркеры кадров открытого символа: те же операции, что у ключей ----

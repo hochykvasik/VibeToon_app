@@ -30,5 +30,35 @@ inline void uniformValue(const float* crop, float out[4]) {
 // Шейдер: обрезка включена, только если r > l (нулевой uniform по умолчанию - выкл).
 inline bool shaderActive(const float u[4]) { return u[2] > u[0]; }
 
+// Спринт 46: обрезка меняет ГЕОМЕТРИЮ слоя. SceneBuilder ставит матрицу слоя на видимую рамку (единичный квадрат =
+// обрезанная часть), поэтому рамка выделения, углы перспективы, сетки Mesh/Warp и деформеры строятся по видимой части.
+// Текстурные координаты квадрата (u, v) переводятся в долю картинки: tex = (l, t) + (u, v) * (r - l, b - t).
+
+// Значение uniform uUvRect вершинного шейдера: x, y, w, h или нули (w <= 0 - вся текстура, как раньше).
+inline void uvRect(const float* crop, float out[4]) {
+    if (!crop) { out[0] = out[1] = out[2] = out[3] = 0.f; return; }
+    out[0] = crop[0]; out[1] = crop[1]; out[2] = crop[2] - crop[0]; out[3] = crop[3] - crop[1];
+}
+
+// (u, v) обрезанного квадрата -> доля текстуры (то же, что вершинный шейдер с uUvRect).
+inline void toTexture(const float c[4], float u, float v, float& tu, float& tv) {
+    tu = c[0] + u * (c[2] - c[0]);
+    tv = c[1] + v * (c[3] - c[1]);
+}
+
+// Форма символа (под-прямоугольник rect = x, y, w, h квадрата экземпляра) у обрезанного экземпляра: квадрат слоя уже
+// равен рамке обрезки, поэтому под-прямоугольник формы пересчитывается в доли рамки.
+inline void aliasRect(const float c[4], const float rect[4], float out[4]) {
+    const float W = c[2] - c[0], H = c[3] - c[1];
+    out[0] = (rect[0] - c[0]) / W; out[1] = (rect[1] - c[1]) / H;
+    out[2] = rect[2] / W; out[3] = rect[3] / H;
+}
+
+// Рамка обрезки в долях текстуры ФОРМЫ (для отбрасывания фрагментов формы вне видимой части экземпляра).
+inline void formCrop(const float c[4], const float rect[4], float out[4]) {
+    out[0] = (c[0] - rect[0]) / rect[2]; out[1] = (c[1] - rect[1]) / rect[3];
+    out[2] = (c[2] - rect[0]) / rect[2]; out[3] = (c[3] - rect[1]) / rect[3];
+}
+
 }  // namespace croppolicy
 }  // namespace vt

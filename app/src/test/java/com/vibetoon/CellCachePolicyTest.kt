@@ -94,8 +94,9 @@ class CellCachePolicyTest {
         assertEquals(2, VideoDecodePolicy.threads(12))
         assertEquals(1, VideoDecodePolicy.threads(1))
         assertEquals(1280, VideoDecodePolicy.maxSide(false, 3))
-        assertEquals(640, VideoDecodePolicy.maxSide(true, 1))
-        assertEquals(480, VideoDecodePolicy.maxSide(true, 2))
+        assertEquals(960, VideoDecodePolicy.maxSide(true, 1))   // спринт 46: последовательный декодер
+        assertEquals(720, VideoDecodePolicy.maxSide(true, 2))
+        assertEquals(480, VideoDecodePolicy.maxSide(true, 4))
         assertTrue(VideoDecodePolicy.maxSide(true, 2) < VideoDecodePolicy.maxSide(true, 1))
     }
 }

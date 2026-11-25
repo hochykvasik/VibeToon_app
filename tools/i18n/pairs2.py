@@ -1750,4 +1750,28 @@ VibeToon: фоновая работа|VibeToon: background work
 Ключей: {} - одна кривая всем, остальные ключи не меняются|Keys: {} - one curve for all, other keys stay unchanged
 У выбранных ключей разные кривые: выбор задаст одну всем|The selected keys have different curves: a choice sets one for all
 Выделите ключи на таймлайне|Select keys on the timeline
+Кривая ключа времени|Time key curve
+Кривая ключей времени ({})|Time key curve ({})
+Кадры символа между ключом и следующим ключом идут по этой кривой|Symbol frames between this key and the next key follow this curve
+Дата: сначала новые|Date: newest first
+Дата: сначала старые|Date: oldest first
+Размер: сначала большие|Size: largest first
+Размер: сначала маленькие|Size: smallest first
+Свой порядок|Custom order
+Проектов перенесено из папки: {}|Projects moved out of the folder: {}
+Проектов перенесено в «{}»: {}|Projects moved to "{}": {}
+Удалено проектов: {}|Projects deleted: {}
+Выбрать все|Select all
+Ничего не найдено|Nothing found
+Папка пуста. Перетащите сюда проект (долгое нажатие и перенос на папку) или выделите проекты и нажмите «В папку».|The folder is empty. Drag a project here (long press and drop on the folder) or select projects and tap Move to folder.
+В папку (проектов: {})|Move to folder (projects: {})
+Создать и перенести|Create and move
+Удалить проекты ({})?|Delete projects ({})?
+Выбранные проекты и все их файлы будут удалены без возможности восстановления. Сначала сохраните нужные копии .tsproj.|The selected projects and all their files will be deleted permanently. Save any .tsproj backups you need first.
+Выбран|Selected
+Не выбран|Not selected
+Проектов: {}|Projects: {}
+Удалить папку (проекты останутся)|Delete folder (projects stay)
+Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - кадры символа идут к следующему ключу по кривой (как у обычных ключей).|Transition from each selected key to the next: Hold switches the form instantly, the others play symbol frames toward the next key along the curve (like regular keys).
+Hold - резкая смена формы. Остальные переходы и своя кривая - кадры символа идут к следующему ключу по кривой, в том числе между разными формами.|Hold switches the form instantly. Other transitions and a custom curve play symbol frames toward the next key along the curve, including between different forms.
 """

@@ -70,6 +70,22 @@ class SceneData(
     @Volatile var cropIds: IntArray = IntArray(0)
     @Volatile var cropRects: FloatArray = FloatArray(0)
 
+    /**
+     * Спринт 46: полная рамка КАРТИНКИ обрезанных слоёв на холсте (selectionQuads у них - видимая часть). Кисть,
+     * ластик, лассо и векторы работают в пикселях картинки, поэтому берут эту рамку (см. texQuad).
+     */
+    @Volatile var textureQuads: Map<Int, FloatArray> = emptyMap()
+
+    /** Рамка картинки слоя: у обрезанного - полная, у остальных - та же, что рамка выделения. */
+    fun texQuad(id: Int): FloatArray? = textureQuads[id] ?: selectionQuads[id]
+
+    /** Спринт 46: служебные поля сцены (формы, обрезка, фон) переносятся в пересобранную сцену. */
+    fun copyExtrasTo(o: SceneData): SceneData {
+        o.aliases = aliases; o.cropIds = cropIds; o.cropRects = cropRects; o.textureQuads = textureQuads
+        o.backgroundOverride = backgroundOverride; o.beforeDraw = beforeDraw
+        return o
+    }
+
     /** Пакет 24: фон кадра на время перехода «Через чёрный/белый» (null - фон проекта). Едет вместе со сценой - и в экспорте. */
     @Volatile var backgroundOverride: Int? = null
 
@@ -287,7 +303,13 @@ object SceneBuilder {
         /** Спринт 38: слои на пути - id -> [x, y, угол] (координаты холста): опорная точка слоя встаёт в точку пути. */
         pathPlaces: Map<Int, FloatArray> = emptyMap(),
         /** Спринт 43: кэш готовых сеток слоёв (редактор и экспорт держат свои); null - без кэша. */
-        deformCache: DeformCache? = null
+        deformCache: DeformCache? = null,
+        /**
+         * Спринт 46: обрезка слоёв (вкладка «Обрезка»): квадрат слоя в сцене = видимая рамка, поэтому рамка выделения,
+         * углы перспективы, Mesh/Warp, касания и групповые рамки строятся по видимой части. Таблица уходит в сцену
+         * (cropIds/cropRects) - рендерер берёт текстуру из той же рамки (CropPolicy.h: uvRect).
+         */
+        crops: Map<Int, com.vibetoon.domain.model.LayerCrop> = emptyMap()
     ): SceneData {
         // Камера: dx, dy - смещение центра кадра, scaleX - приближение, rotation - поворот вида
         val cam = transforms[cameraId]
@@ -320,6 +342,20 @@ object SceneBuilder {
         fun add(op: Int, id: Int, blend: Int, flags: Int, m: Affine2D, opacity: Float) {
             ops.add(op); ops.add(id); ops.add(blend); ops.add(if (op == OP_LAYER && maskPass > 0) flags or FLAG_MASK_SRC else flags)
             params.add(m.a); params.add(m.b); params.add(m.c); params.add(m.d); params.add(m.tx); params.add(m.ty); params.add(opacity); params.add(0f)
+        }
+
+        // Спринт 46: прямоугольник слоя на холсте с учётом обрезки (единичный квадрат -> видимая часть картинки).
+        // Опорная точка по умолчанию остаётся центром всей картинки - обрезка ничего не сдвигает на холсте.
+        val texQuads = HashMap<Int, FloatArray>()
+        fun rectOf(n: LeafNode): Affine2D {
+            val c = if (crops.isEmpty()) null else crops[n.id]
+            return if (c == null) Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
+            else CropGeometry.rect(n.x.toFloat(), n.y.toFloat(), n.w.toFloat(), n.h.toFloat(), c)
+        }
+        /** Полная рамка картинки обрезанного слоя (для рисования кистью и выделений в пикселях картинки). */
+        fun rememberTex(n: LeafNode, world: Affine2D) {
+            if (crops.isEmpty() || n.id !in crops) return
+            texQuads[n.id] = cornersOfStatic(world * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat()))
         }
 
         val fitInv0 = rootWorld0.inverse() ?: Affine2D.IDENTITY
@@ -453,7 +489,8 @@ object SceneBuilder {
             val skinned = n.id in skins && n.id in meshes
             val pw = (if (skinned) Affine2D.IDENTITY else linkDelta(n.id)) * parentWorld
             val w = pw * local(t, leafPivots[n.id]?.first ?: (n.x + n.w / 2f), leafPivots[n.id]?.second ?: (n.y + n.h / 2f), n.id)
-            return cornersOf(w * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat()))
+            rememberTex(n, w)
+            return cornersOf(w * rectOf(n))
         }
 
         /**
@@ -469,7 +506,7 @@ object SceneBuilder {
                 val skinned = src.id in skins && src.id in meshes
                 val pw = (if (skinned) Affine2D.IDENTITY else linkDelta(src.id)) * parent
                 val world = pw * local(t, leafPivots[src.id]?.first ?: (src.x + src.w / 2f), leafPivots[src.id]?.second ?: (src.y + src.h / 2f), src.id)
-                val m = world * Affine2D.translate(src.x.toFloat(), src.y.toFloat()) * Affine2D.scale(src.w.toFloat(), src.h.toFloat())
+                val m = world * rectOf(src)
                 if (skinned) skinRest[src.id] = m
                 // прозрачность слоя-маски из панели слоёв ослабляет маску; глаз и плашка таймлайна маску не выключают
                 add(OP_LAYER, src.id, BLEND_NORMAL, FLAG_MASK_SRC, m, src.opacity)
@@ -560,7 +597,8 @@ object SceneBuilder {
                             val pwN = linkDelta(n.id) * parentWorld
                             val worldN = pwN * local(t, leafPivots[n.id]?.first ?: (n.x + n.w / 2f), leafPivots[n.id]?.second ?: (n.y + n.h / 2f), n.id)
                             parentWorlds[n.id] = pwN
-                            val mN = worldN * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
+                            rememberTex(n, worldN)
+                            val mN = worldN * rectOf(n)
                             val qN = cornersOf(mN)
                             quads[n.id] = qN; out += qN
                             continue
@@ -586,8 +624,8 @@ object SceneBuilder {
                         val world = pw * local(t, lpx, lpy, n.id)
                         parentWorlds[n.id] = pw
                         // единичный квадрат -> прямоугольник слоя -> мир
-                        val m = world * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) *
-                            Affine2D.scale(n.w.toFloat(), n.h.toFloat())
+                        val m = world * rectOf(n)   // спринт 46: у обрезанного слоя - видимая рамка
+                        rememberTex(n, world)
                         if (skinned) skinRest[n.id] = m
                         leafWorlds[n.id] = m
                         // Спринт 43: слой под групповыми деформерами запоминает их стек (от внутреннего к внешнему); своя
@@ -605,7 +643,7 @@ object SceneBuilder {
                         } else if (n.id in stretchMasks && stretches[n.id] != null && !clipped) {
                             // Пакет 26: «Маска по слою» - маска (слой без растяжения), затем растянутый слой под ней; прозрачность
                             // и режим наложения слоя - у группы под маской (как у основы обтравки)
-                            val m0 = pw * local(t, lpx, lpy) * Affine2D.translate(n.x.toFloat(), n.y.toFloat()) * Affine2D.scale(n.w.toFloat(), n.h.toFloat())
+                            val m0 = pw * local(t, lpx, lpy) * rectOf(n)
                             add(OP_BEGIN_GROUP, n.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
                             add(OP_LAYER, n.id, BLEND_NORMAL, FLAG_MASK_SRC, m0, 1f)
                             add(OP_END_GROUP, n.id, BLEND_NORMAL, FLAG_MASK_SRC, Affine2D.IDENTITY, 1f)
@@ -713,7 +751,23 @@ object SceneBuilder {
             turbs.keys.toIntArray(), concat(turbs.values),
             fx.keys.toIntArray(), fx.values.map { it.size }.toIntArray(), concat(fx.values.flatten()),
             groupLocalBounds, groupWorlds
-        )
+        ).also { sd ->
+            // спринт 46: таблица обрезки едет в той же сцене, по которой построена геометрия (никакого рассинхрона)
+            if (crops.isNotEmpty()) {
+                val ids = IntArray(crops.size); val rects = FloatArray(crops.size * 4)
+                var i = 0
+                for ((id, c) in crops) { ids[i] = id; rects[i * 4] = c.l; rects[i * 4 + 1] = c.t; rects[i * 4 + 2] = c.r; rects[i * 4 + 3] = c.b; i++ }
+                sd.cropIds = ids; sd.cropRects = rects
+                sd.textureQuads = texQuads
+            }
+        }
+    }
+
+    /** Углы матрицы единичного квадрата (по часовой с левого верхнего): 8 float. */
+    internal fun cornersOfStatic(m: Affine2D): FloatArray {
+        val xs = floatArrayOf(0f, 1f, 1f, 0f)
+        val ys = floatArrayOf(0f, 0f, 1f, 1f)
+        return FloatArray(8) { i -> if (i % 2 == 0) m.applyX(xs[i / 2], ys[i / 2]) else m.applyY(xs[i / 2], ys[i / 2]) }
     }
 }
 

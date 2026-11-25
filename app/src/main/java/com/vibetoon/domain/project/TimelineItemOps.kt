@@ -76,8 +76,8 @@ object TimelineItemOps {
         val lo = picked.first().frame; val hi = picked.last().frame
         val mirrored = List(n) { i ->
             val src = picked[n - 1 - i]
-            val seg = if (i < n - 1) picked[n - 2 - i].ease else TimeEase.HOLD
-            src.copy(frame = lo + hi - src.frame, ease = seg)
+            val seg = if (i < n - 1) picked[n - 2 - i] else null
+            src.copy(frame = lo + hi - src.frame, ease = seg?.ease ?: TimeEase.HOLD, curve = seg?.curve)
         }
         return (items.filter { it.frame !in frames } + mirrored).sortedBy { it.frame }
     }
@@ -104,5 +104,11 @@ object TimelineItemOps {
 
     /** Переход (кривая) выделенных ключей времени. */
     fun withEase(items: List<TimeKey>, frames: Set<Int>, ease: Int): List<TimeKey> =
-        items.map { if (it.frame in frames) it.copy(ease = if (TimeEase.valid(ease)) ease else TimeEase.HOLD) else it }
+        items.map { if (it.frame in frames) it.copy(ease = if (TimeEase.valid(ease) && ease != TimeEase.CUSTOM) ease else TimeEase.HOLD, curve = null) else it }
+
+    /** Спринт 46: своя кривая (редактор «График…») выделенным ключам времени - как у обычных ключей. */
+    fun withCurve(items: List<TimeKey>, frames: Set<Int>, curve: List<Float>): List<TimeKey> {
+        if (com.vibetoon.domain.anim.Curve.parse(curve) == null) return items
+        return items.map { if (it.frame in frames) it.copy(ease = TimeEase.CUSTOM, curve = curve) else it }
+    }
 }

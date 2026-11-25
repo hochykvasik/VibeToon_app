@@ -67,6 +67,6 @@ object SymbolContext {
             sc.warpIds, sc.warpData, sc.meshIds, sc.meshCounts, sc.meshVerts, sc.meshTris,
             sc.perspIds, sc.perspData, sc.turbIds, sc.turbData, sc.fxIds, sc.fxCounts, sc.fxData,
             sc.groupLocalBounds, sc.groupWorlds
-        ).also { it.aliases = sc.aliases }
+        ).let { sc.copyExtrasTo(it) }.also { it.textureQuads = sc.textureQuads - ids }
     }
 }

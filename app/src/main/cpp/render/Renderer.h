@@ -304,6 +304,7 @@ private:
     std::unordered_map<int, std::array<float, 9>> persps_;
     GLint uTexTurb_ = -1, uBlTurb_ = -1;
     GLint uTexCrop_ = -1, uBlCrop_ = -1;   // спринт 45: обрезка слоя
+    GLint uTexUv_ = -1, uBlUv_ = -1;       // спринт 46: текстурная рамка обрезанного квадрата (uUvRect)
     // --- рисование ---
     GLuint progDab_ = 0;
     GLint uDabSize_ = -1, uDabColor_ = -1, uDabHard_ = -1, uDabShape_ = -1, uDabErase_ = -1;
@@ -331,7 +332,8 @@ private:
     std::unordered_map<int, std::vector<std::array<float, 10>>> effects_;
     std::unordered_map<int, std::array<float, 4>> turbs_;
     const float* curTurb_ = nullptr;    // параметры турбулентности рисуемого слоя
-    const float* curCrop_ = nullptr;    // спринт 45: рамка обрезки рисуемого слоя (null - нет)
+    const float* curCrop_ = nullptr;    // спринт 45: рамка отбрасывания фрагментов (форма символа обрезанного экземпляра)
+    const float* curUv_ = nullptr;      // спринт 46: рамка обрезки рисуемого слоя - квадрат слоя = видимая часть (null - нет)
     const float* curPersp_ = nullptr;   // гомография слоя, который рисуется сейчас
     std::unordered_map<int, std::array<float, 32>> warps_;
     struct MeshGeom {

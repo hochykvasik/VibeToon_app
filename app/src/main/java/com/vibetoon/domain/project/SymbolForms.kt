@@ -79,27 +79,20 @@ object SymbolForms {
     fun formStart(markers: List<FrameMarker>, v: Int): Int? = markers.filter { !it.isAlias && it.frame <= v }.maxOfOrNull { it.frame }
 
     /**
-     * Внутренний кадр экземпляра на кадре сцены [f] для символа с формами (маркерами). Переход Linear/Smooth между ключами,
-     * указывающими на РАЗНЫЕ формы, проигрывал бы промежуточные кадры символа - то есть чужие формы (рот «перескакивал» на
-     * случайные формы). Поэтому такой сегмент ведёт себя как Hold: форма меняется ровно на кадре следующего ключа.
-     * Плавный переход внутри одной формы (анимированная форма) и символы без маркеров работают как раньше.
+     * Внутренний кадр экземпляра на кадре сцены [f] для символа с формами (маркерами).
+     * Спринт 46: переход ключа работает как у любого ключа - Hold меняет форму резко на кадре следующего ключа, а
+     * Linear / Smooth / Ease / своя кривая ведут внутренний кадр от значения ключа к значению следующего по кривой
+     * (между разными формами символ проходит промежуточные кадры, как Time Remapping). Раньше такой сегмент
+     * принудительно становился Hold, и кривые ключей символа ничего не меняли. Новые ключи из маркеров - Hold.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, loop: Boolean, markers: List<FrameMarker>): Int =
         frameAt(keys, f, duration, animated, if (loop) SymbolPlayback.LOOP else SymbolPlayback.HOLD, 0, markers)
 
     /** Спринт 37: то же с режимом проигрывания без ключей ([SymbolPlayback]: Hold / Loop / Play Once от кадра [start]). */
-    fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, mode: Int, start: Int, markers: List<FrameMarker>): Int {
-        if (keys.size >= 2 && markers.any { !it.isAlias }) {
-            val ks = keys.sortedBy { it.frame }
-            val i = ks.indexOfLast { it.frame <= f }
-            if (i >= 0 && i + 1 < ks.size) {
-                val a = ks[i]; val b = ks[i + 1]
-                if (a.ease != TimeEase.HOLD && a.value != b.value && formStart(markers, a.value) != formStart(markers, b.value))
-                    return a.value.coerceIn(0, maxOf(0, duration - 1))
-            }
-        }
-        return SymbolPlayback.instanceFrame(keys, f, duration, animated, mode, start)
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, mode: Int, start: Int, markers: List<FrameMarker>): Int =
+        SymbolPlayback.instanceFrame(keys, f, duration, animated, mode, start)
 
     /**
      * Маркер формы, которую символ показывает на внутреннем кадре [shown] (для подсветки в панели «Выбрать маркер»):
