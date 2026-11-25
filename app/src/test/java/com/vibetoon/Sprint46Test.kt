@@ -61,14 +61,14 @@ class Sprint46Test {
     }
 
     @Test fun curvesWorkBetweenDifferentFormsLikeOtherKeys() {
-        // раньше SymbolForms.frameAt делал сегмент на другую форму Hold: все кривые давали одно и то же
+        // спринт 47: между разными формами кривая ведёт растворение A -> B (раньше - внутренние кадры, т.е. чужие формы)
         val m = listOf(FrameMarker(0, "A"), FrameMarker(10, "B"))
-        fun at(ease: Int, f: Int) = SymbolForms.frameAt(listOf(TimeKey(0, 0, ease), TimeKey(8, 10)), f, 20, animated = true, loop = false, markers = m)
-        assertEquals(0, at(TimeEase.HOLD, 4))
-        assertEquals(5, at(TimeEase.LINEAR, 4))
-        assertNotEquals(at(TimeEase.LINEAR, 2), at(TimeEase.EASE_IN, 2))
-        assertNotEquals(at(TimeEase.EASE_IN, 6), at(TimeEase.EASE_OUT, 6))
-        assertEquals(10, at(TimeEase.SMOOTH, 8))
+        fun ref(ease: Int, f: Int) = SymbolForms.frameRef(listOf(TimeKey(0, 0, ease), TimeKey(8, 10)), f, 20, true, com.vibetoon.domain.project.SymbolPlayback.HOLD, 0, m)
+        assertEquals(com.vibetoon.domain.project.FormRef(0), ref(TimeEase.HOLD, 4))
+        assertEquals(com.vibetoon.domain.project.FormRef(0, 10, 8), ref(TimeEase.LINEAR, 4))
+        assertNotEquals(ref(TimeEase.LINEAR, 2), ref(TimeEase.EASE_IN, 2))
+        assertNotEquals(ref(TimeEase.EASE_IN, 6), ref(TimeEase.EASE_OUT, 6))
+        assertEquals(com.vibetoon.domain.project.FormRef(10), ref(TimeEase.SMOOTH, 8))
     }
 
     @Test fun presetsMapToTimeEaseAndBack() {

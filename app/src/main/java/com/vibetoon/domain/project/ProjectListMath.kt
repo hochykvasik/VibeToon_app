@@ -136,4 +136,12 @@ object ProjectListMath {
         bytes >= 1L shl 20 -> "%.1f МБ".format(bytes / (1024.0 * 1024))
         else -> "${bytes / 1024} КБ"
     }
+
+    /**
+     * Спринт 47: центр перетаскиваемой карточки [centerY] (px в сетке) над зоной «убрать из папки» - шапкой папки
+     * (её верх [headTop] и высота [headHeight]) или выше неё. Шапка прокручена за край ([headTop] = null) - зона
+     * у верхнего края сетки (центр выше 0).
+     */
+    fun overTopDropZone(centerY: Float, headTop: Int?, headHeight: Int?): Boolean =
+        if (headTop == null || headHeight == null) centerY < 0f else centerY < headTop + headHeight
 }

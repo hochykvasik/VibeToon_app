@@ -271,7 +271,10 @@ fun StatusLine(vm: MainViewModel) {
     }
     val errorTemplate = com.vibetoon.ui.i18n.L("Ошибка: {}")
     val errorMessage = (state as? UiState.Error)?.message?.let { com.vibetoon.ui.i18n.localizeDiagnostic(it) }
-    val text = if (audioReadiness is com.vibetoon.domain.project.AudioReadiness.Preparing) "Подготовка аудио…" else when (val s = state) {
+    val opening by vm.opening.collectAsStateWithLifecycle()
+    val text = if (audioReadiness is com.vibetoon.domain.project.AudioReadiness.Preparing) "Подготовка аудио…"
+        else if (opening && state !is UiState.Error) "Загрузка проекта…"   // спринт 47: не «пустой проект», пока данные не загружены
+        else when (val s = state) {
         UiState.Idle -> if (!vm.hasLayers) "Нажмите «＋ Добавить», чтобы импортировать PSD, изображение, видео или аудио" else ""
         is UiState.Message -> com.vibetoon.ui.i18n.boneStatusMessage(s.text)
         UiState.Loading -> "Загрузка…"
@@ -280,10 +283,32 @@ fun StatusLine(vm: MainViewModel) {
         is UiState.Error -> errorTemplate.replace("{}", errorMessage ?: s.message)
     }
     // на очень низком холсте (поднятый таймлайн) плашка только мешает
-    if (text.isEmpty() || (vm.canvasHeightPx < 300f && state !is UiState.Error && state != UiState.Loading && audioReadiness !is com.vibetoon.domain.project.AudioReadiness.Preparing)) return
+    if (text.isEmpty() || (vm.canvasHeightPx < 300f && !opening && state !is UiState.Error && state != UiState.Loading && audioReadiness !is com.vibetoon.domain.project.AudioReadiness.Preparing)) return
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), shape = RoundedCornerShape(6.dp)) {
         Box(Modifier.widthIn(max = 460.dp).padding(horizontal = 8.dp, vertical = 2.dp)) {
             Text(text, maxLines = 2, fontSize = 13.sp)
+        }
+    }
+}
+
+/**
+ * Спринт 47: пока проект открывается, холст закрыт плашкой с индикатором (доля загруженных текстур, если уже
+ * известна). Касания холста в это время не доходят до инструментов.
+ */
+@Composable
+private fun ProjectOpeningOverlay(vm: MainViewModel) {
+    val opening by vm.opening.collectAsStateWithLifecycle()
+    if (!opening) return
+    val progress by vm.openProgress.collectAsStateWithLifecycle()
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(Modifier.widthIn(max = 260.dp).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Загрузка проекта…", fontSize = 14.sp)
+            if (progress >= 0f) androidx.compose.material3.LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+            else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
         }
     }
 }
@@ -398,6 +423,7 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         PaintCursorLayer(vm)
         PressureHudLayer(vm)
         PerspOverlayLayer(vm)
+        ProjectOpeningOverlay(vm)   // спринт 47: индикатор открытия проекта сразу, без пустого холста
         RasterOverlayLayer(vm)
         SelectionTransformLayer(vm)
         MarqueeOverlay(vm)

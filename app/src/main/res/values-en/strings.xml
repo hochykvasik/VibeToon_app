@@ -2076,7 +2076,7 @@
     <string name="ui_select_keys_on_the_timeline">Select keys on the timeline</string>
     <string name="ui_time_key_curve">Time key curve</string>
     <string name="ui_time_key_curve_2">Time key curve ({})</string>
-    <string name="ui_symbol_frames_between_this_key_and_t">Symbol frames between this key and the next key follow this curve</string>
+    <string name="ui_between_different_forms_the_curve_sm">Between different forms the curve smoothly dissolves one form into the other, no other forms appear; within a form it drives its frames</string>
     <string name="ui_date_newest_first">Date: newest first</string>
     <string name="ui_date_oldest_first">Date: oldest first</string>
     <string name="ui_size_largest_first">Size: largest first</string>
@@ -2096,6 +2096,9 @@
     <string name="ui_not_selected">Not selected</string>
     <string name="ui_projects_2">Projects: {}</string>
     <string name="ui_delete_folder_projects_stay">Delete folder (projects stay)</string>
-    <string name="ui_transition_from_each_selected_key_to_2">Transition from each selected key to the next: Hold switches the form instantly, the others play symbol frames toward the next key along the curve (like regular keys).</string>
-    <string name="ui_hold_switches_the_form_instantly_oth">Hold switches the form instantly. Other transitions and a custom curve play symbol frames toward the next key along the curve, including between different forms.</string>
+    <string name="ui_transition_from_each_selected_key_to_2">Transition from each selected key to the next: Hold switches the form instantly, the others smoothly dissolve the form into the next key\'s form along the curve (no other forms appear).</string>
+    <string name="ui_hold_switches_the_form_instantly_oth">Hold switches the form instantly. Other transitions and a custom curve smoothly dissolve the form into the next key\'s form (no other forms appear); within one form they drive its frames.</string>
+    <string name="ui_loading_project">Loading project…</string>
+    <string name="ui_release_to_move_the_project_back_to_">Release to move the project back to My projects</string>
+    <string name="ui_drag_here_to_remove_from_the_folder">Drag here to remove from the folder</string>
 </resources>

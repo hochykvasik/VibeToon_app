@@ -167,7 +167,7 @@ fun TimelinePanel(
         title = { Text("Общая кривая: ключи времени символа") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - кадры символа идут к следующему ключу по кривой (как у обычных ключей).", fontSize = 12.sp)
+                Text("Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - форма плавно растворяется в форму следующего ключа по кривой (чужие формы не появляются).", fontSize = 12.sp)
                 for (e in listOf(com.vibetoon.domain.project.TimeEase.HOLD, com.vibetoon.domain.project.TimeEase.LINEAR, com.vibetoon.domain.project.TimeEase.SMOOTH,
                         com.vibetoon.domain.project.TimeEase.EASE_IN, com.vibetoon.domain.project.TimeEase.EASE_OUT))
                     TextButton(onClick = { vm.applyTimeEaseToSelection(e) }) { Text(vm.timeEaseName(e)) }

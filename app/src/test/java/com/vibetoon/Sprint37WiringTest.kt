@@ -39,8 +39,8 @@ class Sprint37WiringTest {
     }
 
     @Test fun playOnceUsesOneRuleForCanvasPlayAndExport() {
-        assertTrue(vm.contains("return SymbolForms.frameAt(inst.timeKeys, f, def.symDur, mode != SymbolPlayback.HOLD && symbolCycles(def.id), mode, symbolStart(inst.id), def.markers)"))
-        assertTrue(vm.contains("SymbolForms.frameAt(si.timeKeys, pf, def.first, def.second && mode != SymbolPlayback.HOLD, mode, clipsCopy[si.id]?.start ?: 0"))
+        assertTrue(vm.contains("return SymbolForms.frameRef(inst.timeKeys, f, def.symDur, mode != SymbolPlayback.HOLD && symbolCycles(def.id), mode, symbolStart(inst.id), def.markers)"))
+        assertTrue(vm.contains("SymbolForms.frameRef(si.timeKeys, pf, def.first, def.second && mode != SymbolPlayback.HOLD, mode, clipsCopy[si.id]?.start ?: 0"))
         assertTrue(vm.contains("SymbolPlayback.needsAllFrames(symbolPlaybackOf(inst), false, symbolCycles(def.id))"))
         assertTrue(vm.contains("it.copy(symLoop = loop, symOnce = once)"))
         assertTrue(symbols.contains("vm.setSymbolPlayback(instId, mode)"))

@@ -2076,7 +2076,7 @@
     <string name="ui_select_keys_on_the_timeline">Выделите ключи на таймлайне</string>
     <string name="ui_time_key_curve">Кривая ключа времени</string>
     <string name="ui_time_key_curve_2">Кривая ключей времени ({})</string>
-    <string name="ui_symbol_frames_between_this_key_and_t">Кадры символа между ключом и следующим ключом идут по этой кривой</string>
+    <string name="ui_between_different_forms_the_curve_sm">Между разными формами кривая плавно растворяет одну форму в другую, чужие формы не появляются; внутри формы ведёт её кадры</string>
     <string name="ui_date_newest_first">Дата: сначала новые</string>
     <string name="ui_date_oldest_first">Дата: сначала старые</string>
     <string name="ui_size_largest_first">Размер: сначала большие</string>
@@ -2096,6 +2096,9 @@
     <string name="ui_not_selected">Не выбран</string>
     <string name="ui_projects_2">Проектов: {}</string>
     <string name="ui_delete_folder_projects_stay">Удалить папку (проекты останутся)</string>
-    <string name="ui_transition_from_each_selected_key_to_2">Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - кадры символа идут к следующему ключу по кривой (как у обычных ключей).</string>
-    <string name="ui_hold_switches_the_form_instantly_oth">Hold - резкая смена формы. Остальные переходы и своя кривая - кадры символа идут к следующему ключу по кривой, в том числе между разными формами.</string>
+    <string name="ui_transition_from_each_selected_key_to_2">Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - форма плавно растворяется в форму следующего ключа по кривой (чужие формы не появляются).</string>
+    <string name="ui_hold_switches_the_form_instantly_oth">Hold - резкая смена формы. Остальные переходы и своя кривая плавно растворяют форму в форму следующего ключа (чужие формы не появляются); внутри одной формы ведут её кадры.</string>
+    <string name="ui_loading_project">Загрузка проекта…</string>
+    <string name="ui_release_to_move_the_project_back_to_">Отпустите - проект вернётся в «Мои работы»</string>
+    <string name="ui_drag_here_to_remove_from_the_folder">Перетащите сюда, чтобы убрать из папки</string>
 </resources>

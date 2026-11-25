@@ -1752,7 +1752,7 @@ VibeToon: фоновая работа|VibeToon: background work
 Выделите ключи на таймлайне|Select keys on the timeline
 Кривая ключа времени|Time key curve
 Кривая ключей времени ({})|Time key curve ({})
-Кадры символа между ключом и следующим ключом идут по этой кривой|Symbol frames between this key and the next key follow this curve
+Между разными формами кривая плавно растворяет одну форму в другую, чужие формы не появляются; внутри формы ведёт её кадры|Between different forms the curve smoothly dissolves one form into the other, no other forms appear; within a form it drives its frames
 Дата: сначала новые|Date: newest first
 Дата: сначала старые|Date: oldest first
 Размер: сначала большие|Size: largest first
@@ -1772,6 +1772,9 @@ VibeToon: фоновая работа|VibeToon: background work
 Не выбран|Not selected
 Проектов: {}|Projects: {}
 Удалить папку (проекты останутся)|Delete folder (projects stay)
-Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - кадры символа идут к следующему ключу по кривой (как у обычных ключей).|Transition from each selected key to the next: Hold switches the form instantly, the others play symbol frames toward the next key along the curve (like regular keys).
-Hold - резкая смена формы. Остальные переходы и своя кривая - кадры символа идут к следующему ключу по кривой, в том числе между разными формами.|Hold switches the form instantly. Other transitions and a custom curve play symbol frames toward the next key along the curve, including between different forms.
+Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - форма плавно растворяется в форму следующего ключа по кривой (чужие формы не появляются).|Transition from each selected key to the next: Hold switches the form instantly, the others smoothly dissolve the form into the next key's form along the curve (no other forms appear).
+Hold - резкая смена формы. Остальные переходы и своя кривая плавно растворяют форму в форму следующего ключа (чужие формы не появляются); внутри одной формы ведут её кадры.|Hold switches the form instantly. Other transitions and a custom curve smoothly dissolve the form into the next key's form (no other forms appear); within one form they drive its frames.
+Загрузка проекта…|Loading project…
+Отпустите - проект вернётся в «Мои работы»|Release to move the project back to My projects
+Перетащите сюда, чтобы убрать из папки|Drag here to remove from the folder
 """

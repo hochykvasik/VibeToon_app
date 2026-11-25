@@ -163,6 +163,12 @@ fun ProjectsScreen(app: AppViewModel) {
         val hit = info.firstOrNull { it.key != id && cx >= it.offset.x && cx < it.offset.x + it.size.width && cy >= it.offset.y && cy < it.offset.y + it.size.height }
         val key = hit?.key as? String
         dropFolder = key?.takeIf { it.startsWith(FOLDER_KEY) }?.removePrefix(FOLDER_KEY)
+        // спринт 47: внутри папки шапка («Мои работы / папка») - зона «убрать из папки»: карточку можно унести вверх
+        if (folder.isNotEmpty()) {
+            val head = info.firstOrNull { it.key == HEADER_KEY }
+            val overHead = com.vibetoon.domain.project.ProjectListMath.overTopDropZone(cy, head?.offset?.y, head?.size?.height)
+            if (overHead) { dropFolder = ""; return }
+        }
         if (hit == null || key == null || dropFolder != null || searchingNow) return
         val cur = live ?: return
         if (key !in cur) return
@@ -307,6 +313,8 @@ fun ProjectsScreen(app: AppViewModel) {
                         TextButton({ moving = selected.toList() }) {
                             Icon(Icons.Default.Folder, null, Modifier.size(18.dp)); Text("В папку", Modifier.padding(start = 4.dp), maxLines = 1)
                         }
+                        // спринт 47: внутри папки - сразу вынести выбранные проекты в «Мои работы»
+                        if (folder.isNotEmpty()) TextButton({ app.moveToFolder(selected.toList(), ""); selected = emptySet() }) { Text("Убрать из папки", maxLines = 1) }
                         TextButton({ deletingMany = selected.toList() }) {
                             Icon(Icons.Default.Delete, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
                             Text("Удалить", Modifier.padding(start = 4.dp), maxLines = 1, color = MaterialTheme.colorScheme.error)
@@ -365,9 +373,10 @@ fun ProjectsScreen(app: AppViewModel) {
                 }
                 // раздел «Обучение»: карточки статей (открываются на весь экран)
                 if (folder.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }, key = "tutorials") { TutorialRow(onOpen = { article = it }) }
-                item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
+                item(span = { GridItemSpan(maxLineSpan) }, key = HEADER_KEY) {
                     if (folder.isEmpty()) Text("Мои работы", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    else Row(verticalAlignment = Alignment.CenterVertically) {
+                    else Box {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         // спринт 46: папка открыта отдельной вкладкой: назад, имя, число проектов, удаление папки
                         IconButton(onClick = { folder = ""; selected = emptySet() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, com.vibetoon.ui.i18n.L("Назад")) }
                         Text("Мои работы", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), modifier = Modifier.clickable { folder = ""; selected = emptySet() })
@@ -377,6 +386,21 @@ fun ProjectsScreen(app: AppViewModel) {
                         Text("  (${projects.size})", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         Box(Modifier.weight(1f))
                         TextButton({ app.deleteFolder(folder); folder = "" }) { Text("Удалить папку") }
+                    }
+                    // спринт 47: во время переноса карточки шапка подсвечивается как зона «убрать из папки» (поверх, без сдвига сетки)
+                    if (dragId != null && dragMoved) {
+                        val hot = dropFolder == ""
+                        Surface(
+                            Modifier.matchParentSize(), shape = RoundedCornerShape(10.dp),
+                            color = if (hot) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+                            border = androidx.compose.foundation.BorderStroke(if (hot) 2.dp else 1.dp, MaterialTheme.colorScheme.primary.copy(alpha = if (hot) 1f else 0.5f))
+                        ) {
+                            Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp).graphicsLayer { rotationZ = 90f })
+                                Text(if (hot) "Отпустите - проект вернётся в «Мои работы»" else "Перетащите сюда, чтобы убрать из папки", Modifier.padding(start = 6.dp), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
                     }
                 }
                 // спринт 46: папки - карточки с превью проектов (как папки iOS); на карточку можно перетащить проект
@@ -419,6 +443,7 @@ fun ProjectsScreen(app: AppViewModel) {
                         onDuplicate = { app.duplicate(p.id) },
                         onDelete = { deleting = p },
                         onMove = { moving = listOf(p.id) },
+                        onUnfolder = if (p.folder.isNotEmpty()) ({ app.moveToFolder(listOf(p.id), "") }) else null,
                         onBackup = { backupFor = p.id; exportLauncher.launch("${p.name}.tsproj") },
                         sizeText = sizes[p.id]?.let { com.vibetoon.domain.project.ProjectListMath.sizeLabel(it) },
                         selected = p.id in selected, selectionMode = selected.isNotEmpty(),
@@ -521,7 +546,7 @@ fun ProjectsScreen(app: AppViewModel) {
 private fun ProjectCard(
     p: ProjectMeta, app: AppViewModel,
     onOpen: () -> Unit, onRename: () -> Unit, onDuplicate: () -> Unit, onDelete: () -> Unit,
-    onMove: () -> Unit = {}, onBackup: () -> Unit = {}, sizeText: String? = null,
+    onMove: () -> Unit = {}, onBackup: () -> Unit = {}, sizeText: String? = null, onUnfolder: (() -> Unit)? = null,
     selected: Boolean = false, selectionMode: Boolean = false,
     modifier: Modifier = Modifier, cardModifier: Modifier = Modifier, showFolder: Boolean = false
 ) {
@@ -586,6 +611,7 @@ private fun ProjectCard(
                             DropdownMenuItem(text = { Text("Переименовать") }, onClick = { menu = false; onRename() })
                             DropdownMenuItem(text = { Text("Дублировать") }, onClick = { menu = false; onDuplicate() })
                             DropdownMenuItem(text = { Text("В папку") }, onClick = { menu = false; onMove() })
+                            if (onUnfolder != null) DropdownMenuItem(text = { Text("Убрать из папки") }, onClick = { menu = false; onUnfolder() })   // спринт 47
                             DropdownMenuItem(text = { Text("Резервная копия .tsproj") }, onClick = { menu = false; onBackup() })
                             DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onDelete() })
                         }
@@ -598,6 +624,7 @@ private fun ProjectCard(
 
 /** Спринт 46: ключ карточки папки в сетке (id проектов - 8 символов, с префиксом не совпадают). */
 private const val FOLDER_KEY = "folder:"
+private const val HEADER_KEY = "header"
 
 /** Превью проекта: декодируется на IO, не задерживает список. [sample] - уменьшение (2 - для мини-превью в папке). */
 @Composable

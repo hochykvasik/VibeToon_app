@@ -38,9 +38,12 @@ class SymbolFormSyncTest {
         for (f in 0 until 80) {
             val local = SymbolForms.frameAt(keys, f, dur, animated = false, loop = false, markers = markers)
             assertEquals("кадр $f: ровно одна форма", 1, visibleForms(local).size)
-            // спринт 46: переход ключа действует как у обычных ключей - Hold держит форму, кривые ведут кадр к следующему ключу
-            val expected = SymbolMath.timeAt(keys, f)!!.coerceIn(0, dur - 1)
-            assertEquals("кадр $f: форма выбранного ключа", expected, local)
+            // спринт 47: между ключами - только формы этих двух ключей (растворение), чужие формы не появляются
+            val ref = SymbolForms.frameRef(keys, f, dur, false, com.vibetoon.domain.project.SymbolPlayback.HOLD, 0, markers)
+            val i = keys.indexOfLast { it.frame <= f }
+            val allowed = setOf(keys[i].value, keys.getOrNull(i + 1)?.value ?: keys[i].value)
+            assertTrue("кадр $f: форма ключа", ref.local in allowed && (!ref.blended || ref.to in allowed))
+            if (keys[i].ease == TimeEase.HOLD || keys[i].frame == f) assertEquals(keys[i].value, local)
             // панель подсвечивает ту же форму, что видна на холсте
             assertEquals(local, SymbolForms.shownMarker(markers, local)!!.frame)
         }
@@ -51,9 +54,11 @@ class SymbolFormSyncTest {
         val m = listOf(FrameMarker(0, "A"), FrameMarker(10, "B"))
         val keys = listOf(TimeKey(0, 0, TimeEase.LINEAR), TimeKey(8, 8))
         assertEquals(4, SymbolForms.frameAt(keys, 4, 20, animated = true, loop = false, markers = m))
-        // спринт 46: A -> B с Linear тоже интерполирует (кривые ключей символа работают), Hold - резкая смена на ключе
+        // спринт 47: A -> B с Linear - растворение A в B (посередине смесь, видна сильнее B), Hold - резкая смена на ключе
         val cross = listOf(TimeKey(0, 0, TimeEase.LINEAR), TimeKey(8, 10))
-        assertEquals(5, SymbolForms.frameAt(cross, 4, 20, animated = true, loop = false, markers = m))
+        assertEquals(10, SymbolForms.frameAt(cross, 4, 20, animated = true, loop = false, markers = m))
+        assertEquals(com.vibetoon.domain.project.FormRef(0, 10, 8), SymbolForms.frameRef(cross, 4, 20, true, com.vibetoon.domain.project.SymbolPlayback.HOLD, 0, m))
+        assertEquals(0, SymbolForms.frameAt(cross, 1, 20, animated = true, loop = false, markers = m))
         assertEquals(10, SymbolForms.frameAt(cross, 8, 20, animated = true, loop = false, markers = m))
         val hold = listOf(TimeKey(0, 0, TimeEase.HOLD), TimeKey(8, 10))
         for (f in 0..7) assertEquals(0, SymbolForms.frameAt(hold, f, 20, animated = true, loop = false, markers = m))

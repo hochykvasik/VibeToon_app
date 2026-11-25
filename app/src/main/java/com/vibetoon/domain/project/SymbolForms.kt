@@ -78,21 +78,75 @@ object SymbolForms {
     /** Начало формы, в которую попадает внутренний кадр [v]: последний реальный маркер с кадром <= v (null - до первого маркера). */
     fun formStart(markers: List<FrameMarker>, v: Int): Int? = markers.filter { !it.isAlias && it.frame <= v }.maxOfOrNull { it.frame }
 
+    /** Спринт 47: шагов растворения между формами (смесь считается с точностью 1/16 - формы кэшируются по шагам). */
+    const val MIX_STEPS = 16
+
     /**
-     * Внутренний кадр экземпляра на кадре сцены [f] для символа с формами (маркерами).
-     * Спринт 46: переход ключа работает как у любого ключа - Hold меняет форму резко на кадре следующего ключа, а
-     * Linear / Smooth / Ease / своя кривая ведут внутренний кадр от значения ключа к значению следующего по кривой
-     * (между разными формами символ проходит промежуточные кадры, как Time Remapping). Раньше такой сегмент
-     * принудительно становился Hold, и кривые ключей символа ничего не меняли. Новые ключи из маркеров - Hold.
+     * Спринт 47: длительность символа для ключей и маркеров - не короче последней формы. В старых проектах длительность
+     * могла быть посчитана раньше, чем появилась последняя форма: ключ на неё упирался в границу и показывал соседнюю.
      */
-    @Suppress("UNUSED_PARAMETER")
+    fun effectiveDuration(symDur: Int, markers: List<FrameMarker>): Int =
+        maxOf(symDur, (markers.maxOfOrNull { maxOf(it.frame, it.target) } ?: -1) + 1, 1)
+
+    /**
+     * Внутренний кадр экземпляра на кадре сцены [f] для символа с формами (маркерами) - доминирующая форма [frameRef]
+     * (для подсветки маркера, снимков и мест, где нужна одна форма).
+     */
     fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, loop: Boolean, markers: List<FrameMarker>): Int =
         frameAt(keys, f, duration, animated, if (loop) SymbolPlayback.LOOP else SymbolPlayback.HOLD, 0, markers)
 
     /** Спринт 37: то же с режимом проигрывания без ключей ([SymbolPlayback]: Hold / Loop / Play Once от кадра [start]). */
-    @Suppress("UNUSED_PARAMETER")
     fun frameAt(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, mode: Int, start: Int, markers: List<FrameMarker>): Int =
-        SymbolPlayback.instanceFrame(keys, f, duration, animated, mode, start)
+        frameRef(keys, f, duration, animated, mode, start, markers).dominant
+
+    /**
+     * Спринт 47: что показывает экземпляр на кадре сцены [f] (одно правило для холста, Play, экспорта и вложенных символов).
+     *  - Hold: форма ключа до кадра следующего ключа, там - резкая смена;
+     *  - переход (Linear, Smooth, Ease, своя кривая) между ключами на РАЗНЫЕ формы: растворение формы ключа в форму
+     *    следующего ключа по кривой; промежуточные внутренние кадры (чужие формы) не показываются никогда;
+     *  - переход внутри одной формы (анимированная форма): внутренние кадры по кривой, не выходя за отрезок формы;
+     *  - символ без маркеров: Time Remapping по кривой, как у любого ключа.
+     */
+    fun frameRef(keys: List<TimeKey>, f: Int, duration: Int, animated: Boolean, mode: Int, start: Int, markers: List<FrameMarker>): FormRef {
+        val dur = effectiveDuration(duration, markers)
+        val real = markers.filter { !it.isAlias }.map { it.frame }.distinct().sorted()
+        if (keys.size >= 2 && real.isNotEmpty()) {
+            val ks = if (keys.zipWithNext().all { (a, b) -> a.frame <= b.frame }) keys else keys.sortedBy { it.frame }
+            val i = ks.indexOfLast { it.frame <= f }
+            if (i >= 0 && i + 1 < ks.size) {
+                val a = ks[i]; val b = ks[i + 1]
+                if (a.ease != TimeEase.HOLD && TimeEase.valid(a.ease) && a.value != b.value && b.frame > a.frame) {
+                    val av = a.value.coerceIn(0, dur - 1); val bv = b.value.coerceIn(0, dur - 1)
+                    val t = (f - a.frame).toFloat() / (b.frame - a.frame)
+                    val e = TimeEase.value(a, t)
+                    val fa = formStart(markers, av); val fb = formStart(markers, bv)
+                    if (fa != fb) {
+                        val mix = Math.round(e.coerceIn(0f, 1f) * MIX_STEPS)
+                        return when {
+                            mix <= 0 -> FormRef(av)
+                            mix >= MIX_STEPS -> FormRef(bv)
+                            else -> FormRef(av, bv, mix)
+                        }
+                    }
+                    // одна форма: кадры формы по кривой; перелёт своей кривой не выводит в соседнюю форму
+                    val lo = fa ?: 0
+                    val hi = (if (fa == null) real.first() else spanEnd(real, fa, dur)) - 1
+                    val v = Math.round(av + (bv - av) * e)
+                    return FormRef(v.coerceIn(lo, maxOf(lo, hi)).coerceIn(0, dur - 1))
+                }
+            }
+        }
+        return FormRef(SymbolPlayback.instanceFrame(keys, f, dur, animated, mode, start))
+    }
+
+    /**
+     * Спринт 47: все смеси форм, которые экземпляр покажет на кадрах [frames] (для заблаговременного снимка и экспорта).
+     */
+    fun blendsOn(frames: IntRange, at: (Int) -> FormRef): Set<FormRef> {
+        val out = LinkedHashSet<FormRef>()
+        for (f in frames) { val r = at(f); if (r.blended) out += r }
+        return out
+    }
 
     /**
      * Маркер формы, которую символ показывает на внутреннем кадре [shown] (для подсветки в панели «Выбрать маркер»):

@@ -14,7 +14,13 @@ class SymbolFormCache(budgetBytes: Long) {
     var budgetBytes: Long = budgetBytes
         set(v) { field = v.coerceAtLeast(1L) }
 
-    data class Key(val def: Int, val local: Int, val crop: Boolean)
+    /**
+     * [local] - внутренний кадр формы; спринт 47: [to] и [mix] - растворение в форму [to] (доля [mix] из
+     * [SymbolForms.MIX_STEPS]); у обычной формы to = -1, mix = 0.
+     */
+    data class Key(val def: Int, val local: Int, val crop: Boolean, val to: Int = -1, val mix: Int = 0) {
+        val blended: Boolean get() = mix > 0 && to >= 0
+    }
     /** [rect] - под-прямоугольник квадрата экземпляра (x, y, w, h в долях), где лежит обрезанная форма. */
     class Entry(val texId: Int, val rect: FloatArray, val bytes: Long, val gen: Int)
 
@@ -34,8 +40,17 @@ class SymbolFormCache(budgetBytes: Long) {
 
     /** Какая-нибудь форма символа [def] (для экземпляра, у которого ещё ничего не показано), свежие первыми. */
     fun anyOf(def: Int, crop: Boolean): Pair<Key, Entry>? =
-        map.entries.filter { it.key.def == def && it.key.crop == crop }.maxByOrNull { (if (it.value.gen == gen) 2 else 0) + (if (it.key.local == 0) 1 else 0) }
-            ?.let { it.key to it.value }
+        anyOf(def, crop, emptySet())
+
+    /**
+     * Спринт 47: запасная форма символа с предпочтением форм [prefer] (маркеры символа - непустые рисунки). Раньше
+     * первым шёл внутренний кадр 0, а у символа «Слои как кадры» с формами на 30, 31, 39 кадр 0 пустой - пока
+     * нужная форма снималась, рот пропадал. Свежие формы важнее устаревших, обычные формы - смесей.
+     */
+    fun anyOf(def: Int, crop: Boolean, prefer: kotlin.collections.Set<Int>): Pair<Key, Entry>? =
+        map.entries.filter { it.key.def == def && it.key.crop == crop }.maxByOrNull {
+            (if (it.value.gen == gen) 8 else 0) + (if (!it.key.blended) 4 else 0) + (if (it.key.local in prefer) 2 else 0) + (if (it.key.local == 0) 1 else 0)
+        }?.let { it.key to it.value }
 
     /** Содержимое символов изменилось: все формы становятся запасными. */
     fun invalidate() { gen++ }

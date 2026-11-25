@@ -1413,6 +1413,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
     val lprops by vm.layerPropsState.collectAsStateWithLifecycle()
     val bonesList by vm.bones.collectAsStateWithLifecycle()
     val listMode by vm.layersList.collectAsStateWithLifecycle()   // спринт 39: вид «Миниатюры» / «Список»
+    val opening by vm.opening.collectAsStateWithLifecycle()   // спринт 47: проект ещё открывается - не «пустой проект»
     var multi by remember { mutableStateOf(false) }   // режим галочек: выбрать несколько слоёв и привязать к кости за одно действие
     var boneMenu by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
@@ -1458,7 +1459,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
     }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Слоёв: ${rows.size}", fontSize = 12.sp, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            Text(if (opening) "Загрузка проекта…" else "Слоёв: ${rows.size}", fontSize = 12.sp, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
             // спринт 39: переключатель вида «Миниатюры» / «Список» (запоминается в настройках)
             IconButton(onClick = { vm.setLayersListMode(false) }, modifier = Modifier.size(36.dp)) {
                 Icon(Icons.Default.ViewModule, com.vibetoon.ui.i18n.L("Миниатюры"), tint = if (!listMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
@@ -1514,7 +1515,7 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
             vm, rows, selection, lprops, bonesList, multi, menuFor, stub, Modifier.weight(1f).fillMaxWidth(),
             onMenu = { menuFor = it }, onMulti = { multi = true }, onRename = { renameFor = it }, onSymbolMode = { symbolModeFor = it }
         ) else Column(Modifier.weight(1f).fillMaxWidth().onSizeChanged { listViewportPx = it.height }.verticalScroll(listScroll)) {
-            if (rows.isEmpty()) Text(
+            if (rows.isEmpty() && !opening) Text(
                 "Слоёв пока нет. Нажмите «+» вверху, чтобы добавить PSD, картинку, видео или текст.",
                 fontSize = 12.sp, modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
@@ -1667,6 +1668,7 @@ private fun LayerListBody(
     onMenu: (Int?) -> Unit, onMulti: () -> Unit, onRename: (Int) -> Unit, onSymbolMode: (Int) -> Unit
 ) {
     var query by rememberSaveable { mutableStateOf("") }
+    val opening by vm.opening.collectAsStateWithLifecycle()   // спринт 47
     var filterName by rememberSaveable { mutableStateOf(com.vibetoon.domain.model.LayerListView.Filter.ALL.name) }
     val filter = com.vibetoon.domain.model.LayerListView.Filter.values().firstOrNull { it.name == filterName } ?: com.vibetoon.domain.model.LayerListView.Filter.ALL
     var bonesCollapsed by remember { mutableStateOf(setOf<Int>()) }
@@ -1727,7 +1729,7 @@ private fun LayerListBody(
             IconButton(onClick = { vm.setAllGroupsCollapsed(true); bonesCollapsed = bonesByLayer.keys }, enabled = !searching, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.UnfoldLess, com.vibetoon.ui.i18n.L("Свернуть все"), modifier = Modifier.size(18.dp)) }
             IconButton(onClick = { vm.setAllGroupsCollapsed(false); bonesCollapsed = emptySet() }, enabled = !searching, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.UnfoldMore, com.vibetoon.ui.i18n.L("Развернуть все"), modifier = Modifier.size(18.dp)) }
         }
-        if (shown.isEmpty()) Text(
+        if (shown.isEmpty() && !opening) Text(
             if (searching) "Ничего не найдено: измените поиск или фильтр" else "Слоёв пока нет. Нажмите «+» вверху, чтобы добавить PSD, картинку, видео или текст.",
             fontSize = 12.sp, modifier = Modifier.padding(12.dp), color = dim
         )

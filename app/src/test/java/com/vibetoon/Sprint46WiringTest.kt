@@ -21,9 +21,9 @@ class Sprint46WiringTest {
     }
 
     @Test fun symbolKeyCurvesAreRoutedLikeOtherKeys() {
-        // старое правило «между разными формами - всегда Hold» убрано: кадр считает SymbolPlayback (кривые работают)
+        // старое правило «между разными формами - всегда Hold» убрано; спринт 47: между формами - растворение (frameRef)
         val forms = kt("domain/project/SymbolForms.kt")
-        assertTrue(forms.contains("SymbolPlayback.instanceFrame(keys, f, duration, animated, mode, start)"))
+        assertTrue(forms.contains("FormRef(SymbolPlayback.instanceFrame(keys, f, dur, animated, mode, start))"))
         assertTrue(vm.contains("fun openTimeKeysCurveEditor(instId: Int? = null)"))
         assertTrue(vm.contains("fun setTimeKeysEasing(instId: Int?, type: EasingType)"))
         assertTrue(vm.contains("private fun applyTimeKeys(t: Map<Int, Set<Int>>, undoKey: String?"))

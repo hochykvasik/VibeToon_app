@@ -1813,7 +1813,7 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "У выбранных ключей разные кривые: выбор задаст одну всем" to R.string.ui_the_selected_keys_have_different_cur,
     "Выделите ключи на таймлайне" to R.string.ui_select_keys_on_the_timeline,
     "Кривая ключа времени" to R.string.ui_time_key_curve,
-    "Кадры символа между ключом и следующим ключом идут по этой кривой" to R.string.ui_symbol_frames_between_this_key_and_t,
+    "Между разными формами кривая плавно растворяет одну форму в другую, чужие формы не появляются; внутри формы ведёт её кадры" to R.string.ui_between_different_forms_the_curve_sm,
     "Дата: сначала новые" to R.string.ui_date_newest_first,
     "Дата: сначала старые" to R.string.ui_date_oldest_first,
     "Размер: сначала большие" to R.string.ui_size_largest_first,
@@ -1827,8 +1827,11 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Выбран" to R.string.ui_selected_2,
     "Не выбран" to R.string.ui_not_selected,
     "Удалить папку (проекты останутся)" to R.string.ui_delete_folder_projects_stay,
-    "Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - кадры символа идут к следующему ключу по кривой (как у обычных ключей)." to R.string.ui_transition_from_each_selected_key_to_2,
-    "Hold - резкая смена формы. Остальные переходы и своя кривая - кадры символа идут к следующему ключу по кривой, в том числе между разными формами." to R.string.ui_hold_switches_the_form_instantly_oth,
+    "Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - форма плавно растворяется в форму следующего ключа по кривой (чужие формы не появляются)." to R.string.ui_transition_from_each_selected_key_to_2,
+    "Hold - резкая смена формы. Остальные переходы и своя кривая плавно растворяют форму в форму следующего ключа (чужие формы не появляются); внутри одной формы ведут её кадры." to R.string.ui_hold_switches_the_form_instantly_oth,
+    "Загрузка проекта…" to R.string.ui_loading_project,
+    "Отпустите - проект вернётся в «Мои работы»" to R.string.ui_release_to_move_the_project_back_to_,
+    "Перетащите сюда, чтобы убрать из папки" to R.string.ui_drag_here_to_remove_from_the_folder,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */

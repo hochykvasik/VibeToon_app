@@ -475,12 +475,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- проект
 
+    /**
+     * Спринт 47: проект открывается (чтение файла, подготовка холста, загрузка текстур). Пока true, редактор не
+     * показывает «пустое» состояние («Слоёв: 0», «Нажмите ＋ Добавить») - вместо него индикатор загрузки на холсте.
+     * Изначально true: экран редактора появляется на кадр раньше, чем запускается [openProject].
+     */
+    private val _opening = MutableStateFlow(true)
+    val opening: StateFlow<Boolean> = _opening.asStateFlow()
+    /** Доля загруженных текстур при открытии (0..1); меньше 0 - этап без счёта (чтение файла, подготовка холста). */
+    private val _openProgress = MutableStateFlow(-1f)
+    val openProgress: StateFlow<Float> = _openProgress.asStateFlow()
+    private var openToken = 0
+
     /** Открывает проект: размер холста, fps, фон, сохранённые трансформации и ключи, затем PSD. */
     fun openProject(id: String, psdAfterOpen: Uri? = null) {
-        if (projectId == id || _selectionExtractBusy.value || rasterRecoveryRequired) return
+        if (projectId == id || _selectionExtractBusy.value || rasterRecoveryRequired) { _opening.value = false; return }
         closing = false
         openJob?.cancel()
+        val token = ++openToken
+        _opening.value = true; _openProgress.value = -1f
         openJob = viewModelScope.launch {
+          try {
             rasterTransactionGate.run { resetEditor() }
             val data = withContext(Dispatchers.IO) { projects.load(id) }.getOrElse {
                 _state.value = UiState.Error(it.message ?: "Не удалось открыть проект")
@@ -556,6 +571,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 restore = { restoreMediaTextures(id) },
                 publish = { active ->
                     if (RenderHost.view === active && projectId == id && !closing) pushScene()
+                    if (openToken == token) { _opening.value = false; _openProgress.value = -1f }   // спринт 47: проект на холсте
                 }
             )
             if (RenderHost.view !== view || projectId != id || closing) return@launch
@@ -571,6 +587,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 addLessonShapes()
             }
             if (psdAfterOpen != null && ref == null) loadUserPsd(psdAfterOpen)   // пакет 13: импорт PSD с экрана проектов
+          } finally {
+            // ошибка, отмена или готово: индикатор снимается (если не начато новое открытие)
+            if (openToken == token) { _opening.value = false; _openProgress.value = -1f }
+          }
         }
     }
 
@@ -611,6 +631,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null
         paintSizes.clear(); paintDirty.clear(); versionedRasterIds.clear(); mediaIds.reset()
         deformCache.clear()   // спринт 43: готовые сетки прошлого проекта не держат память
+        // спринт 47: кэши прошлого проекта (участники символов, видимость, сетки, пиксели PSD для «Пластики») не держат память
+        memberCache.clear(); memberCacheLayers = null; hiddenCacheKey = null; hiddenCache = emptySet()
+        meshTrackCache.clear(); meshEdgeCache.clear(); liqPsdCache = null
         residency.clear(); everEdited.clear(); lastEvictable = null   // пакет 29: учёт памяти текстур - заново
         saveJob?.cancel()
         camera = Camera()
@@ -871,6 +894,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (!saveNow()) { closing = false; return@launch }
             }
             resetEditor()
+            // спринт 47: следующий экран редактора начнётся с индикатора загрузки, а не с пустого холста
+            openToken++; _opening.value = true; _openProgress.value = -1f
             done()
         }
     }
@@ -2557,8 +2582,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** При открытии проекта текстуры картинок и кадров видео создаются заново из файлов проекта. */
     private suspend fun restoreMediaTextures(pid: String) = withContext(decodeDispatcher) {
         val measured = HashMap<Int, Pair<Float, Float>>()
-        for (m in media.toList()) {
-            if (!m.isVisual) continue
+        val visual = media.toList().filter { it.isVisual }
+        var done = 0
+        for (m in visual) {
+            if (_opening.value) _openProgress.value = done.toFloat() / visual.size.coerceAtLeast(1)   // спринт 47: прогресс открытия
+            done++
             // Очередь загрузки не раздуваем: большой проект целиком в RAM давал OOM при возврате из фона.
             var waited = 0
             while (RenderNative.pendingUploadBytes() > RESTORE_QUEUE_LIMIT && waited < 400) {
@@ -4327,10 +4355,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * анимации только по явному флагу экземпляра «Цикл» (раньше любой анимированный участник - кость, ключ слоя - запускал
      * самопроизвольное перелистывание форм).
      */
-    private fun symbolKey(inst: MediaItem, def: MediaItem, f: Int): Int {
+    private fun symbolKey(inst: MediaItem, def: MediaItem, f: Int): Int = symbolRef(inst, def, f).dominant
+
+    /** Спринт 47: форма или растворение двух форм на кадре [f] (одно правило для холста, Play, экспорта и вложенных символов). */
+    private fun symbolRef(inst: MediaItem, def: MediaItem, f: Int): com.vibetoon.domain.project.FormRef {
         val mode = symbolPlaybackOf(inst)
         // Спринт 37: Play Once идёт от начала плашки экземпляра и замирает на последнем кадре символа
-        return SymbolForms.frameAt(inst.timeKeys, f, def.symDur, mode != SymbolPlayback.HOLD && symbolCycles(def.id), mode, symbolStart(inst.id), def.markers)
+        return SymbolForms.frameRef(inst.timeKeys, f, def.symDur, mode != SymbolPlayback.HOLD && symbolCycles(def.id), mode, symbolStart(inst.id), def.markers)
     }
     private fun symbolPlaybackOf(inst: MediaItem): Int = SymbolPlayback.mode(inst.symLoop, inst.symOnce)
     /** Начало плашки экземпляра на таймлайне (кадр, с которого Play Once проигрывает символ). */
@@ -4340,8 +4371,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun needsAllFrames(inst: MediaItem, def: MediaItem): Boolean =
         (inst.timeKeys.isEmpty() && SymbolPlayback.needsAllFrames(symbolPlaybackOf(inst), false, symbolCycles(def.id))) ||
             inst.timeKeys.sortedBy { it.frame }.zipWithNext().any { (a, b) ->
-                // спринт 46: кривая перехода действует и между разными формами - нужны промежуточные кадры символа
-                a.ease != TimeEase.HOLD && a.value != b.value
+                // спринт 47: между разными формами - растворение (кадры ключей), промежуточные кадры нужны только внутри
+                // одной формы или у символа без маркеров
+                a.ease != TimeEase.HOLD && a.value != b.value && (def.markers.none { !it.isAlias } ||
+                    SymbolForms.formStart(def.markers, a.value) == SymbolForms.formStart(def.markers, b.value))
             }
 
     private fun computeSymbolDuration(gid: Int): Int {
@@ -4383,6 +4416,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val formShown = HashMap<Int, SymbolFormCache.Key>()   // экземпляр -> последняя показанная форма (запасная картинка)
     private val formWaits = HashMap<SymbolFormCache.Key, Int>()
     private val formFails = HashMap<SymbolFormCache.Key, Int>()
+    /** Спринт 47: когда форма в последний раз не снялась (отказ больше не вечный: повтор через [FORM_RETRY_MS]). */
+    private val formFailAt = HashMap<SymbolFormCache.Key, Long>()
+    /**
+     * Спринт 47: формы, снятые «как есть» (не все текстуры участников успели загрузиться - большой старый проект при
+     * открытии). Раньше такой снимок считался готовым навсегда, и форма (например, закрытый рот) пропадала с холста,
+     * хотя в маркерах была. Теперь она переснимается, когда загрузка закончится (не больше [FORM_PROVISIONAL_RETRIES] раз).
+     */
+    private val formProvisional = HashMap<SymbolFormCache.Key, Int>()
+    /** Спринт 47: символы, о сбое снимка которых уже сказано (сообщение не повторяется на каждом повторе). */
+    private val formWarnedDefs = HashSet<Int>()
+    private val FORM_RETRY_MS = 4000L
+    /** Спринт 47: не больше смесей форм на один символ в экспорте (16 шагов на переход - десятки переходов). */
+    private val EXPORT_BLEND_LIMIT = 384
+    private val FORM_PROVISIONAL_RETRIES = 4
+    /** Спринт 47: обрезанные снимки форм для растворения (символ, кадр, поколение) - смеси одного перехода не переснимают формы. */
+    private val formSources = LinkedHashMap<Triple<Int, Int, Int>, com.vibetoon.domain.project.FormBlend.Pixels>(8, 0.75f, true)
+    private val FORM_SOURCE_BYTES = 24L * 1024 * 1024
     private var nextFormTexId = FORM_TEX_BASE
     private var formSignature = 0
     private var formBudgetWarned = false
@@ -4420,11 +4470,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Вытесненные (и отклонённые, когда пришло время повтора) текстуры слоёв текущей сцены загружаются заново. */
-    private fun reloadNonResident() {
+    private fun reloadNonResident(includeSymbolMembers: Boolean = false) {
         if (residency.nonResident.isEmpty()) return
         val pid = projectId ?: return
         val sc = scene ?: return
-        val ids = residency.toReload(sc.textureIds, SystemClock.uptimeMillis())
+        // спринт 47: участники символов не видны на главной сцене, но нужны снимкам форм: вытесненная текстура участника
+        // раньше не возвращалась, и форма (например, закрытый рот) снималась пустой
+        val wanted = if (includeSymbolMembers || formQueue.isNotEmpty() || formProvisional.isNotEmpty()) symbolMemberTextureIds(sc.textureIds) else sc.textureIds
+        val ids = residency.toReload(wanted, SystemClock.uptimeMillis())
         if (ids.isEmpty()) return
         val f = _frame.value
         var cells = false; var videos = false; var fx = false
@@ -4444,6 +4497,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (videos) updateVideoFrames(f)
         if (cells) updateCells(f)
         if (fx) updateTextFx(f)
+    }
+
+    /** Спринт 47: id текстур сцены плюс участники всех символов (для догрузки перед снимком форм). */
+    private fun symbolMemberTextureIds(sceneIds: IntArray): IntArray {
+        val out = LinkedHashSet<Int>(sceneIds.size + 16)
+        sceneIds.forEach { out += it }
+        for (d in media) if (d.kind == MediaKind.GROUP && d.symDur > 0) out += symbolMembers(d.id)
+        return out.toIntArray()
     }
 
     /** Сообщает рендереру, какие текстуры можно вытеснять (только восстановимые без потерь, см. TextureEviction). */
@@ -4493,7 +4554,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Форму можно хранить обрезанной, только если экземпляр не деформирован (сетка/варп/перспектива берут весь квадрат). */
     private fun formCrop(instId: Int): Boolean = instId !in meshLayers && instId !in warpLayers && instId !in perspLayers && instId !in turbLayers
 
-    private fun formKey(inst: MediaItem, def: MediaItem, f: Int) = SymbolFormCache.Key(def.id, symbolKey(inst, def, f), formCrop(inst.id))
+    private fun formKey(inst: MediaItem, def: MediaItem, f: Int): SymbolFormCache.Key = refKey(def.id, symbolRef(inst, def, f), formCrop(inst.id))
+
+    /** Спринт 47: ключ кэша для формы или смеси двух форм. */
+    private fun refKey(defId: Int, ref: com.vibetoon.domain.project.FormRef, crop: Boolean): SymbolFormCache.Key =
+        if (ref.blended) SymbolFormCache.Key(defId, ref.local, crop, ref.to, ref.mix) else SymbolFormCache.Key(defId, ref.local, crop)
+
+    /** Кадры маркеров символа - непустые формы (предпочтительная запасная картинка). */
+    private fun markerFrames(def: MediaItem): Set<Int> = def.markers.mapTo(HashSet()) { it.target }
 
     /** Таблица форм для сцены кадра [f]; недостающие формы ставятся в очередь (текущий кадр - первым). */
     private fun buildAliases(f: Int): TextureAliases {
@@ -4506,8 +4574,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ids[i] = inst.id
             val fresh = formCache.fresh(key)
             if (fresh == null) requestForm(key, urgent = true)
+            // спринт 47: пока смесь двух форм не готова - ближайшая из двух форм (не устаревшая и не чужая)
+            val near = if (key.blended) SymbolFormCache.Key(def.id, if (key.mix * 2 >= com.vibetoon.domain.project.SymbolForms.MIX_STEPS) key.to else key.local, key.crop) else null
+            if (fresh == null && near != null && formCache.fresh(near) == null) requestForm(near, urgent = true)
             // запасная картинка: прошлая форма этого экземпляра, иначе любая готовая форма символа (не пустота)
-            val back = formShown[inst.id]?.let { k -> formCache.any(k)?.let { k to it } } ?: formCache.any(key)?.let { key to it } ?: formCache.anyOf(def.id, key.crop)
+            val back = near?.let { k -> formCache.fresh(k)?.let { k to it } } ?: formShown[inst.id]?.let { k -> formCache.any(k)?.let { k to it } } ?: formCache.any(key)?.let { key to it }
+                ?: formCache.anyOf(def.id, key.crop, markerFrames(def))
             val main = fresh ?: back?.second
             prim[i] = main?.texId ?: -1
             fb[i] = back?.second?.texId ?: -1
@@ -4515,8 +4587,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             back?.second?.rect?.copyInto(rects, i * 8 + 4)
             if (fresh != null) formShown[inst.id] = key
             if (_playing.value) {   // упреждение: формы ближайших кадров снимаются заранее
+                // спринт 47: каждый из ближайших 12 кадров (смеси перехода идут подряд), дальше - реже
+                for (d in 1..12) requestForm(formKey(inst, def, f + d), urgent = false)
                 val step = maxOf(1, _animation.value.settings.fps / 8)
-                for (d in 1..8) requestForm(formKey(inst, def, f + d * step), urgent = false)
+                for (d in 2..8) requestForm(formKey(inst, def, f + 12 + d * step), urgent = false)
             }
         }
         return TextureAliases(ids, prim, fb, rects)
@@ -4532,7 +4606,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun requestForm(key: SymbolFormCache.Key, urgent: Boolean) {
-        if (formCache.fresh(key) != null || (formFails[key] ?: 0) >= 3) return
+        if (formCache.fresh(key) != null) return
+        if ((formFails[key] ?: 0) >= 3) {
+            // спринт 47: отказ не вечный - через несколько секунд форма снимается снова (текстуры могли догрузиться)
+            if (SystemClock.uptimeMillis() - (formFailAt[key] ?: 0L) < FORM_RETRY_MS) return
+            formFails.remove(key); formFailAt.remove(key)
+        }
         if (urgent) { formQueue.remove(key); formQueue.addFirst(key) } else if (key !in formQueue) formQueue.addLast(key)
         kickFormWorker()
     }
@@ -4555,7 +4634,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             requestForm(formKey(inst, def, f), urgent = true)
             for (k in inst.timeKeys) requestForm(formKey(inst, def, k.frame), urgent = false)
             for (m in def.markers) requestForm(SymbolFormCache.Key(def.id, m.target, crop), urgent = false)
+            // спринт 47: смеси переходов рядом с плейхедом (Play и скраббинг не ждут растворения)
+            if (inst.timeKeys.size >= 2) {
+                val fps = _animation.value.settings.fps.coerceAtLeast(1)
+                val range = maxOf(0, f - fps * 2)..(f + fps * 4)
+                for (r in com.vibetoon.domain.project.SymbolForms.blendsOn(range) { symbolRef(inst, def, it) }) requestForm(refKey(def.id, r, crop), urgent = false)
+            }
         }
+        retryProvisionalForms()
+    }
+
+    /** Спринт 47: формы, снятые до конца загрузки текстур, переснимаются, когда загрузка закончилась. */
+    private fun retryProvisionalForms() {
+        if (formProvisional.isEmpty() || _playing.value || RenderNative.pendingUploadBytes() > 0L || _opening.value) return
+        for (key in formProvisional.keys.toList()) {
+            formWaits.remove(key)
+            if (key !in formQueue) formQueue.addLast(key)
+        }
+        kickFormWorker()
     }
 
     /** Подставляет в экземпляры символов нужные формы на кадре [f] (мгновенно, если форма уже снята). */
@@ -4569,6 +4665,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun invalidateForms() {
         formCache.invalidate()
         formQueue.clear(); formWaits.clear(); formFails.clear()
+        formFailAt.clear(); formProvisional.clear(); formSources.clear()
         formSignature = symbolContentSignature()
         regenFormsSoon()
     }
@@ -4584,6 +4681,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val ids = formCache.clear()
         if (dropTextures && ids.isNotEmpty()) RenderHost.view?.dropTextures(ids.toIntArray())
         formQueue.clear(); formShown.clear(); formWaits.clear(); formFails.clear()
+        formFailAt.clear(); formProvisional.clear(); formSources.clear(); formWarnedDefs.clear()
         formSignature = 0; formBudgetWarned = false
     }
 
@@ -4624,15 +4722,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             while (true) {
                 if (appBackground || projectId == null) break
                 val key = formQueue.removeFirstOrNull() ?: break
-                if (formCache.fresh(key) != null) continue
+                if (formCache.fresh(key) != null && key !in formProvisional) continue
                 val def = media.firstOrNull { it.id == key.def && it.symDur > 0 } ?: continue
                 val gen = formCache.gen
                 val strict = (formWaits[key] ?: 0) < SYMBOL_WAIT_LIMIT
-                val bmp = try {
-                    symbolBitmap(def.id, key.local, 0, strict)
+                val made = try {
+                    // спринт 47: смесь двух форм (растворение по кривой ключа) - из двух снимков; обычная форма - как раньше
+                    if (key.blended) blendedForm(def.id, key, strict)
+                    else symbolBitmap(def.id, key.local, 0, strict)?.let { b -> withContext(Dispatchers.Default) { prepareForm(b, key.crop) } }
                 } catch (t: SymbolNotReady) {
-                    // текстуры участников ещё грузятся: прежняя картинка остаётся, снимок чуть позже
-                    formWaits[key] = (formWaits[key] ?: 0) + 1
+                    // текстуры участников ещё грузятся: прежняя картинка остаётся, снимок чуть позже. Спринт 47: пока идёт
+                    // загрузка проекта (очередь текстур не пуста), ожидание не считается - большой проект больше не
+                    // снимается «как есть» с пустыми участниками; вытесненные текстуры участников загружаются заново.
+                    if (RenderNative.pendingUploadBytes() == 0L && !_opening.value) formWaits[key] = (formWaits[key] ?: 0) + 1
+                    reloadNonResident(includeSymbolMembers = true)
                     if (key !in formQueue) formQueue.addLast(key)
                     kotlinx.coroutines.delay(300)
                     continue
@@ -4641,23 +4744,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (t: Throwable) {
                     Log.w("VT/Symbols", "form ${def.name}:${key.local} not drawn: ${t.message}"); null
                 }
-                if (bmp == null) {
+                if (made == null) {
                     val n = (formFails[key] ?: 0) + 1
                     formFails[key] = n
-                    if (n >= 3 && !appBackground) _state.value = UiState.Message("Не удалось нарисовать символ «${def.name}»: прежняя картинка сохранена, повтор при следующем кадре")
-                    else if (key !in formQueue) formQueue.addLast(key)
+                    if (n >= 3) formFailAt[key] = SystemClock.uptimeMillis()
+                    if (n >= 3) {
+                        // спринт 47: повтор через несколько секунд; сообщение - один раз на символ, а не на каждый повтор
+                        if (!appBackground && formWarnedDefs.add(key.def)) _state.value = UiState.Message("Не удалось нарисовать символ «${def.name}»: прежняя картинка сохранена, повтор при следующем кадре")
+                    } else if (key !in formQueue) formQueue.addLast(key)
                     continue
                 }
                 if (gen != formCache.gen) {   // символ правили во время снимка - снимок уже устарел
-                    bmp.recycle(); if (key !in formQueue) formQueue.addFirst(key); continue
+                    made.first.recycle(); if (key !in formQueue) formQueue.addFirst(key); continue
                 }
-                formWaits.remove(key); formFails.remove(key)
-                val prepared = withContext(Dispatchers.Default) { prepareForm(bmp, key.crop) }
+                formWaits.remove(key); formFails.remove(key); formFailAt.remove(key); formWarnedDefs.remove(key.def)
+                // спринт 47: снимок «как есть» - временный, переснимется после загрузки текстур
+                if (strict) formProvisional.remove(key)
+                else { val n = (formProvisional[key] ?: 0) + 1; if (n > FORM_PROVISIONAL_RETRIES) formProvisional.remove(key) else formProvisional[key] = n }
+                val prepared = made
                 val id = nextFormTexId++
                 val uploaded = runCatching { RenderNative.uploadBitmap(id, prepared.first) }.getOrDefault(false)
                 val bytes = prepared.first.width.toLong() * prepared.first.height * 4 * 4 / 3
                 prepared.first.recycle()
-                if (!uploaded) { formFails[key] = 3; continue }
+                if (!uploaded) { formFails[key] = 3; formFailAt[key] = SystemClock.uptimeMillis(); continue }
                 formCache.budgetBytes = FORM_BUDGET_BYTES
                 val drop = formCache.put(key, SymbolFormCache.Entry(id, prepared.second, bytes, gen), pinnedForms())
                 dropFormTexturesLater(drop)
@@ -4679,7 +4788,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     kotlinx.coroutines.delay(50); verifyFormTexture(key, id, tries + 1); return@launch
                 }
                 formCache.remove(key)
-                formFails[key] = 3
+                formFails[key] = 3; formFailAt[key] = SystemClock.uptimeMillis()
                 if (!formBudgetWarned) {
                     formBudgetWarned = true
                     _state.value = UiState.Message("Не хватает памяти GPU для всех форм символа: часть форм показывается с задержкой")
@@ -4723,6 +4832,66 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return out to rect
     }
 
+    /**
+     * Спринт 47: смесь двух форм символа для ключа [key] (растворение формы key.local в форму key.to). Снимки форм
+     * берутся из [formSource] (обрезанные, переиспользуются всеми шагами перехода), смешиваются в premultiplied-цветах.
+     */
+    private suspend fun blendedForm(defId: Int, key: SymbolFormCache.Key, strict: Boolean, keep: Boolean = strict): Pair<android.graphics.Bitmap, FloatArray>? {
+        val a = formSource(defId, key.local, strict, keep) ?: return null
+        val b = formSource(defId, key.to, strict, keep) ?: return null
+        return withContext(Dispatchers.Default) {
+            val w = key.mix.toFloat() / com.vibetoon.domain.project.SymbolForms.MIX_STEPS
+            // снимки разного размера (снимок уменьшался из-за памяти GPU) не смешиваются - ближайшая из двух форм
+            val mixed = if (a.fullW == b.fullW && a.fullH == b.fullH) com.vibetoon.domain.project.FormBlend.blend(a, b, w) else if (w >= 0.5f) b else a
+            formBitmap(mixed, key.crop)
+        }
+    }
+
+    /** Картинка формы из обрезанного снимка: обрезанная (с прямоугольником) или во весь квадрат для деформируемых экземпляров. */
+    private fun formBitmap(p: com.vibetoon.domain.project.FormBlend.Pixels, crop: Boolean): Pair<android.graphics.Bitmap, FloatArray> {
+        if (p.empty) return android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888) to floatArrayOf(0f, 0f, 1f, 1f)
+        val bmp = if (crop) android.graphics.Bitmap.createBitmap(p.px, p.w, p.h, android.graphics.Bitmap.Config.ARGB_8888)
+            else android.graphics.Bitmap.createBitmap(com.vibetoon.domain.project.FormBlend.toFull(p), p.fullW, p.fullH, android.graphics.Bitmap.Config.ARGB_8888)
+        var out = bmp
+        val rect = if (crop) com.vibetoon.domain.project.FormBlend.rect(p) else floatArrayOf(0f, 0f, 1f, 1f)
+        val bytes = out.width.toLong() * out.height * 4
+        if (bytes > FORM_MAX_BYTES) {
+            val k = kotlin.math.sqrt(FORM_MAX_BYTES.toDouble() / bytes)
+            val scaled = android.graphics.Bitmap.createScaledBitmap(out, maxOf(1, (out.width * k).toInt()), maxOf(1, (out.height * k).toInt()), true)
+            if (scaled !== out) out.recycle()
+            out = scaled
+        }
+        return out to rect
+    }
+
+    /**
+     * Спринт 47: обрезанный снимок формы (символ, внутренний кадр) для смесей. Кэш небольшой ([FORM_SOURCE_BYTES]) и по
+     * поколению форм: правка символа - снимки заново. Снимок «как есть» (не все текстуры загружены) не кэшируется.
+     */
+    private suspend fun formSource(defId: Int, local: Int, strict: Boolean, keep: Boolean = strict): com.vibetoon.domain.project.FormBlend.Pixels? {
+        val k = Triple(defId, local, formCache.gen)
+        formSources[k]?.let { return it }
+        val bmp = symbolBitmap(defId, local, 0, strict) ?: return null
+        val p = withContext(Dispatchers.Default) {
+            val w = bmp.width; val h = bmp.height
+            val px = IntArray(w * h)
+            bmp.getPixels(px, 0, w, 0, 0, w, h)
+            bmp.recycle()
+            com.vibetoon.domain.project.FormBlend.crop(px, w, h)
+        }
+        if (!keep) return p
+        if (formSources.keys.any { it.third != formCache.gen }) formSources.keys.removeAll { it.third != formCache.gen }
+        formSources[k] = p
+        var total = formSources.values.sumOf { it.bytes }
+        val iter = formSources.entries.iterator()
+        while (total > FORM_SOURCE_BYTES && formSources.size > 2 && iter.hasNext()) {
+            val e = iter.next()
+            if (e.key == k) continue
+            total -= e.value.bytes; iter.remove()
+        }
+        return p
+    }
+
     /** Какую форму экземпляр показывает на кадре [frame] (для подсветки в панели маркеров - та же функция, что у холста). */
     fun shownMarkerAt(instId: Int, frame: Int): FrameMarker? {
         val inst = media.firstOrNull { it.id == instId && it.kind == MediaKind.SYMBOL } ?: return null
@@ -4760,7 +4929,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         try {
             for (n in media.filter { it.kind == MediaKind.SYMBOL && it.id in mem }) {
                 val nd = media.firstOrNull { it.id == n.symRef && it.symDur > 0 } ?: continue
-                val bmp = symbolBitmapLocked(nd.id, symbolKey(n, nd, local), depth + 1, strict) ?: continue
+                // спринт 47: вложенный экземпляр в переходе между формами - та же смесь, что на холсте
+                val ref = symbolRef(n, nd, local)
+                val bmp = (if (ref.blended) nestedBlend(nd.id, ref, depth + 1, strict) else symbolBitmapLocked(nd.id, ref.local, depth + 1, strict)) ?: continue
                 out += n.id to bmp
             }
         } catch (t: Throwable) {
@@ -4768,6 +4939,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             throw t
         }
         return out
+    }
+
+    /** Спринт 47: смесь двух форм вложенного символа (полные снимки одного размера). */
+    private suspend fun nestedBlend(defId: Int, ref: com.vibetoon.domain.project.FormRef, depth: Int, strict: Boolean): android.graphics.Bitmap? {
+        val a = symbolBitmapLocked(defId, ref.local, depth, strict) ?: return null
+        val bOrNull: android.graphics.Bitmap? = try {
+            symbolBitmapLocked(defId, ref.to, depth, strict)
+        } catch (t: Throwable) {
+            a.recycle(); throw t
+        }
+        val b = bOrNull ?: return a
+        if (a.width != b.width || a.height != b.height) { return if (ref.weight >= 0.5f) { a.recycle(); b } else { b.recycle(); a } }
+        return withContext(Dispatchers.Default) {
+            val w = a.width; val h = a.height
+            val pa = IntArray(w * h); val pb = IntArray(w * h)
+            a.getPixels(pa, 0, w, 0, 0, w, h); b.getPixels(pb, 0, w, 0, 0, w, h)
+            a.recycle(); b.recycle()
+            com.vibetoon.domain.project.FormBlend.blendFull(pa, pb, ref.weight, pa)
+            android.graphics.Bitmap.createBitmap(pa, w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        }
     }
 
     /** Картинка вложенной сцены [defId] на внутреннем кадре [local] (прозрачный фон). Сериализовано: вложенные снимки не гоняются. */
@@ -4833,15 +5024,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pinned = HashSet<SymbolFormCache.Key>()
         val owned = ArrayList<Int>()
         val pngs = HashMap<Int, List<ByteArray?>>()
-        var editorForms = 0; var gpuForms = 0; var pngForms = 0
+        var editorForms = 0; var gpuForms = 0; var pngForms = 0; var blendForms = 0
         try {
             for (d in defs) {
                 val insts = top.filter { it.symRef == d.id }
                 val crops = insts.map { formCrop(it.id) }.toSet()
-                val n = d.symDur.coerceAtLeast(1)
-                val keys: Collection<Int> = if (frame != null) insts.map { symbolKey(it, d, frame) }.toSet()
+                val n = SymbolForms.effectiveDuration(d.symDur, d.markers)
+                // спринт 47: смеси форм (растворение по кривой ключа) на кадрах экспорта; их две формы нужны как запасные
+                val expFrames = if (frame != null) frame..frame else exportRange()?.let { r -> r.start until r.start + r.length } ?: (0 until _animation.value.settings.durationFrames)
+                val blendRefs = insts.flatMap { i -> SymbolForms.blendsOn(expFrames) { symbolRef(i, d, it) } }.distinct().take(EXPORT_BLEND_LIMIT)
+                val ends = blendRefs.flatMap { listOf(it.local, it.to) }
+                val keys: Collection<Int> = (if (frame != null) insts.map { symbolKey(it, d, frame) }.toSet()
                     else if (insts.any { needsAllFrames(it, d) }) (0 until n).toList()
-                    else (insts.flatMap { i -> i.timeKeys.map { it.value.coerceIn(0, n - 1) } } + 0).toSet()   // статичный символ: только кадры ключей
+                    else (insts.flatMap { i -> i.timeKeys.map { it.value.coerceIn(0, n - 1) } } + 0).toSet()).toSet() + ends   // статичный символ: только кадры ключей
                 val list = MutableList<ByteArray?>(n) { null }
                 for (k in keys) {
                     if (k !in list.indices) continue
@@ -4882,12 +5077,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     pngForms++
                 }
                 pngs[d.id] = list
+                // спринт 47: смеси форм - готовые смеси редактора или новые (из снимков форм) в свои текстуры экспорта
+                for (ref in blendRefs) for (c in crops) {
+                    val key = refKey(d.id, ref, c)
+                    val e = formCache.fresh(key)
+                    if (e != null && com.vibetoon.domain.project.ExportSymbolForms.editorFormFullRes(e.rect, dimW, dimH, FORM_MAX_BYTES)) {
+                        forms[key] = com.vibetoon.domain.project.ExportSymbolForms.Form(e.texId, e.rect); pinned += key; editorForms++; continue
+                    }
+                    val madeOrNull = try {
+                        blendedForm(d.id, key, strict = false, keep = true)
+                    } catch (t: kotlinx.coroutines.CancellationException) {
+                        throw t
+                    } catch (t: Throwable) {
+                        Log.w("VT/Export", "blend ${d.name}:${ref.local}->${ref.to} skipped: ${t.message}"); null
+                    }
+                    val made = madeOrNull ?: continue
+                    val bytes = com.vibetoon.domain.project.ExportSymbolForms.textureBytes(made.first.width, made.first.height)
+                    if (bytes > room) { made.first.recycle(); continue }   // памяти мало - кадр перехода покажет ближайшую форму
+                    val id = nextFormTexId++
+                    val ok = runCatching { RenderNative.uploadBitmap(id, made.first) }.getOrDefault(false)
+                    made.first.recycle()
+                    if (!ok) continue
+                    owned += id; room -= bytes; blendForms++
+                    forms[key] = com.vibetoon.domain.project.ExportSymbolForms.Form(id, made.second)
+                }
             }
         } catch (t: Throwable) {
             if (owned.isNotEmpty()) RenderHost.view?.dropTextures(owned.toIntArray())
             throw t
         }
-        Log.i("VT/Export", "symbol forms: editor $editorForms, gpu $gpuForms, png $pngForms")
+        if (blendForms > 0) {
+            // спринт 47: смеси грузятся через общую очередь текстур - экспорт начинается, когда они уже на GPU
+            var waited = 0
+            while (RenderNative.pendingUploadBytes() > 0L && waited < 600) { RenderHost.view?.requestRender(); delay(15); waited++ }
+        }
+        Log.i("VT/Export", "symbol forms: editor $editorForms, gpu $gpuForms, png $pngForms, blends $blendForms")
         exportOwnedForms.addAll(owned)
         exportPinnedForms = pinned
         pushEvictable()
@@ -13049,8 +13273,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             for (si in symInst) {   // экземпляры символов: готовая форма на GPU (или запасная картинка) на этом кадре
                 val def = symDefs[si.symRef] ?: continue
                 val mode = symModes[si.id] ?: SymbolPlayback.HOLD
-                val key = SymbolForms.frameAt(si.timeKeys, pf, def.first, def.second && mode != SymbolPlayback.HOLD, mode, clipsCopy[si.id]?.start ?: 0, symMarks[si.symRef].orEmpty())   // то же правило, что в редакторе
-                val form = symCache.form(si.symRef, key, symCropExp[si.id] == true)
+                val ref = SymbolForms.frameRef(si.timeKeys, pf, def.first, def.second && mode != SymbolPlayback.HOLD, mode, clipsCopy[si.id]?.start ?: 0, symMarks[si.symRef].orEmpty())   // то же правило, что в редакторе
+                val key = ref.dominant
+                val cropF = symCropExp[si.id] == true
+                // спринт 47: переход между формами - смесь двух форм (если её не хватило памяти - ближайшая форма)
+                val form = (if (ref.blended) symCache.forms[SymbolFormCache.Key(si.symRef, ref.local, cropF, ref.to, ref.mix)] else null) ?: symCache.form(si.symRef, key, cropF)
                 if (form != null) { formAliases += si.id to form; continue }
                 val png = symCache.png(si.symRef, key) ?: continue
                 if (session == null) continue
