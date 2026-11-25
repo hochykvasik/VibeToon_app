@@ -1695,4 +1695,18 @@ VibeToon: фоновая работа|VibeToon: background work
 Выбрать все ключи слоя|Select all layer keys
 У слоя нет ключей|The layer has no keys
 Выбрано ключей слоя: {}|Layer keys selected: {}
+Цвет взят кнопкой пера|Color picked with the pen button
+Наклон пера {}° → перо почти вертикально: штамп не меняется|Pen tilt {}° → pen almost upright: the stamp does not change
+Не использовать|Do not use
+Ластик, пока зажата|Eraser while held
+Обратный конец пера: ластик|Pen back end: eraser
+Кнопка пера нажата: {}|Pen button pressed: {}
+Кнопка пера|Pen button
+Зажмите кнопку на корпусе и коснитесь холста: «Ластик» стирает этим штрихом, «Пипетка» берёт цвет в кисть. Работает с кистью; обратный конец пера всегда важнее кнопки|Hold the barrel button and touch the canvas: "Eraser" erases with that stroke, "Color Picker" picks the color into the brush. Works with the brush; the pen's back end always wins over the button
+Кривая ключа|Key curve
+Кривая ключа: кадр {}|Key curve: frame {}
+У дорожек этого ключа разные кривые: выбор задаст одну всем|This key's tracks have different curves: a choice sets one for all
+Меняется только этот ключ, до следующего; остальные ключи не трогаются|Only this key changes, up to the next one; other keys are untouched
+Выберите один ключ: тапните ◆ на таймлайне|Select one key: tap ◆ on the timeline
+Только ключ кадра {}: остальные ключи не меняются|Only the key on frame {}: other keys stay unchanged
 """

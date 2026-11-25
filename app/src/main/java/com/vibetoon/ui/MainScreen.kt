@@ -203,7 +203,9 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
         confirmButton = {}
     )
     val curveOpen by vm.curveEditor.collectAsStateWithLifecycle()
-    if (curveOpen) com.vibetoon.ui.timeline.CurveEditorDialog(vm.currentCurve(), onChange = { c, first -> vm.setCurve(c, first) }) { vm.openCurveEditor(false) }
+    val curveTitle by vm.curveTitle.collectAsStateWithLifecycle()
+    val curveNote by vm.curveNote.collectAsStateWithLifecycle()
+    if (curveOpen) com.vibetoon.ui.timeline.CurveEditorDialog(vm.currentCurve(), onChange = { c, first -> vm.setCurve(c, first) }, title = curveTitle, note = curveNote) { vm.openCurveEditor(false) }
 
     ExportDialog(vm, showExport) { showExport = false }
 
@@ -428,6 +430,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                         val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                         val pens = event.changes.filter { it.type == PointerType.Stylus || it.type == PointerType.Eraser }
                         if (pens.isNotEmpty()) touchFilter.observePen(pens.any { it.pressed }, pens.maxOf { it.uptimeMillis })
+                        // спринт 44: защита от ладони у рисующих инструментов - от любого контакта пера (не только штриха кистью)
+                        if (pens.any { it.pressed || it.previousPressed }) vm.paintStylus(pens.any { it.pressed })
                     }
                 }
             }
@@ -527,13 +531,24 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                     // Рисование (Кисть / Ластик): штрих идёт сразу, без порога сдвига. Перо: давление и исторические точки;
                     // касания пальцем рядом с пером игнорируются (ладонь). Второй палец при рисовании пальцем отменяет штрих
                     // и превращается в жест камеры (щипок/сдвиг).
+                    if (vm.rasterToolActive() && down.type == PointerType.Touch && vm.paintPalmBlocked()) {
+                        // спринт 44: ладонь рядом с пером не запускает растровый инструмент (как у кисти)
+                        down.consume()
+                        do { val e = awaitPointerEvent(); e.changes.forEach { it.consume() } } while (e.changes.any { it.pressed })
+                        vm.finishCanvasGesture()
+                        return@awaitEachGesture
+                    }
                     if (vm.rasterToolActive()) {
                         if (vm.rasterDown(down.position.x, down.position.y)) {
                             down.consume()
                             var cancelled = false
                             while (true) {
-                                val ev = awaitPointerEvent()
+                                val ev = try { awaitPointerEvent() } catch (e: kotlinx.coroutines.CancellationException) { vm.rasterCancel(); throw e }
                                 val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!c.pressed && com.vibetoon.domain.input.StylusSample.release(c.isConsumed, c.uptimeMillis, c.previousUptimeMillis,
+                                        stylusTracker.canceled(c.uptimeMillis)) == com.vibetoon.domain.input.StylusSample.Release.CANCEL) {
+                                    vm.rasterCancel(); cancelled = true; break
+                                }
                                 val secondFinger = ev.changes.firstOrNull { it.id != down.id && it.pressed && !(gs?.touchDetection == true && (down.type == PointerType.Stylus || down.type == PointerType.Eraser) && it.type == PointerType.Touch) }
                                 if (secondFinger != null) {
                                     if (c.pressed && vm.beginSelectionGesture(c.position.x, c.position.y, secondFinger.position.x, secondFinger.position.y)) {
@@ -577,20 +592,36 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                         }
                         if (stylus) vm.paintStylus(true)
                         // Stylus sprint: обратный конец пера - ластик; нажим 1.0 для пальца и пера без датчика;
-                        // исторические точки получают свой нажим (MotionEvent или интерполяция), фантом на отпускании отбрасывается
-                        if (stylus) vm.stylusTip(down.type == PointerType.Eraser || stylusTracker.eraserTip)
+                        // исторические точки получают свой нажим (MotionEvent или интерполяция), фантом на отпускании отбрасывается.
+                        // Спринт 44: кнопка на корпусе пера - ластик, пока зажата, или пипетка (настройка «Кнопка пера»)
+                        if (stylus && !vm.stylusStart(down.type == PointerType.Eraser || stylusTracker.eraserTip, stylusTracker.barrelPressed, down.position.x, down.position.y)) {
+                            down.consume()
+                            do { val e = awaitPointerEvent(); e.changes.forEach { it.consume() } } while (e.changes.any { it.pressed })
+                            vm.paintStylus(false)
+                            vm.finishCanvasGesture()
+                            return@awaitEachGesture
+                        }
                         var lastP = com.vibetoon.domain.input.StylusSample.pressure(down.pressure, stylus)
                         var lastPos = down.position
                         val screenDensity = this@pointerInput.density
                         // спринт 40: наклон и направление пера идут в кисть (режим наклона в настройках «Стилус»)
                         if (stylus) vm.paintTilt(stylusTracker.tiltRadians, stylusTracker.orientationRadians, first = true)
-                        if (vm.paintDown(down.position.x, down.position.y, lastP)) {
+                        if (vm.paintDown(down.position.x, down.position.y, lastP, stylus)) {
                             down.consume()
                             var cancelled = false
                             while (true) {
-                                val ev = awaitPointerEvent()
+                                // спринт 44: жест прерван (холст ушёл из композиции) - штрих отменяется, перо, ладонь и
+                                // ластик обратного конца не «залипают» до следующего штриха
+                                val ev = try { awaitPointerEvent() } catch (e: kotlinx.coroutines.CancellationException) {
+                                    vm.paintCancel(); vm.paintStylus(false); vm.stylusTipEnd(); throw e
+                                }
                                 val c = ev.changes.firstOrNull { it.id == down.id } ?: break
                                 if (!stylus && ev.changes.any { it.id != down.id && it.pressed }) { vm.paintCancel(); cancelled = true; break }
+                                // спринт 44: ACTION_CANCEL / FLAG_CANCELED (жест «Назад», системная защита от ладони) - штрих отменяется, а не запекается
+                                if (!c.pressed && com.vibetoon.domain.input.StylusSample.release(c.isConsumed, c.uptimeMillis, c.previousUptimeMillis,
+                                        stylusTracker.canceled(c.uptimeMillis)) == com.vibetoon.domain.input.StylusSample.Release.CANCEL) {
+                                    vm.paintCancel(); vm.paintStylus(false); vm.stylusTipEnd(); vm.finishCanvasGesture(); return@awaitEachGesture
+                                }
                                 if (!c.pressed) {
                                     if (com.vibetoon.domain.input.StylusSample.keepReleasePoint(lastPos.x, lastPos.y, c.position.x, c.position.y, screenDensity))
                                         vm.paintMove(c.position.x, c.position.y, com.vibetoon.domain.input.StylusSample.releasePressure(c.pressure, stylus, lastP))
@@ -1071,7 +1102,10 @@ private fun PressureHudLayer(vm: MainViewModel) {
     val live by vm.livePressure.collectAsStateWithLifecycle()
     val curve = remember(st.pressureCurve) { com.vibetoon.domain.input.PressureCurve.decode(st.pressureCurve) }
     val v = live ?: return
-    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.TopEnd) {
+    // спринт 44: индикатор - в верхнем углу со стороны, противоположной рисующей руке и панели слоёв (у правши
+    // правая рука и выдвижная панель закрывали правый угол); режим левши - зеркально
+    val atStart = com.vibetoon.domain.input.EditorInputPolicy.hudAtStart(st.leftHanded)
+    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = if (atStart) Alignment.TopStart else Alignment.TopEnd) {
         com.vibetoon.ui.shell.PressureCurveGraph(curve, v[0], Modifier.width(88.dp).heightIn(min = 62.dp, max = 62.dp))
     }
 }

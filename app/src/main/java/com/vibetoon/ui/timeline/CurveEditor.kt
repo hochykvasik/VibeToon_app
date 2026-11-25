@@ -54,7 +54,7 @@ private const val HIT_DP = 26f
  * кривую и признак «начало жеста» (точка отмены).
  */
 @Composable
-fun CurveEditorDialog(initial: Curve, onChange: (Curve, Boolean) -> Unit, onDismiss: () -> Unit) {
+fun CurveEditorDialog(initial: Curve, onChange: (Curve, Boolean) -> Unit, title: String = "Кривая плавности", note: String? = null, onDismiss: () -> Unit) {
     var curve by remember { mutableStateOf(initial) }
     var sel by remember { mutableIntStateOf(0) }
     var menu by remember { mutableStateOf(false) }
@@ -69,9 +69,11 @@ fun CurveEditorDialog(initial: Curve, onChange: (Curve, Boolean) -> Unit, onDism
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
-        title = { Text("Кривая плавности") },
+        title = { Text(title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // спринт 44: «Кривая ключа» - какой ключ правится (остальные не меняются)
+                if (note != null) Text(note, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box {
                         OutlinedButton(onClick = { menu = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp), modifier = Modifier.height(34.dp)) {

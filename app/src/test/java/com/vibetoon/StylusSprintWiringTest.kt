@@ -20,7 +20,8 @@ class StylusSprintWiringTest {
         assertTrue("исторические точки со своим нажимом", s.contains("StylusSample.historical(stylusTracker.historyFor(c.uptimeMillis), lastP, pm, c.historical.size, stylus)"))
         assertTrue(s.contains("c.historical.forEachIndexed { i, h -> vm.paintMove(h.position.x, h.position.y, hp[i]) }"))
         assertTrue("фантом на отпускании отбрасывается", s.contains("StylusSample.keepReleasePoint(lastPos.x, lastPos.y, c.position.x, c.position.y, screenDensity)"))
-        assertTrue("ластик на обратном конце пера", s.contains("vm.stylusTip(down.type == PointerType.Eraser || stylusTracker.eraserTip)"))
+        // спринт 44: обратный конец и кнопка на корпусе решаются вместе (StylusButtons.start)
+        assertTrue("ластик на обратном конце пера", s.contains("vm.stylusStart(down.type == PointerType.Eraser || stylusTracker.eraserTip, stylusTracker.barrelPressed, down.position.x, down.position.y)"))
         assertTrue(s.contains("vm.stylusTipEnd()"))
         assertTrue("индикатор нажима", s.contains("PressureHudLayer(vm)"))
         assertTrue("старый жёсткий откат 0.05 убран", !s.contains("down.pressure.coerceIn(0.05f, 1f)"))
@@ -37,7 +38,7 @@ class StylusSprintWiringTest {
         assertTrue("хвост догоняет перо до запекания", s.contains("for (s in st.finish()) paintMoveCore(s.x, s.y, s.pressure)"))
         assertTrue(s.contains("private fun paintDownCore(") && s.contains("private fun paintUpCore()"))
         assertTrue("ластик на обратном конце можно выключить", s.contains("getBoolean(\"stylus_eraser_tip\", true)"))
-        val down = s.indexOf("fun paintDown(sx: Float, sy: Float, pressure: Float): Boolean")
+        val down = s.indexOf("fun paintDown(sx: Float, sy: Float, pressure: Float, stylus: Boolean = stylusDown): Boolean")
         assertTrue(down >= 0 && s.indexOf("val ok = paintDownCore(sx, sy, p)", down) > down)
     }
 

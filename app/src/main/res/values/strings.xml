@@ -2019,4 +2019,18 @@
     <string name="ui_select_all_layer_keys">Выбрать все ключи слоя</string>
     <string name="ui_the_layer_has_no_keys">У слоя нет ключей</string>
     <string name="ui_layer_keys_selected">Выбрано ключей слоя: {}</string>
+    <string name="ui_color_picked_with_the_pen_button">Цвет взят кнопкой пера</string>
+    <string name="ui_pen_tilt_pen_almost_upright_the_stam">Наклон пера {}° → перо почти вертикально: штамп не меняется</string>
+    <string name="ui_do_not_use">Не использовать</string>
+    <string name="ui_eraser_while_held">Ластик, пока зажата</string>
+    <string name="ui_pen_back_end_eraser">Обратный конец пера: ластик</string>
+    <string name="ui_pen_button_pressed">Кнопка пера нажата: {}</string>
+    <string name="ui_pen_button">Кнопка пера</string>
+    <string name="ui_hold_the_barrel_button_and_touch_the">Зажмите кнопку на корпусе и коснитесь холста: «Ластик» стирает этим штрихом, «Пипетка» берёт цвет в кисть. Работает с кистью; обратный конец пера всегда важнее кнопки</string>
+    <string name="ui_key_curve">Кривая ключа</string>
+    <string name="ui_key_curve_frame">Кривая ключа: кадр {}</string>
+    <string name="ui_this_key_s_tracks_have_different_cur">У дорожек этого ключа разные кривые: выбор задаст одну всем</string>
+    <string name="ui_only_this_key_changes_up_to_the_next">Меняется только этот ключ, до следующего; остальные ключи не трогаются</string>
+    <string name="ui_select_one_key_tap_on_the_timeline">Выберите один ключ: тапните ◆ на таймлайне</string>
+    <string name="ui_only_the_key_on_frame_other_keys_sta">Только ключ кадра {}: остальные ключи не меняются</string>
 </resources>

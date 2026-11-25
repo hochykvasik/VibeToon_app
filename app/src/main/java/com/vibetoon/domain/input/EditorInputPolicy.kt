@@ -16,4 +16,21 @@ object EditorInputPolicy {
     fun cursorRadius(brushSize: Float, screenWidth: Float, layerWidth: Int): Float =
         (brushSize / 2f * (screenWidth / layerWidth.coerceAtLeast(1))).coerceAtLeast(2f)
     fun showCursor(cursorEnabled: Boolean): Boolean = cursorEnabled
+
+    /**
+     * Спринт 44: защита от ладони для рисующих инструментов (кисть, ластик, растровые): касание пальцем не начинает
+     * штрих, пока перо касается экрана и [StylusTouchFilter.GUARD_MS] после его подъёма - тот же интервал, что у
+     * настройки «Определение касаний». Время назад (смена часов не бывает у uptime, но [last] может быть 0) - не блок.
+     */
+    fun palmBlocked(penDown: Boolean, lastPenMillis: Long, nowMillis: Long): Boolean =
+        penDown || (lastPenMillis > 0L && nowMillis >= lastPenMillis && nowMillis - lastPenMillis < StylusTouchFilter.GUARD_MS)
+
+    /** Индикатор нажима обновляется при первом значении штриха или заметном (≥ 0.5 %) изменении. */
+    fun hudChanged(prevRaw: Float?, prevMapped: Float?, raw: Float, mapped: Float): Boolean =
+        prevRaw == null || prevMapped == null || kotlin.math.abs(prevRaw - raw) >= HUD_STEP || kotlin.math.abs(prevMapped - mapped) >= HUD_STEP
+
+    const val HUD_STEP = 0.005f
+
+    /** Угол индикатора нажима: напротив рисующей руки (правша - слева сверху, левша - справа сверху). */
+    fun hudAtStart(leftHanded: Boolean): Boolean = !leftHanded
 }

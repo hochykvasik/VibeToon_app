@@ -39,7 +39,7 @@ class StylusSampleTest {
 
     @Test fun tiltIsReportedInDegrees() {
         assertEquals(45, StylusSample.tiltDegrees((Math.PI / 4).toFloat()))
-        assertNull(StylusSample.tiltDegrees(0f))
+        assertEquals(0, StylusSample.tiltDegrees(0f))   // спринт 44: вертикальное перо, а не «нет данных»
         assertNull(StylusSample.tiltDegrees(Float.NaN))
     }
 }

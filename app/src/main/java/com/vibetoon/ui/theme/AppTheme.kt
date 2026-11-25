@@ -108,15 +108,19 @@ class AppSettings(context: Context) {
     /** Спринт 40: наклон пера меняет кисть (TiltMath.Mode: 0 - не влияет, 1 - толщина, 2 - штриховка, 3 - плоское перо) и сила 0..100. */
     var stylusTilt by mutableStateOf(com.vibetoon.domain.input.TiltMath.Mode.of(p.getInt("stylus_tilt", 0)).id)
     var stylusTiltStrength by mutableStateOf(p.getInt("stylus_tilt_strength", com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH).coerceIn(0, 100))
-    fun saveStylus() { p.edit().putString("pressure_curve", pressureCurve).putInt("stabilization", stabilization.coerceIn(1, 10)).putBoolean("stylus_eraser_tip", stylusEraserTip).putBoolean("pressure_hud", pressureHud).putInt("stylus_tilt", stylusTilt).putInt("stylus_tilt_strength", stylusTiltStrength.coerceIn(0, 100)).apply() }
+    /** Спринт 44: кнопка на корпусе пера (StylusButtons.Action: 0 - не использовать, 1 - ластик, пока зажата, 2 - пипетка). */
+    var stylusButton by mutableStateOf(com.vibetoon.domain.input.StylusButtons.Action.of(p.getInt(com.vibetoon.domain.input.StylusButtons.PREF, com.vibetoon.domain.input.StylusButtons.DEFAULT.id)).id)
+    fun saveStylus() { p.edit().putString("pressure_curve", pressureCurve).putInt("stabilization", stabilization.coerceIn(1, 10)).putBoolean("stylus_eraser_tip", stylusEraserTip).putBoolean("pressure_hud", pressureHud).putInt("stylus_tilt", stylusTilt).putInt("stylus_tilt_strength", stylusTiltStrength.coerceIn(0, 100)).putInt(com.vibetoon.domain.input.StylusButtons.PREF, stylusButton).apply() }
     fun resetStylus() {
         pressureCurve = com.vibetoon.domain.input.PressureCurve.DEFAULT_ENCODED; stabilization = com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL
         stylusEraserTip = true; pressureHud = false
-        stylusTilt = 0; stylusTiltStrength = com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH; saveStylus()
+        stylusTilt = 0; stylusTiltStrength = com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH
+        stylusButton = com.vibetoon.domain.input.StylusButtons.DEFAULT.id; saveStylus()
     }
     // ключи пера всегда есть в настройках, чтобы «Manual Backup» сохранял их и с типами по умолчанию
     init { if (!p.contains("pressure_curve") || !p.contains("stabilization")) saveStylus() }
     init { if (!p.contains("stylus_tilt")) saveStylus() }   // спринт 40: ключи наклона тоже попадают в Manual Backup
+    init { if (!p.contains(com.vibetoon.domain.input.StylusButtons.PREF)) saveStylus() }   // спринт 44: и кнопка пера
     var stepFrames by mutableStateOf(p.getBoolean("step_frames", true))
     var quickDeleteDrawing by mutableStateOf(p.getBoolean("quick_delete_drawing", false))
     var selectionMaskVisible by mutableStateOf(p.getBoolean("selection_mask_visible", true))
@@ -244,6 +248,7 @@ class AppSettings(context: Context) {
         pressureHud = p.getBoolean("pressure_hud", false)
         stylusTilt = com.vibetoon.domain.input.TiltMath.Mode.of(p.getInt("stylus_tilt", 0)).id
         stylusTiltStrength = p.getInt("stylus_tilt_strength", com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH).coerceIn(0, 100)
+        stylusButton = com.vibetoon.domain.input.StylusButtons.Action.of(p.getInt(com.vibetoon.domain.input.StylusButtons.PREF, com.vibetoon.domain.input.StylusButtons.DEFAULT.id)).id
         cursorEnabled = p.getBoolean("cursor_enabled", true)
         cursorHoverPreview = p.getBoolean("cursor_hover_preview", false)
         quickSelection = p.getBoolean("quick_selection", false)

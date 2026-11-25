@@ -321,6 +321,8 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
             fontSize = 12.sp, maxLines = 1,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
         )
+        // спринт 44: кривая только выбранного ключа (тап по ромбу или плейхед на ключе)
+        if (s.count == 1) com.vibetoon.ui.timeline.KeyCurveSection(vm, s.id)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             NumberField("X", s.x, "px", on, { vm.setProperty(Prop.X, it) }, Modifier.weight(1f), perPx = 1f)
             NumberField("Y", s.y, "px", on, { vm.setProperty(Prop.Y, it) }, Modifier.weight(1f), perPx = 1f)

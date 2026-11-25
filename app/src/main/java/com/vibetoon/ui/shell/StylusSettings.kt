@@ -145,6 +145,8 @@ fun StylusSettingsSection(st: AppSettings) {
     var testStylus by remember { mutableStateOf(true) }
     var tilt by remember { mutableStateOf<Int?>(null) }
     var tiltRad by remember { mutableStateOf(Float.NaN) }
+    var testBarrel by remember { mutableStateOf(false) }
+    var testEraserEnd by remember { mutableStateOf(false) }
     val tracker = remember { com.vibetoon.ui.StylusTracker() }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -179,6 +181,8 @@ fun StylusSettingsSection(st: AppSettings) {
                         testRaw = last
                         tilt = if (stylus) StylusSample.tiltDegrees(tracker.tiltRadians) else null
                         tiltRad = if (stylus) tracker.tiltRadians else Float.NaN
+                        testBarrel = stylus && tracker.barrelPressed
+                        testEraserEnd = down.type == PointerType.Eraser || (stylus && tracker.eraserTip)
                         while (true) {
                             val ev = awaitPointerEvent()
                             val c = ev.changes.firstOrNull { it.id == down.id } ?: break
@@ -186,7 +190,7 @@ fun StylusSettingsSection(st: AppSettings) {
                             stylus = c.type == PointerType.Stylus || c.type == PointerType.Eraser
                             last = StylusSample.pressure(c.pressure, stylus, last)
                             testRaw = last
-                            if (stylus) { tilt = StylusSample.tiltDegrees(tracker.tiltRadians); tiltRad = tracker.tiltRadians }
+                            if (stylus) { tilt = StylusSample.tiltDegrees(tracker.tiltRadians); tiltRad = tracker.tiltRadians; testBarrel = testBarrel || tracker.barrelPressed }
                             c.consume()
                         }
                     }
@@ -204,6 +208,9 @@ fun StylusSettingsSection(st: AppSettings) {
                 val t = tilt; Text(if (t != null) "Наклон пера: $t°" else "Наклон пера: нет данных", fontSize = 11.sp, color = muted)
                 // спринт 40: что наклон сделает с кистью при текущем режиме
                 if (t != null) Text(com.vibetoon.domain.input.TiltMath.describe(com.vibetoon.domain.input.TiltMath.settings(st.stylusTilt, st.stylusTiltStrength), tiltRad), fontSize = 11.sp)
+                // спринт 44: проверка кнопки на корпусе и обратного конца без открытия холста
+                if (testEraserEnd) Text("Обратный конец пера: ластик", fontSize = 11.sp, color = muted)
+                if (testBarrel) Text("Кнопка пера нажата: ${L(com.vibetoon.domain.input.StylusButtons.Action.of(st.stylusButton).ru)}", fontSize = 11.sp, color = muted)
             }
         }
         // спринт 40: наклон пера меняет кисть (толщина, штриховка, плоское перо); палец и перо без датчика - без изменений
@@ -239,6 +246,14 @@ fun StylusSettingsSection(st: AppSettings) {
             Text("Ластик на обратном конце пера", fontSize = 14.sp, modifier = Modifier.weight(1f))
             Switch(checked = st.stylusEraserTip, onCheckedChange = { st.stylusEraserTip = it; st.saveStylus() })
         }
+        // спринт 44: кнопка на корпусе пера; решение - в начале штриха (нажатие посреди линии её не обрывает)
+        Text("Кнопка пера", fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            com.vibetoon.domain.input.StylusButtons.Action.entries.forEach { a ->
+                FilterChip(selected = st.stylusButton == a.id, onClick = { st.stylusButton = a.id; st.saveStylus() }, label = { Text(a.ru, fontSize = 12.sp) })
+            }
+        }
+        Text("Зажмите кнопку на корпусе и коснитесь холста: «Ластик» стирает этим штрихом, «Пипетка» берёт цвет в кисть. Работает с кистью; обратный конец пера всегда важнее кнопки", fontSize = 11.sp, color = muted)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Показывать нажим при рисовании", fontSize = 14.sp, modifier = Modifier.weight(1f))
             Switch(checked = st.pressureHud, onCheckedChange = { st.pressureHud = it; st.saveStylus() })

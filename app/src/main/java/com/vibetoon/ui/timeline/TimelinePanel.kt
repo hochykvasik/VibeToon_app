@@ -330,6 +330,11 @@ fun TimelinePanel(
                 Text("✕ Снять выделение", fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
             val keyBtn = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            // спринт 44: один ромб - «Кривая ключа» (меняется только он), несколько - «Общая кривая» для всех выделенных;
+            // кнопка первой в ряду, чтобы её не приходилось искать прокруткой
+            OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) {
+                Text(if (keySel.size == 1) "Кривая ключа" else "Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
             // спринт 43: все ключи только активного слоя - чтобы применить к ним общую кривую интерполяции
             OutlinedButton(onClick = vm::selectLayerKeys, enabled = selected != null && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Выбрать все ключи слоя", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::copySelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
@@ -337,7 +342,6 @@ fun TimelinePanel(
             OutlinedButton(onClick = vm::pasteKeys, enabled = hasKeyClip && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { vm.stretchSelectedKeys(2f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Растянуть ×2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { vm.stretchSelectedKeys(0.5f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Сжать ÷2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
-            OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::reverseSelectedKeys, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Реверс", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::duplicateSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Дублировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::deleteSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }

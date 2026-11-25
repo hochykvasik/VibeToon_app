@@ -46,7 +46,35 @@ object StylusSample {
     fun releasePressure(raw: Float, stylus: Boolean, last: Float): Float =
         if (!stylus) 1f else if (raw.isFinite() && raw >= last) raw.coerceIn(MIN_PRESSURE, 1f) else pressure(last, true, last)
 
-    /** Наклон пера в градусах от вертикали (AXIS_TILT в радианах), null - датчика нет. */
+    /**
+     * Наклон пера в градусах от вертикали (AXIS_TILT в радианах), null - датчика нет. Спринт 44: «датчика нет» - это
+     * NaN (StylusTracker проверяет InputDevice.getMotionRange(AXIS_TILT)); 0 - вертикальное перо, а не «нет данных».
+     */
     fun tiltDegrees(tiltRadians: Float): Int? =
-        if (!tiltRadians.isFinite() || tiltRadians <= 0f) null else Math.round(Math.toDegrees(tiltRadians.toDouble()).toFloat().coerceIn(0f, 90f))
+        if (!tiltRadians.isFinite() || tiltRadians < 0f) null else Math.round(Math.toDegrees(tiltRadians.toDouble()).toFloat().coerceIn(0f, 90f))
+
+    /**
+     * Спринт 44: значение AXIS_TILT с учётом наличия датчика. [hasSensor] - у устройства есть диапазон AXIS_TILT;
+     * null - устройство неизвестно (синтетическое событие): тогда 0 считается «датчика нет», как раньше.
+     */
+    fun tiltAxis(raw: Float, hasSensor: Boolean?): Float = when {
+        !raw.isFinite() -> Float.NaN
+        hasSensor == true -> raw.coerceAtLeast(0f)
+        hasSensor == false -> Float.NaN
+        raw > 0f -> raw
+        else -> Float.NaN
+    }
+
+    /** Чем закончилось касание: обычное отпускание (штрих запекается) или отмена системой (штрих отменяется). */
+    enum class Release { UP, CANCEL }
+
+    /**
+     * Спринт 44: ACTION_CANCEL и FLAG_CANCELED. Compose превращает ACTION_CANCEL в «отпускание», которое уже потреблено
+     * и не сдвинуто во времени (uptime == previousUptime): это отмена жеста системой (жест навигации, системная защита
+     * от ладони, диалог поверх), а не подъём пера. Android 13+ помечает случайное касание (ладонь) FLAG_CANCELED на
+     * ACTION_POINTER_UP/ACTION_CANCEL - [flaggedCanceled] (StylusTracker). В обоих случаях штрих нужно отменить, а не
+     * запечь: иначе на слое остаётся след ладони или обрывок линии под жестом «Назад».
+     */
+    fun release(consumed: Boolean, uptime: Long, previousUptime: Long, flaggedCanceled: Boolean): Release =
+        if (flaggedCanceled || (consumed && uptime == previousUptime)) Release.CANCEL else Release.UP
 }

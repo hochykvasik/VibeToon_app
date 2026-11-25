@@ -3038,6 +3038,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openSelectedCurveEditor() {
         if (_playing.value) return
+        // спринт 44: один ромб - это «Кривая ключа» (только он), а не общая кривая выделения
+        if (_keySel.value.size == 1 && singleKey() != null) { openSingleKeyCurve(); return }
+        _curveTitle.value = "Общая кривая"; _curveNote.value = null
         val targets = com.vibetoon.domain.anim.SelectedKeyCurves.targets(_animation.value, _keySel.value)
         val timeTargets = selectedTimeKeyTargets()
         if (targets.isEmpty() && timeTargets.isEmpty()) {
@@ -3068,8 +3071,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = UiState.Message("Общий переход: ${timeEaseName(ease)} (ключей: ${t.values.sumOf { it.size }})")
     }
 
+    // ---- спринт 44: кривая одного ключа (таймлайн: один ромб; свойства: ключ выбранного слоя)
+    private val _curveTitle = MutableStateFlow("Кривая плавности")
+    /** Заголовок редактора кривой: «Кривая ключа», «Общая кривая» или «Кривая плавности». */
+    val curveTitle: StateFlow<String> = _curveTitle.asStateFlow()
+    private val _curveNote = MutableStateFlow<String?>(null)
+    /** Пояснение под заголовком: какой ключ правится (только для «Кривая ключа»). */
+    val curveNote: StateFlow<String?> = _curveNote.asStateFlow()
+
+    /** Ключ (слой/кость, кадр), который правит «Кривая ключа», или null (SingleKeyCurve.pick). */
+    fun singleKey(): Pair<Int, Int>? = com.vibetoon.domain.anim.SingleKeyCurve.pick(
+        _keySel.value, _selected.value, _frame.value, _animation.value.tracks, ::isBoneId)
+
+    fun singleKeyInfo(): com.vibetoon.domain.anim.SingleKeyCurve.Info? = singleKey()?.let { (id, f) ->
+        com.vibetoon.domain.anim.SingleKeyCurve.info(id, f, _animation.value.tracks, isBoneId(id))
+    }
+
+    /** Редактор кривой только для одного ключа: остальные ключи слоя и другие слои не меняются. */
+    fun openSingleKeyCurve() {
+        if (_playing.value) return
+        val (id, f) = singleKey() ?: run { _state.value = UiState.Message("Выберите один ключ: тапните ◆ на таймлайне"); return }
+        if (isLockedId(id)) { lockedNotice(); return }
+        selectedCurveTargets = com.vibetoon.domain.anim.SingleKeyCurve.targets(id, f, _animation.value.tracks, isBoneId(id))
+        _curveTitle.value = "Кривая ключа"
+        _curveNote.value = "Только ключ кадра ${f + 1}: остальные ключи не меняются"
+        _curveEditor.value = true
+    }
+
+    /** Пресет плавности только одному ключу (своя кривая сбрасывается), одной записью Undo. */
+    fun setSingleKeyEasing(type: EasingType) {
+        if (_playing.value) return
+        val (id, f) = singleKey() ?: run { _state.value = UiState.Message("Выберите один ключ: тапните ◆ на таймлайне"); return }
+        if (isLockedId(id)) { lockedNotice(); return }
+        checkpoint("keyease", force = true)
+        _animation.value = com.vibetoon.domain.anim.SingleKeyCurve.withEasing(_animation.value, id, f, isBoneId(id), type)
+        pushScene(); refreshInspector(); markDirty()
+    }
+
     fun openCurveEditor(on: Boolean) {
         selectedCurveTargets = null
+        _curveTitle.value = "Кривая плавности"; _curveNote.value = null
+        // спринт 44: на таймлайне выбран один ромб - f(x) правит именно его, а не все ключи выделенного на кадре плейхеда
+        if (on && _keySel.value.size == 1 && singleKey() != null) { openSingleKeyCurve(); return }
         if (on && curveTargets().isEmpty()) { _state.value = UiState.Message("На этом кадре нет ключа у выделенного объекта"); return }
         _curveEditor.value = on
     }
@@ -7161,9 +7204,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Перо: пока оно касается экрана или только что касалось, касания пальцем игнорируются (ладонь не рисует). */
+    /**
+     * Перо: пока оно касается экрана или только что касалось, касания пальцем игнорируются (ладонь не рисует).
+     * Спринт 44: состояние кормит общий наблюдатель контакта пера на холсте (любой инструмент), а не только ветка
+     * кисти - защита действует и для растровых инструментов (выделение, заливка), и после штриха пером по слою без
+     * пикселей. Наведение (hover) защиту не запускает - иначе щипок камеры не работал бы, пока перо рядом.
+     */
     fun paintStylus(down: Boolean) { stylusDown = down; stylusLast = SystemClock.uptimeMillis() }
-    fun paintPalmBlocked(): Boolean = stylusDown || SystemClock.uptimeMillis() - stylusLast < 1200
+    fun paintPalmBlocked(): Boolean = com.vibetoon.domain.input.EditorInputPolicy.palmBlocked(stylusDown, stylusLast, SystemClock.uptimeMillis())
 
     // Stylus sprint: кривая нажима, стабилизация 1–10 и ластик на обратном конце пера
     private var stabilizer: com.vibetoon.domain.input.StrokeStabilizer? = null
@@ -7180,16 +7228,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun curvedPressure(raw: Float): Float {
         if (!strokeStylus) return 1f
         val mapped = strokeCurve.map(raw).coerceIn(com.vibetoon.domain.input.StylusSample.MIN_PRESSURE, 1f)
-        _livePressure.value = floatArrayOf(raw, mapped)
+        // спринт 44: индикатор обновляется, только если нажим заметно изменился (не 240 новых массивов в секунду)
+        val prev = _livePressure.value
+        if (com.vibetoon.domain.input.EditorInputPolicy.hudChanged(prev?.getOrNull(0), prev?.getOrNull(1), raw, mapped)) _livePressure.value = floatArrayOf(raw, mapped)
         return mapped
     }
 
     /** Обратный конец пера (TOOL_TYPE_ERASER): на время штриха кисть становится ластиком, если это включено в настройках. */
-    fun stylusTip(eraser: Boolean) {
-        if (!eraser || tipRestore != null || _paintTool.value != PaintTool.BRUSH) return
-        if (!runCatching { stylusPrefs().getBoolean("stylus_eraser_tip", true) }.getOrDefault(true)) return
-        tipRestore = PaintTool.BRUSH
-        _paintTool.value = PaintTool.ERASER
+    fun stylusTip(eraser: Boolean) { stylusStart(eraser, false, Float.NaN, Float.NaN) }
+
+    /**
+     * Спринт 44: начало касания пером - обратный конец ([eraserEnd]) и кнопка на корпусе ([barrel], StylusButtons).
+     * Ластик: кисть на время штриха становится ластиком и возвращается после него. Пипетка: касание берёт цвет с холста
+     * в кисть и штрих не начинается - тогда возвращается false.
+     */
+    fun stylusStart(eraserEnd: Boolean, barrel: Boolean, x: Float, y: Float): Boolean {
+        val prefs = runCatching { stylusPrefs() }.getOrNull()
+        val action = com.vibetoon.domain.input.StylusButtons.Action.of(
+            prefs?.getInt(com.vibetoon.domain.input.StylusButtons.PREF, com.vibetoon.domain.input.StylusButtons.DEFAULT.id) ?: com.vibetoon.domain.input.StylusButtons.DEFAULT.id)
+        when (com.vibetoon.domain.input.StylusButtons.start(eraserEnd, prefs?.getBoolean("stylus_eraser_tip", true) ?: true, barrel, action)) {
+            com.vibetoon.domain.input.StylusButtons.Start.ERASE -> if (tipRestore == null && _paintTool.value == PaintTool.BRUSH) {
+                tipRestore = PaintTool.BRUSH
+                _paintTool.value = PaintTool.ERASER
+            }
+            com.vibetoon.domain.input.StylusButtons.Start.PICK_COLOR -> { if (x.isFinite() && y.isFinite()) stylusPickColor(x, y); return false }
+            com.vibetoon.domain.input.StylusButtons.Start.DRAW -> Unit
+        }
+        return true
+    }
+
+    /** Пипетка кнопкой пера: цвет точки холста под пером становится цветом кисти (как долгое нажатие без инструмента). */
+    private fun stylusPickColor(x: Float, y: Float) {
+        if (_playing.value || viewW <= 0f || viewH <= 0f || x !in 0f..viewW || y !in 0f..viewH) return
+        val view = RenderHost.view ?: return
+        val pid = projectId
+        view.sampleColor(x.toInt(), y.toInt()) { color ->
+            viewModelScope.launch {
+                if (projectId == pid && RenderHost.view === view && !closing) {
+                    setBrushColor(color)
+                    _pickedColor.tryEmit(color.toLong() and 0xFFFFFFFFL)
+                    _state.value = UiState.Message("Цвет взят кнопкой пера")
+                }
+            }
+        }
     }
 
     /** Конец штриха обратным концом пера: инструмент возвращается к кисти. */
@@ -7223,7 +7304,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!tiltActive()) { st.setTilt(1f, 1f, Float.NaN); return }
         val ts = tiltSettings
         st.setTilt(com.vibetoon.domain.input.TiltMath.sizeFactor(ts, tiltNorm), com.vibetoon.domain.input.TiltMath.flowFactor(ts, tiltNorm),
-            com.vibetoon.domain.input.TiltMath.angle(ts, tiltOrientation, Math.toRadians(camera.rotDeg.toDouble()).toFloat()))
+            com.vibetoon.domain.input.TiltMath.angle(ts, tiltOrientation, Math.toRadians(camera.rotDeg.toDouble()).toFloat(), tiltNorm))
         for (m in mirrorStrokers) m.setTilt(com.vibetoon.domain.input.TiltMath.sizeFactor(ts, tiltNorm), com.vibetoon.domain.input.TiltMath.flowFactor(ts, tiltNorm), Float.NaN)
     }
 
@@ -7233,9 +7314,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             p.copy(roundness = com.vibetoon.domain.input.TiltMath.roundness(tiltSettings, tiltNorm, p.roundness)) else p
 
     /** Начало штриха: нажим проходит через кривую, точка - через стабилизатор (до направляющих и симметрии). */
-    fun paintDown(sx: Float, sy: Float, pressure: Float): Boolean {
+    fun paintDown(sx: Float, sy: Float, pressure: Float, stylus: Boolean = stylusDown): Boolean {
         val prefs = runCatching { stylusPrefs() }.getOrNull()
-        strokeStylus = stylusDown
+        // спринт 44: тип штриха - от указателя, начавшего штрих (а не «перо где-то касается»)
+        strokeStylus = stylus
         tiltSettings = com.vibetoon.domain.input.TiltMath.settings(prefs?.getInt(com.vibetoon.domain.input.TiltMath.PREF_MODE, 0) ?: 0,
             prefs?.getInt(com.vibetoon.domain.input.TiltMath.PREF_STRENGTH, com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH) ?: com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH)
         if (!strokeStylus) { tiltNorm = Float.NaN; tiltOrientation = Float.NaN }
@@ -11285,9 +11367,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Свой график (кривая Безье) для выделенного ключа кости: плейхед на ключ и общий редактор кривой. */
     fun openBoneKeyCurve() {
         val b = selectedBone() ?: return
+        if (_playing.value) return
         val f = activeBoneKeyFrame(b) ?: run { _state.value = UiState.Message("Выберите ключ кости на таймлайне"); return }
         if (_frame.value != f) scrubTo(f)
-        openCurveEditor(true)
+        // спринт 44: только ключ этой кости - раньше редактор брал ключи всех выделенных костей и слоёв на кадре
+        val targets = com.vibetoon.domain.anim.SingleKeyCurve.targets(b.id, f, _animation.value.tracks, true)
+        if (targets.isEmpty()) { _state.value = UiState.Message("Выберите ключ кости на таймлайне"); return }
+        selectedCurveTargets = targets
+        _curveTitle.value = "Кривая ключа"
+        _curveNote.value = "Только ключ кадра ${f + 1}: остальные ключи не меняются"
+        _curveEditor.value = true
     }
 
     private fun nextBoneId(): Int = maxOf(BONE_ID_BASE, (_bones.value.maxOfOrNull { it.id } ?: 0) + 1)

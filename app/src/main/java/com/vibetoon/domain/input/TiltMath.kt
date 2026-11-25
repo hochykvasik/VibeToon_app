@@ -9,7 +9,7 @@ package com.vibetoon.domain.input
  *  - [Mode.SHADING] - «карандаш боком»: шире и прозрачнее, для штриховки и мягкой тени;
  *  - [Mode.ANGLE] - плоское перо: штамп сплющивается по наклону и поворачивается по направлению пера (каллиграфия).
  *
- * Палец, мышь и перо без датчика наклона (AXIS_TILT = 0/NaN) рисуют без изменений: множители 1, угол NaN.
+ * Палец, мышь и перо без датчика наклона (AXIS_TILT = NaN, спринт 44) рисуют без изменений: множители 1, угол NaN.
  * Наклон 0..[FULL_TILT_DEG] переводится в 0..1; дрожание датчика сглаживается [smooth].
  */
 object TiltMath {
@@ -28,6 +28,8 @@ object TiltMath {
     const val SHADING_FLOW_LOSS = 0.7f
     const val MIN_ROUNDNESS = 0.2f
     const val MIN_FLOW = 0.05f
+    /** Наклон (0..1), ниже которого плоское перо не поворачивает штамп: ~3° от вертикали. */
+    const val MIN_ANGLE_TILT = 0.05f
 
     data class Settings(val mode: Mode = Mode.OFF, val strength: Int = DEFAULT_STRENGTH) {
         val k: Float get() = strength.coerceIn(0, 100) / 100f
@@ -78,8 +80,10 @@ object TiltMath {
      * длинная ось сплющенного штампа идёт вдоль направления пера (getOrientation: 0 - перо смотрит вверх, по часовой),
      * с поправкой на поворот холста [canvasRotation]. NaN - поворот по настройке кисти.
      */
-    fun angle(s: Settings, orientationRadians: Float, canvasRotation: Float = 0f): Float {
-        if (!s.active || s.mode != Mode.ANGLE || !orientationRadians.isFinite()) return Float.NaN
+    fun angle(s: Settings, orientationRadians: Float, canvasRotation: Float = 0f, t: Float = 1f): Float {
+        // спринт 44: почти вертикальное перо - направление не определено (у многих дигитайзеров ориентация считается
+        // из наклона): штамп не сплющен, и поворот кисти из её настроек не подменяется случайным углом
+        if (!s.active || s.mode != Mode.ANGLE || !orientationRadians.isFinite() || !(t >= MIN_ANGLE_TILT)) return Float.NaN
         val a = orientationRadians - (Math.PI / 2).toFloat() - canvasRotation
         val twoPi = (2.0 * Math.PI).toFloat()
         return ((a % twoPi) + twoPi) % twoPi
@@ -93,6 +97,7 @@ object TiltMath {
             !s.active -> "Наклон пера $deg°: не влияет на кисть (выберите режим ниже)"
             s.mode == Mode.SIZE -> "Наклон пера $deg° → толщина ×${fmt(sizeFactor(s, t))}"
             s.mode == Mode.SHADING -> "Наклон пера $deg° → штриховка: толщина ×${fmt(sizeFactor(s, t))}, плотность ${Math.round(flowFactor(s, t) * 100)} %"
+            t < MIN_ANGLE_TILT -> "Наклон пера $deg° → перо почти вертикально: штамп не меняется"
             else -> "Наклон пера $deg° → штамп сплющен до ${Math.round(roundness(s, t, 1f) * 100)} % и повёрнут по перу"
         }
     }

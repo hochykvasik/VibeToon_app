@@ -2019,4 +2019,18 @@
     <string name="ui_select_all_layer_keys">Select all layer keys</string>
     <string name="ui_the_layer_has_no_keys">The layer has no keys</string>
     <string name="ui_layer_keys_selected">Layer keys selected: {}</string>
+    <string name="ui_color_picked_with_the_pen_button">Color picked with the pen button</string>
+    <string name="ui_pen_tilt_pen_almost_upright_the_stam">Pen tilt {}° → pen almost upright: the stamp does not change</string>
+    <string name="ui_do_not_use">Do not use</string>
+    <string name="ui_eraser_while_held">Eraser while held</string>
+    <string name="ui_pen_back_end_eraser">Pen back end: eraser</string>
+    <string name="ui_pen_button_pressed">Pen button pressed: {}</string>
+    <string name="ui_pen_button">Pen button</string>
+    <string name="ui_hold_the_barrel_button_and_touch_the">Hold the barrel button and touch the canvas: \"Eraser\" erases with that stroke, \"Color Picker\" picks the color into the brush. Works with the brush; the pen\'s back end always wins over the button</string>
+    <string name="ui_key_curve">Key curve</string>
+    <string name="ui_key_curve_frame">Key curve: frame {}</string>
+    <string name="ui_this_key_s_tracks_have_different_cur">This key\'s tracks have different curves: a choice sets one for all</string>
+    <string name="ui_only_this_key_changes_up_to_the_next">Only this key changes, up to the next one; other keys are untouched</string>
+    <string name="ui_select_one_key_tap_on_the_timeline">Select one key: tap ◆ on the timeline</string>
+    <string name="ui_only_the_key_on_frame_other_keys_sta">Only the key on frame {}: other keys stay unchanged</string>
 </resources>
