@@ -239,6 +239,18 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                 androidx.compose.runtime.LaunchedEffect(phone) { if (phone) rightOpen = false }
                 // Режим левши: Row ниже раскладывается справа налево, правая панель оказывается у левого края
                 val leftHanded = com.vibetoon.ui.theme.LocalAppSettings.current?.leftHanded == true
+                // Спринт 57: правая панель планшета - выезжающий слой поверх края (SidePanelSlide): место в строке занято
+                // только у полностью открытой панели, холст отодвигается по тому же ходу - без серого поля и скачка таймлайна
+                val sideOpen = rightOpen && !full && !phone
+                val sideAtRight = com.vibetoon.domain.settings.SidePanelEdge.atRightEdge(leftHanded)
+                val sideAtRightNow by androidx.compose.runtime.rememberUpdatedState(sideAtRight)
+                val sideP = remember { androidx.compose.animation.core.Animatable(if (sideOpen) 1f else 0f) }
+                val sideWidthGuess = with(androidx.compose.ui.platform.LocalDensity.current) { (if (wide) 320.dp else 236.dp).roundToPx() }
+                val sidePx = remember { androidx.compose.runtime.mutableIntStateOf(sideWidthGuess) }
+                val rowBounds = remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+                // чтение хода - только в производных состояниях и в фазе раскладки: EditorShell не перекомпонуется на каждом кадре
+                val sideShown by remember { androidx.compose.runtime.derivedStateOf { sideP.value > 0.001f } }
+                val sideSettled by remember { androidx.compose.runtime.derivedStateOf { sideP.value >= 0.999f } }
                 // Спринт 42: GL-поверхность на всё окно редактора, размер не зависит от панелей. Холст вписывается в видимую
                 // область между панелями (slotBounds); область меняется плавно (пружина без отскока), поэтому выезд/перетаскивание
                 // таймлайна и правой панели - только равномерный масштаб и сдвиг холста, без сплющивания и скачков.
@@ -247,18 +259,29 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                 val tlDragging = remember { mutableStateOf(false) }
                 val viewRect = remember { androidx.compose.animation.core.Animatable(androidx.compose.ui.geometry.Rect.Zero, androidx.compose.ui.geometry.Rect.VectorConverter) }
                 val motionOn = com.vibetoon.ui.motion.LocalMotion.current.enabled
+                androidx.compose.runtime.LaunchedEffect(sideOpen, motionOn) {
+                    val target = if (sideOpen) 1f else 0f
+                    if (!motionOn) sideP.snapTo(target) else sideP.animateTo(target, com.vibetoon.ui.motion.Motions.sidePanelSpec(opening = sideOpen))
+                }
                 androidx.compose.runtime.LaunchedEffect(motionOn) {
-                    androidx.compose.runtime.snapshotFlow { slotBounds.value.translate(-surfOrigin.value) }.collectLatest { target ->
+                    androidx.compose.runtime.snapshotFlow {
+                        // спринт 57: холст не заходит под выезжающую правую панель
+                        val b = slotBounds.value; val row = rowBounds.value
+                        val (l, r) = com.vibetoon.domain.settings.SidePanelSlide.canvasSpan(b.left, b.right, row.left, row.right, sideP.value, sidePx.intValue, sideAtRightNow)
+                        androidx.compose.ui.geometry.Rect(l, b.top, r, b.bottom).translate(-surfOrigin.value)
+                    }.collectLatest { target ->
                         if (target.width < 1f || target.height < 1f) return@collectLatest
                         // первый размер и выключенные анимации («Плавные анимации интерфейса» / системный масштаб 0) - сразу
-                        if (viewRect.value.width < 1f || !motionOn) viewRect.snapTo(target)
+                        // спринт 57: пока едет правая панель, край холста идёт за ней кадр в кадр (тот же ход, без отставания пружины)
+                        if (viewRect.value.width < 1f || !motionOn || sideP.isRunning) viewRect.snapTo(target)
                         else viewRect.animateTo(target, androidx.compose.animation.core.spring(
                             dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
                             stiffness = com.vibetoon.domain.settings.UiMotion.CANVAS_FIT_STIFFNESS))
                     }
                 }
                 androidx.compose.runtime.LaunchedEffect(Unit) {
-                    androidx.compose.runtime.snapshotFlow { Triple(viewRect.value, viewRect.isRunning, tlDragging.value) }.collect { (r, running, dragging) ->
+                    androidx.compose.runtime.snapshotFlow { Triple(viewRect.value, viewRect.isRunning || sideP.isRunning, tlDragging.value) }.collect { (r, running, dragging) ->
+                        // спринт 57: выезд панели - тоже «движение»: рендерер рисует облегчённо и один точный кадр в конце
                         if (r.width >= 1f && r.height >= 1f) com.vibetoon.render.RenderHost.setViewRect(r.left, r.top, r.width, r.height, running || dragging)
                     }
                 }
@@ -323,8 +346,9 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                         }
                     }
                     // Режим левши: Row раскладывается справа налево (панель инструментов справа, слои слева), содержимое каждой части остаётся обычным
+                    Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { c -> rowBounds.value = androidx.compose.ui.geometry.Rect(c.positionInRoot(), c.size.toSize()) }) {
                     CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides (if (leftHanded) androidx.compose.ui.unit.LayoutDirection.Rtl else androidx.compose.ui.unit.LayoutDirection.Ltr)) {
-                    Row(Modifier.weight(1f).fillMaxWidth()) {
+                    Row(Modifier.fillMaxSize()) {
                         CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) { androidx.compose.animation.AnimatedVisibility(
                             visible = !full,
                             enter = com.vibetoon.ui.motion.Motions.panelEnter(fromEnd = leftHanded),
@@ -361,7 +385,8 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                     slotBounds.value = androidx.compose.ui.geometry.Rect(c.positionInRoot(), c.size.toSize())
                                 })
                                 // спринт 42: язычок «>» у открытой правой панели (только планшет): тап или свайп к краю закрывает её
-                                if (com.vibetoon.domain.settings.SidePanelEdge.showOpenTab(phone, rightOpen, full)) Box(
+                                // спринт 57: язычок - когда панель встала (во время выезда край колонки ещё у края экрана)
+                                if (com.vibetoon.domain.settings.SidePanelEdge.showOpenTab(phone, rightOpen, full) && sideSettled) Box(
                                     Modifier.align(if (com.vibetoon.domain.settings.SidePanelEdge.atRightEdge(leftHanded)) Alignment.CenterEnd else Alignment.CenterStart)
                                         .pointerInput(leftHanded, swipePx) {
                                             var sum = 0f
@@ -512,18 +537,27 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                 )
                             } }
                         } }
+                        // спринт 57: место панели в строке - только у полностью открытой панели (под ней, невидимо)
+                        if (sideOpen && sideSettled) {
+                            val slotW = with(androidx.compose.ui.platform.LocalDensity.current) { sidePx.intValue.toDp() }
+                            androidx.compose.foundation.layout.Spacer(Modifier.width(slotW).fillMaxHeight())
+                        }
+                    } }
+                    // спринт 57: сама панель - слой поверх края строки; сдвиг читается в фазе раскладки (без перекомпоновки)
+                    if (sideOpen || sideShown) Box(
+                        Modifier.align(if (sideAtRight) androidx.compose.ui.AbsoluteAlignment.CenterRight else androidx.compose.ui.AbsoluteAlignment.CenterLeft)
+                            .fillMaxHeight()
+                            .offset { androidx.compose.ui.unit.IntOffset(com.vibetoon.domain.settings.SidePanelSlide.offsetPx(sideP.value, sidePx.intValue, sideAtRight), 0) }
+                            .onSizeChanged { sz -> if (sz.width > 0) sidePx.intValue = sz.width }
+                    ) {
                         CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
-                        androidx.compose.animation.AnimatedVisibility(
-                            visible = rightOpen && !full && !phone,
-                            enter = com.vibetoon.ui.motion.Motions.sidePanelEnter(fromEnd = !leftHanded),
-                            exit = com.vibetoon.ui.motion.Motions.sidePanelExit(toEnd = !leftHanded)
-                        ) {
-                            Box(Modifier.background(MaterialTheme.colorScheme.background).opaqueToCanvas().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End))) { RightPanel(
+                            Box(Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.background).opaqueToCanvas().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End))) { RightPanel(
                                 vm, add, color, { showColor = true }, { rightOpen = false },
                                 Modifier.width(if (wide) 320.dp else 236.dp).fillMaxHeight()
                             ) }
-                        } }
-                    } }
+                        }
+                    }
+                    }
                 }
                 // телефон: правая панель выезжает поверх холста и закрывается кнопкой в её шапке или в верхней панели
                 // тап по холсту рядом с панелью закрывает её
@@ -596,7 +630,7 @@ private fun EdgeHandle(open: Boolean, leftHanded: Boolean, phone: Boolean, onCli
 /** Рамка находится в том же Popup и layout, что и пункт меню: скролл/поворот не меняет её систему координат. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun TestPsdMenuItem(highlight: Boolean, onClick: () -> Unit) {
+private fun CoachMenuItem(label: String, highlight: Boolean, onClick: () -> Unit) {
     val requester = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     androidx.compose.runtime.DisposableEffect(highlight) {
         onDispose { if (highlight) Coach.popupTargetVisible = false }
@@ -612,7 +646,7 @@ private fun TestPsdMenuItem(highlight: Boolean, onClick: () -> Unit) {
         animationSpec = androidx.compose.animation.core.infiniteRepeatable(
             androidx.compose.animation.core.tween(900), androidx.compose.animation.core.RepeatMode.Reverse), label = "popup-coach-alpha")
     DropdownMenuItem(
-        text = { Text("Тестовый PSD") }, onClick = onClick,
+        text = { Text(label) }, onClick = onClick,
         modifier = Modifier.bringIntoViewRequester(requester).onGloballyPositioned { coordinates ->
             if (highlight) {
                 val r = coordinates.boundsInWindow()
@@ -637,8 +671,14 @@ private fun TopBar(
     val fxOn by vm.fx.collectAsStateWithLifecycle()
     var actions by remember { mutableStateOf(false) }
     val coachTarget = Coach.session?.steps?.getOrNull(Coach.index)?.target
+    // спринт 57: урок открывает меню «Действия» на шаге с его пунктом и закрывает, когда шаг сменился
+    var coachMenu by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(coachTarget) {
-        if (coachTarget == "Тестовый PSD") actions = true
+        when (com.vibetoon.domain.tutorial.CoachMenuTargets.menuAction(coachTarget, coachMenu)) {
+            true -> { actions = true; coachMenu = true }
+            false -> { actions = false; coachMenu = false }
+            null -> Unit
+        }
     }
     var more by remember { mutableStateOf(false) }
 
@@ -671,14 +711,14 @@ private fun TopBar(
                     DropdownMenuItem(text = { Text("Текст") }, onClick = { actions = false; add.text() })
                     DropdownMenuItem(text = { Text("Камера (Pan & Zoom)") }, onClick = { actions = false; vm.addCameraLayer() })
                     // спринт 56: картинка-образец в плавающем окне (в проект и экспорт не попадает)
-                    DropdownMenuItem(text = { Text("Окно референса…") }, onClick = { actions = false; add.reference() })
+                    CoachMenuItem("Окно референса…", highlight = coachTarget == "Окно референса…") { actions = false; add.reference() }
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("Сбросить вид холста") }, onClick = { actions = false; vm.resetCamera() })
                     DropdownMenuItem(text = { Text("Повернуть холст на 90°") }, onClick = { actions = false; vm.rotateCamera90() })
                     DropdownMenuItem(text = { Text("Сбросить поворот холста (0°)") }, onClick = { actions = false; vm.resetCameraRotation() })
                     DropdownMenuItem(text = { Text("Отразить холст по горизонтали") }, onClick = { actions = false; vm.flipCameraX() })
                     DropdownMenuItem(text = { Text("Отразить холст по вертикали") }, onClick = { actions = false; vm.flipCameraY() })
-                    TestPsdMenuItem(highlight = coachTarget == "Тестовый PSD") { actions = false; vm.parseTestPsd() }
+                    CoachMenuItem("Тестовый PSD", highlight = coachTarget == "Тестовый PSD") { actions = false; vm.parseTestPsd() }
                 }
             }
             Text(

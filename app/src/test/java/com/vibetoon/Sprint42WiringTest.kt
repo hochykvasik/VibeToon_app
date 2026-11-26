@@ -44,7 +44,7 @@ class Sprint42WiringTest {
 
     @Test fun visibleRectAnimatesWithSpringAndRespectsMotionSetting() {
         val block = between(shell, "LaunchedEffect(motionOn)", "LaunchedEffect(Unit)")
-        assertTrue(block.contains("!motionOn) viewRect.snapTo(target)"))
+        assertTrue(block.contains("!motionOn || sideP.isRunning) viewRect.snapTo(target)"))   // спринт 57: за выезжающей панелью - кадр в кадр
         assertTrue(block.contains("spring(") && block.contains("DampingRatioNoBouncy") && block.contains("CANVAS_FIT_STIFFNESS"))
         assertTrue(shell.contains("val motionOn = com.vibetoon.ui.motion.LocalMotion.current.enabled"))
     }
@@ -95,7 +95,9 @@ class Sprint42WiringTest {
 
     @Test fun rightPanelUsesSofterMotionOnTabletAndPhone() {
         assertTrue(shell.contains("Motions.sidePanelEnter(fromEnd = !leftHanded)"))
-        assertTrue(Regex("Motions\\.sidePanelExit\\(toEnd = !leftHanded\\)").findAll(shell).count() == 2)
+        // спринт 57: на планшете панель едет по общему ходу sideP (SidePanelSlide), переход sidePanelExit - у телефона
+        assertTrue(Regex("Motions\\.sidePanelExit\\(toEnd = !leftHanded\\)").findAll(shell).count() == 1)
+        assertTrue(shell.contains("Motions.sidePanelSpec(opening = sideOpen)"))
         assertTrue("телефон: у левши панель слева", shell.contains("if (leftHanded) Alignment.BottomStart else Alignment.BottomEnd"))
         assertTrue(motion.contains("fun sidePanelEnter(fromEnd: Boolean)") && motion.contains("UiMotion.SIDE_PANEL_MS"))
         assertTrue(motion.contains("fun sidePanelExit(toEnd: Boolean)") && motion.contains("UiMotion.SIDE_PANEL_EXIT_MS"))

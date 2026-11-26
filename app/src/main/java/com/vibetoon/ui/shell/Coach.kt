@@ -86,7 +86,7 @@ fun CoachOverlay() {
     val pulse = rememberInfiniteTransition(label = "coach")
     val k by pulse.animateFloat(0f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "k")
     // Координаты отдельного Popup нельзя смешивать с координатами окна редактора.
-    val popupTarget = step.target == "Тестовый PSD"
+    val popupTarget = com.vibetoon.domain.tutorial.CoachMenuTargets.inActionsMenu(step.target)   // спринт 57: пункты меню «Действия»
     val rect = if (popupTarget) null else step.target?.let { Coach.bounds[it] }?.let { CoachGeometry.visible(it, origin, viewport) }
     Box(Modifier.fillMaxSize().onGloballyPositioned {
         origin = it.positionInWindow()

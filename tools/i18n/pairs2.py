@@ -2040,4 +2040,19 @@ VibeToon: экспорт ждёт|VibeToon: export waiting
 Закрыть референс|Close reference
 Потяните, чтобы изменить размер|Drag to resize
 Окно референса…|Reference window…
+Окно референса|Reference window
+«Действия» → «Окно референса…»: выберите картинку-образец, и она появится в небольшом окне поверх редактора - поза, пропорции и цвета всегда перед глазами. Окно тянется за шапку, уголок меняет размер, кнопка с чёрточкой сворачивает его в полоску, крестик ✕ закрывает. В сцену, проект и экспорт референс не попадает.|“Actions” → “Reference window…”: pick a sample image and it appears in a small window over the editor, keeping the pose, proportions and colors in view. Drag the window by its header, resize it with the corner, the dash button collapses it to a strip, the ✕ closes it. The reference never goes into the scene, the project or the export.
+Картинка-образец поверх холста|A sample image over the canvas
+Откройте окно|Open the window
+Откройте «Действия» (сверху слева) и выберите «Окно референса…», затем картинку в системном окне выбора файлов (PNG, JPEG или WebP). Она появится в небольшом окне поверх редактора.|Open “Actions” (top left) and choose “Reference window…”, then pick an image in the system file picker (PNG, JPEG or WebP). It appears in a small window over the editor.
+Зачем оно|Why it helps
+Образец всегда перед глазами: по нему удобно рисовать позу, силуэт и пропорции, сверять цвета и детали с модель-листом - не переключаясь в галерею и не добавляя картинку слоем в проект.|The sample stays in view: draw the pose, silhouette and proportions from it, check colors and details against a model sheet - without switching to the gallery or adding the picture to the project as a layer.
+Передвиньте и измените размер|Move and resize
+Тяните окно за шапку со словом «Референс» - оно не уходит за край экрана. Уголок справа внизу меняет размер, картинка сохраняет пропорции. Положите окно туда, где оно не мешает рисовать.|Drag the window by the header labeled “Reference” - it stays on screen. The bottom-right corner resizes it, and the picture keeps its proportions. Put the window where it doesn't get in the way of drawing.
+Сверните, замените, закройте|Collapse, replace, close
+Кнопка с чёрточкой в шапке сворачивает окно в узкую полоску, кнопка-квадрат разворачивает обратно. Значок картинки заменяет образец, крестик ✕ закрывает окно.|The dash button in the header collapses the window to a narrow strip, the square button expands it again. The image icon replaces the sample, the ✕ closes the window.
+Не часть сцены|Not part of the scene
+Референс - только окно интерфейса: его нет в слоях, на холсте, в «Отменить», в файле проекта и в экспорте. При переходе к другому проекту окно остаётся, пока вы не закроете его крестиком.|The reference is just an interface window: it is not in the layers, on the canvas, in “Undo”, in the project file or in the export. When you switch to another project the window stays until you close it with the ✕.
+Картинка уменьшается до 1024 px по длинной стороне - окно почти не занимает память.|The picture is scaled down to 1024 px on the long side, so the window uses almost no memory.
+Нужен образец прямо в кадре? Добавьте его слоем: «Действия» → «Изображение (PNG, JPG)».|Need the sample inside the frame? Add it as a layer: “Actions” → “Image (PNG, JPG)”.
 """

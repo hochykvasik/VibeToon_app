@@ -2364,4 +2364,19 @@
     <string name="ui_close_reference">Закрыть референс</string>
     <string name="ui_drag_to_resize">Потяните, чтобы изменить размер</string>
     <string name="ui_reference_window">Окно референса…</string>
+    <string name="ui_reference_window_2">Окно референса</string>
+    <string name="ui_actions_reference_window_pick_a_samp">«Действия» → «Окно референса…»: выберите картинку-образец, и она появится в небольшом окне поверх редактора - поза, пропорции и цвета всегда перед глазами. Окно тянется за шапку, уголок меняет размер, кнопка с чёрточкой сворачивает его в полоску, крестик ✕ закрывает. В сцену, проект и экспорт референс не попадает.</string>
+    <string name="ui_a_sample_image_over_the_canvas">Картинка-образец поверх холста</string>
+    <string name="ui_open_the_window">Откройте окно</string>
+    <string name="ui_open_actions_top_left_and_choose_ref">Откройте «Действия» (сверху слева) и выберите «Окно референса…», затем картинку в системном окне выбора файлов (PNG, JPEG или WebP). Она появится в небольшом окне поверх редактора.</string>
+    <string name="ui_why_it_helps">Зачем оно</string>
+    <string name="ui_the_sample_stays_in_view_draw_the_po">Образец всегда перед глазами: по нему удобно рисовать позу, силуэт и пропорции, сверять цвета и детали с модель-листом - не переключаясь в галерею и не добавляя картинку слоем в проект.</string>
+    <string name="ui_move_and_resize">Передвиньте и измените размер</string>
+    <string name="ui_drag_the_window_by_the_header_labele">Тяните окно за шапку со словом «Референс» - оно не уходит за край экрана. Уголок справа внизу меняет размер, картинка сохраняет пропорции. Положите окно туда, где оно не мешает рисовать.</string>
+    <string name="ui_collapse_replace_close">Сверните, замените, закройте</string>
+    <string name="ui_the_dash_button_in_the_header_collap">Кнопка с чёрточкой в шапке сворачивает окно в узкую полоску, кнопка-квадрат разворачивает обратно. Значок картинки заменяет образец, крестик ✕ закрывает окно.</string>
+    <string name="ui_not_part_of_the_scene">Не часть сцены</string>
+    <string name="ui_the_reference_is_just_an_interface_w">Референс - только окно интерфейса: его нет в слоях, на холсте, в «Отменить», в файле проекта и в экспорте. При переходе к другому проекту окно остаётся, пока вы не закроете его крестиком.</string>
+    <string name="ui_the_picture_is_scaled_down_to_1024_p">Картинка уменьшается до 1024 px по длинной стороне - окно почти не занимает память.</string>
+    <string name="ui_need_the_sample_inside_the_frame_add">Нужен образец прямо в кадре? Добавьте его слоем: «Действия» → «Изображение (PNG, JPG)».</string>
 </resources>

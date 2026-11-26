@@ -62,6 +62,7 @@ class Sprint53WiringTest {
         val toolEnum = kt("ui/shell/EditorShell.kt").let { s -> s.substring(s.indexOf("enum class ToolId")).let { it.substring(0, it.indexOf("\n}")) } }
         Regex("""[A-Z_]+\("([^"]+)", Icons""").findAll(toolEnum).forEach { ids += it.groupValues[1] }
         ids += "Тестовый PSD"   // цель внутри Popup меню «Действия» (особый случай CoachOverlay)
+        Regex("""CoachMenuItem\("([^"]+)"""").findAll(all).forEach { ids += it.groupValues[1] }   // спринт 57: пункты меню «Действия»
         ids
     }
 

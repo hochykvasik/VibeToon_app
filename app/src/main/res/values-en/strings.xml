@@ -2364,4 +2364,19 @@
     <string name="ui_close_reference">Close reference</string>
     <string name="ui_drag_to_resize">Drag to resize</string>
     <string name="ui_reference_window">Reference window…</string>
+    <string name="ui_reference_window_2">Reference window</string>
+    <string name="ui_actions_reference_window_pick_a_samp">“Actions” → “Reference window…”: pick a sample image and it appears in a small window over the editor, keeping the pose, proportions and colors in view. Drag the window by its header, resize it with the corner, the dash button collapses it to a strip, the ✕ closes it. The reference never goes into the scene, the project or the export.</string>
+    <string name="ui_a_sample_image_over_the_canvas">A sample image over the canvas</string>
+    <string name="ui_open_the_window">Open the window</string>
+    <string name="ui_open_actions_top_left_and_choose_ref">Open “Actions” (top left) and choose “Reference window…”, then pick an image in the system file picker (PNG, JPEG or WebP). It appears in a small window over the editor.</string>
+    <string name="ui_why_it_helps">Why it helps</string>
+    <string name="ui_the_sample_stays_in_view_draw_the_po">The sample stays in view: draw the pose, silhouette and proportions from it, check colors and details against a model sheet - without switching to the gallery or adding the picture to the project as a layer.</string>
+    <string name="ui_move_and_resize">Move and resize</string>
+    <string name="ui_drag_the_window_by_the_header_labele">Drag the window by the header labeled “Reference” - it stays on screen. The bottom-right corner resizes it, and the picture keeps its proportions. Put the window where it doesn\'t get in the way of drawing.</string>
+    <string name="ui_collapse_replace_close">Collapse, replace, close</string>
+    <string name="ui_the_dash_button_in_the_header_collap">The dash button in the header collapses the window to a narrow strip, the square button expands it again. The image icon replaces the sample, the ✕ closes the window.</string>
+    <string name="ui_not_part_of_the_scene">Not part of the scene</string>
+    <string name="ui_the_reference_is_just_an_interface_w">The reference is just an interface window: it is not in the layers, on the canvas, in “Undo”, in the project file or in the export. When you switch to another project the window stays until you close it with the ✕.</string>
+    <string name="ui_the_picture_is_scaled_down_to_1024_p">The picture is scaled down to 1024 px on the long side, so the window uses almost no memory.</string>
+    <string name="ui_need_the_sample_inside_the_frame_add">Need the sample inside the frame? Add it as a layer: “Actions” → “Image (PNG, JPG)”.</string>
 </resources>

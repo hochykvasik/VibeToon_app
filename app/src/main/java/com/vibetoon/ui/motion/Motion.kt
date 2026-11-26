@@ -112,6 +112,13 @@ object Motions {
             fadeOut(tween(UiMotion.SIDE_PANEL_EXIT_MS, easing = SoftExitEasing))
     }
 
+    /**
+     * Спринт 57: ход выезда правой панели планшета (0..1) - та же мягкая кривая и длительность, что у
+     * [sidePanelEnter]/[sidePanelExit]; по нему едут и панель, и край холста.
+     */
+    fun sidePanelSpec(opening: Boolean): androidx.compose.animation.core.AnimationSpec<Float> =
+        if (opening) tween(UiMotion.SIDE_PANEL_MS, easing = SoftEasing) else tween(UiMotion.SIDE_PANEL_EXIT_MS, easing = SoftExitEasing)
+
     /** Спринт 42: индикатор края (стрелка у закрытой панели) - только прозрачность. */
     @Composable
     fun hintEnter(): EnterTransition =

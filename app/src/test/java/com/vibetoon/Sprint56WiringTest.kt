@@ -106,7 +106,8 @@ class Sprint56WiringTest {
         for (bad in listOf("RenderHost", "setScene", "markDirty", "SceneData", "RenderNative")) assertFalse(bad, overlay.contains(bad))
         val main = kt("ui/MainScreen.kt")
         assertTrue(main.contains("ReferenceWindowOverlay(vm, onReplace = addActions.reference)"))
-        assertTrue(kt("ui/shell/EditorShell.kt").contains("Text(\"Окно референса…\") }, onClick = { actions = false; add.reference() }"))
+        // спринт 57: пункт меню стал CoachMenuItem - его подсвечивает урок «Окно референса»
+        assertTrue(kt("ui/shell/EditorShell.kt").contains("CoachMenuItem(\"Окно референса…\", highlight = coachTarget == \"Окно референса…\") { actions = false; add.reference() }"))
         val load = body(vm, "fun loadReference(uri: android.net.Uri)")
         assertTrue(load.contains("ReferenceWindow.sampleSize("))
         assertTrue(load.contains("Dispatchers.IO"))
