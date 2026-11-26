@@ -75,6 +75,24 @@ class SymbolFormCache(budgetBytes: Long) {
         return out
     }
 
+    /** Байты всех форм в кэше. */
+    fun usedBytes(): Long = bytes
+
+    /**
+     * Спринт 52: нехватка памяти - формы сверх [limit] уходят (сначала устаревшие, затем давние; [pinned] - на экране -
+     * остаются). Возвращает id текстур, которые надо удалить. Формы снимутся заново, когда понадобятся.
+     */
+    fun trim(limit: Long, pinned: Set<Key>): List<Int> {
+        if (bytes <= limit) return emptyList()
+        val out = ArrayList<Int>()
+        val order = map.entries.filter { it.key !in pinned }.sortedBy { if (it.value.gen == gen) 1 else 0 }
+        for (e in order) {
+            if (bytes <= limit) break
+            map.remove(e.key); bytes -= e.value.bytes; out += e.value.texId
+        }
+        return out
+    }
+
     /** Пакет 29: рендерер вытеснил текстуру [texId] - форма с ней больше не готова. Возвращает её ключ или null. */
     fun removeTex(texId: Int): Key? {
         val k = map.entries.firstOrNull { it.value.texId == texId }?.key ?: return null

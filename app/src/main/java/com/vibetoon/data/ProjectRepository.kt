@@ -47,8 +47,9 @@ class ProjectRepository(context: Context) {
             if (!f.exists()) return@mapNotNull null
             val stamp = f.lastModified() to f.length()
             metaCache[d.name]?.takeIf { it.first == stamp }?.let { return@mapNotNull it.second }
-            ProjectJson.decode(f.readText()).onFailure { Log.w(TAG, "skip ${d.name}: ${it.message}") }
-                .getOrNull()?.meta?.also { metaCache[d.name] = stamp to it }
+            // спринт 52: только заголовок (поля верхнего уровня), слои и ключи пропускаются без разбора
+            ProjectJson.decodeMeta(f.readText()).onFailure { Log.w(TAG, "skip ${d.name}: ${it.message}") }
+                .getOrNull()?.also { metaCache[d.name] = stamp to it }
         }.sortedByDescending { it.updatedAt }
 
     /** Спринт 46: id папки проекта -> (время изменения и размер project.json, заголовок). */
@@ -106,15 +107,26 @@ class ProjectRepository(context: Context) {
         return data.meta
     }
 
-    fun save(data: ProjectData) {
-        dir(data.meta.id).mkdirs()
-        val tmp = File(dir(data.meta.id), "project.json.tmp")
+    fun save(data: ProjectData) = writeJson(data.meta.id, ProjectJson.encode(data))
+
+    /**
+     * Атомарная запись project.json. Спринт 52: под общей блокировкой - быстрый перенос в папку и обратно (или перенос
+     * во время автосохранения) больше не пишут один и тот же project.json.tmp одновременно.
+     */
+    private fun writeJson(id: String, text: String) = synchronized(writeLock) {
+        dir(id).mkdirs()
+        val tmp = File(dir(id), "project.json.tmp")
         tmp.outputStream().use { stream ->
-            stream.write(ProjectJson.encode(data).toByteArray(Charsets.UTF_8))
+            stream.write(text.toByteArray(Charsets.UTF_8))
             stream.fd.sync()
         }
         // На Android rename в одном каталоге атомарно заменяет цель. При ошибке не удаляем старый JSON.
-        check(tmp.renameTo(jsonFile(data.meta.id))) { "Не удалось сохранить проект" }
+        check(tmp.renameTo(jsonFile(id))) { "Не удалось сохранить проект" }
+    }
+
+    private companion object {
+        /** Одна блокировка на все экземпляры: экран проектов и редактор держат свои репозитории. */
+        val writeLock = Any()
     }
 
     /** Подготовленный API для copy-on-write: вызывающий сериализует доступ к проекту. */
@@ -131,8 +143,35 @@ class ProjectRepository(context: Context) {
     }
 
     fun rename(id: String, name: String) {
-        val data = load(id).getOrNull() ?: return
-        save(data.copy(meta = data.meta.copy(name = name.ifBlank { data.meta.name }, updatedAt = System.currentTimeMillis())))
+        if (name.isBlank()) return
+        patchMeta(id, mapOf("name" to name, "updatedAt" to System.currentTimeMillis())) { it.copy(name = name) }
+    }
+
+    /**
+     * Спринт 52: правка полей заголовка (папка, имя) прямо в тексте project.json: без разбора слоёв и ключей и без
+     * повторной сериализации всего проекта. Кэш заголовков и размеров обновляется сразу - следующий list() не читает
+     * этот проект заново. Если текст не распознан - прежний путь (полное чтение и запись). Возвращает новый заголовок.
+     */
+    private fun patchMeta(id: String, values: Map<String, Any?>, change: (ProjectMeta) -> ProjectMeta): ProjectMeta? = synchronized(writeLock) {
+        val f = jsonFile(id)
+        if (!f.exists()) return null
+        val text = f.readText()
+        val old = ProjectJson.decodeMeta(text).getOrNull() ?: return null
+        val now = (values["updatedAt"] as? Long)?.let { change(old).copy(updatedAt = it) } ?: change(old)
+        if (now == old) return old
+        val stamp0 = f.lastModified() to f.length()
+        val patched = ProjectJson.withTopLevel(text, values)
+        if (patched != null && ProjectJson.decodeMeta(patched).getOrNull() == now) writeJson(id, patched)
+        else {
+            Log.w(TAG, "meta patch fallback for $id")
+            val data = load(id).getOrNull() ?: return null
+            writeJson(id, ProjectJson.encode(data.copy(meta = now)))
+        }
+        val stamp1 = f.lastModified() to f.length()
+        metaCache[id] = stamp1 to now
+        val assets = File(dir(id), "assets").lastModified()
+        sizes.update(id, SizeStamp(stamp0.first, stamp0.second, assets), SizeStamp(stamp1.first, stamp1.second, assets)) { it - stamp0.second + stamp1.second }
+        now
     }
 
     /** Копия проекта целиком (файлы и project.json с новым id); возвращает id копии. */
@@ -151,20 +190,29 @@ class ProjectRepository(context: Context) {
     fun delete(id: String) {
         dir(id).deleteRecursively()
         metaCache.remove(id)
+        sizes.remove(id)
     }
 
     /** Размер проекта на диске, байты. */
     /** Размер проекта без экспортов (готовые видео/GIF/PSD лежат отдельно и не должны раздувать карточку и сортировку по размеру). */
     fun sizeOf(id: String): Long {
         val root = dir(id)
-        val exports = java.io.File(root, "exports")
-        return root.walkTopDown().filter { it.isFile && !it.startsWith(exports) }.sumOf { it.length() }
+        val json = jsonFile(id)
+        // спринт 52: размер пересчитывается, только если project.json или состав assets поменялись (раньше - обход папок
+        // ВСЕХ проектов при каждом обновлении экрана проектов, в том числе после переноса одного проекта в папку)
+        val stamp = SizeStamp(json.lastModified(), json.length(), File(root, "assets").lastModified())
+        return sizes.get(id, stamp) {
+            val exports = java.io.File(root, "exports")
+            root.walkTopDown().filter { it.isFile && !it.startsWith(exports) }.sumOf { it.length() }
+        }
     }
 
-    fun moveToFolder(id: String, folder: String) {
-        val data = load(id).getOrNull() ?: return
-        save(data.copy(meta = data.meta.copy(folder = folder)))
-    }
+    private data class SizeStamp(val jsonTime: Long, val jsonLength: Long, val assetsTime: Long)
+    private val sizes = com.vibetoon.domain.perf.StampCache<String, SizeStamp, Long>()
+
+    /** Спринт 52: перенос в папку - правка одного поля заголовка, без разбора и перезаписи всего проекта. */
+    fun moveToFolder(id: String, folder: String): ProjectMeta? =
+        patchMeta(id, mapOf("folder" to folder.ifEmpty { null })) { it.copy(folder = folder) }
 
     /** Кэш, который пересоздаётся сам: волны звука (.wave) и миниатюра проекта. Возвращает освобождённые байты. */
     fun clearCache(): Long {

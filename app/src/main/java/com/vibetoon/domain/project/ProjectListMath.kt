@@ -109,6 +109,19 @@ object ProjectListMath {
     fun folderPreview(all: List<ProjectMeta>, folder: String, by: ProjectSort, sizes: Map<String, Long>, manual: List<String>, n: Int = 4): List<ProjectMeta> =
         sort(all.filter { it.folder == folder }, by, sizes, manual).take(n)
 
+    /**
+     * Спринт 52: превью всех папок за один проход (раньше [folderPreview] сортировал весь список для каждой папки при
+     * каждой перерисовке сетки). Папка -> до [n] проектов в порядке сортировки.
+     */
+    fun folderPreviews(all: List<ProjectMeta>, by: ProjectSort, sizes: Map<String, Long>, manual: List<String>, n: Int = 4): Map<String, List<ProjectMeta>> =
+        sort(all.filter { it.folder.isNotBlank() }, by, sizes, manual).groupBy { it.folder }.mapValues { it.value.take(n) }
+
+    /** Спринт 52: список сразу после переноса [ids] в папку [folder] ("" - из папки), до записи на диск. */
+    fun withFolder(all: List<ProjectMeta>, ids: Collection<String>, folder: String): List<ProjectMeta> {
+        val set = ids.toHashSet()
+        return all.map { if (it.id in set && it.folder != folder) it.copy(folder = folder) else it }
+    }
+
     /** Число проектов в каждой папке. */
     fun folderCounts(all: List<ProjectMeta>): Map<String, Int> = all.filter { it.folder.isNotBlank() }.groupingBy { it.folder }.eachCount()
 

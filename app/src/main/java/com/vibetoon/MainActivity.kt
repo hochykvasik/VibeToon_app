@@ -76,12 +76,14 @@ class MainActivity : ComponentActivity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         editor.onTrimMemory(level)   // спринт 31: кэш рисунков покадровых слоёв отдаёт память
+        app.onTrimMemory(level)      // спринт 52: и превью экрана проектов
     }
 
     override fun onResume() {
         super.onResume()
         com.vibetoon.render.RenderHost.view?.onResume()
         editor.restoreCaches()
+        app.restoreCaches()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

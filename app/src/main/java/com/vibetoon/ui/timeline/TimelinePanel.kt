@@ -418,12 +418,42 @@ fun TimelinePanel(
             OutlinedButton(onClick = vm::duplicateFrame, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp)) { Text("Дубль кадра", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             TlIcon(Icons.Default.DeleteSweep, "Удалить кадр", enabled = !playing) { vm.deleteFrame() }
             Text("Длина:", fontSize = 12.sp, maxLines = 1, softWrap = false)
-            TlIcon(Icons.Default.Remove, "Короче на кадр", enabled = !playing) { vm.nudgeFrameLength(-1) }
-            TlIcon(Icons.Default.Add, "Длиннее на кадр", enabled = !playing) { vm.nudgeFrameLength(1) }
+            // спринт 52: удержание - автоповтор с ускорением (сначала по 1 кадру, потом по 2 и по 4)
+            RepeatIcon(Icons.Default.Remove, "Короче на кадр (удерживайте)", enabled = !playing) { vm.nudgeFrameLength(-it) }
+            RepeatIcon(Icons.Default.Add, "Длиннее на кадр (удерживайте)", enabled = !playing) { vm.nudgeFrameLength(it) }
             Box {
-                AssistChip(onClick = { holdMenu = true }, label = { Text("Новый кадр: $hold", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+                // спринт 52: «Новый кадр: N» тянется влево-вправо, как ползунок (шаг - 12 dp); касание - меню с ползунком
+                var dragHold by remember { mutableStateOf<Int?>(null) }
+                val stepPx = with(androidx.compose.ui.platform.LocalDensity.current) { 12.dp.toPx() }
+                val holdNow by rememberUpdatedState(hold)
+                val shownHold = dragHold ?: hold
+                AssistChip(
+                    onClick = { holdMenu = true },
+                    label = { Text("Новый кадр: $shownHold", fontSize = 12.sp, maxLines = 1, softWrap = false) },
+                    leadingIcon = { Icon(Icons.Default.SwapHoriz, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.pointerInput(playing) {
+                        if (playing) return@pointerInput
+                        var start = 0; var acc = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { start = holdNow; acc = 0f; dragHold = holdNow },
+                            onDragEnd = { dragHold?.let { vm.setFrameHold(it) }; dragHold = null },
+                            onDragCancel = { dragHold = null },
+                            onHorizontalDrag = { ch, dx ->
+                                ch.consume(); acc += dx
+                                dragHold = com.vibetoon.domain.anim.StepGestures.dragValue(start, acc, stepPx, 1, com.vibetoon.ui.MAX_FRAME_HOLD)
+                            }
+                        )
+                    }
+                )
                 DropdownMenu(expanded = holdMenu, onDismissRequest = { holdMenu = false }) {
-                    for (n in listOf(1, 2, 3, 4, 6, 8, 12, 24)) DropdownMenuItem(
+                    var sv by remember(holdMenu) { mutableStateOf(hold.toFloat()) }
+                    Text("Длина нового кадра: ${sv.roundToInt()}", fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    androidx.compose.material3.Slider(
+                        value = sv, onValueChange = { sv = it }, onValueChangeFinished = { vm.setFrameHold(sv.roundToInt()) },
+                        valueRange = 1f..com.vibetoon.ui.MAX_FRAME_HOLD.toFloat(), steps = com.vibetoon.ui.MAX_FRAME_HOLD - 2,
+                        modifier = Modifier.width(260.dp).padding(horizontal = 16.dp)
+                    )
+                    for (n in listOf(1, 2, 3, 4, 6, 8, 12, 24, 48)) DropdownMenuItem(
                         text = { Text("Длина нового кадра: $n") },
                         leadingIcon = { if (n == hold) Icon(Icons.Default.Check, null) },
                         onClick = { vm.setFrameHold(n); holdMenu = false }
@@ -1454,6 +1484,51 @@ private fun Modifier.clipGestures(id: Int, frameWPx: Float, clip: State<Clip>, s
             }
         }
     }
+
+/**
+ * Спринт 52: иконка «− / +» с удержанием: касание - один шаг; удержание дольше [StepGestures.FIRST_DELAY_MS] -
+ * автоповтор с ускорением (пауза короче, шаг 1 → 2 → 4). [onStep] получает размер шага.
+ */
+@Composable
+private fun RepeatIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, enabled: Boolean, onStep: (Int) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val step by rememberUpdatedState(onStep)
+    var pressed by remember { mutableStateOf(false) }
+    Box(
+        Modifier.size(36.dp).coachTarget(desc).clip(androidx.compose.foundation.shape.CircleShape)
+            .background(if (pressed) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent)
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false).consume()
+                    pressed = true
+                    step(1)
+                    val repeat = scope.launch {
+                        delay(com.vibetoon.domain.anim.StepGestures.FIRST_DELAY_MS)
+                        var n = 0
+                        while (true) {
+                            step(com.vibetoon.domain.anim.StepGestures.stepAfter(n))
+                            delay(com.vibetoon.domain.anim.StepGestures.delayAfter(n))
+                            n++
+                        }
+                    }
+                    try {
+                        // отпускание или уход пальца (прокрутка строки) останавливает повтор
+                        do {
+                            val e = awaitPointerEvent()
+                            e.changes.forEach { if (it.pressed) it.consume() }
+                        } while (e.changes.any { it.pressed })
+                    } finally {
+                        repeat.cancel(); pressed = false
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, com.vibetoon.ui.i18n.L(desc), modifier = Modifier.size(20.dp),
+            tint = LocalContentColor.current.copy(alpha = if (enabled) 1f else 0.38f))
+    }
+}
 
 /** Спринт 51: команды меню «Плашка» (перенос и обрезка к плейхеду и ближайшему флажку). */
 private val CLIP_OPS = listOf(

@@ -78,7 +78,7 @@ class Sprint51WiringTest {
         // кисть в промежутке - новый рисунок, а не штрих в невидимый
         assertTrue(vm.contains("addEmptyFrameAt(\"Пустой кадр: создан новый рисунок"))
         for (s in listOf("vm.jumpDrawing(false)", "vm.jumpDrawing(true)", "vm::addEmptyFrame", "vm::duplicateFrame", "vm.deleteFrame()",
-            "vm.nudgeFrameLength(-1)", "vm.nudgeFrameLength(1)", "vm.setFrameHold(n)", "\"< Кадр\"", "\"Кадр >\"", "\"+ Кадр\"", "\"Дубль кадра\""))
+            "vm.nudgeFrameLength(-it)", "vm.nudgeFrameLength(it)", /* спринт 52: шаг автоповтора удержания */ "vm.setFrameHold(n)", "\"< Кадр\"", "\"Кадр >\"", "\"+ Кадр\"", "\"Дубль кадра\""))
             assertTrue(s, timeline.contains(s))
         // полоски рисунков - по отрезкам с их длиной
         assertTrue(timeline.contains("val cs = cellSpans[l.id]"))

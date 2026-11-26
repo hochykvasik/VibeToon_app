@@ -2207,4 +2207,7 @@
     <string name="ui_with_animation_a_copy_with_all_keys_">With animation - a copy with all keys (transform, deformers, effects). Without animation - a clean layer without keys, posed as on the current frame.</string>
     <string name="ui_without_animation">Without animation</string>
     <string name="ui_with_animation">With animation</string>
+    <string name="ui_could_not_move_projects">Could not move projects: {}</string>
+    <string name="ui_one_frame_shorter_hold">One frame shorter (hold)</string>
+    <string name="ui_one_frame_longer_hold">One frame longer (hold)</string>
 </resources>

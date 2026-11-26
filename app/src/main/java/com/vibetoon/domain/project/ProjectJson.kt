@@ -116,6 +116,86 @@ object ProjectJson {
         return MiniJson.stringify(root)
     }
 
+    /** Заголовок проекта из полей верхнего уровня (общий для [decode] и [decodeMeta]). */
+    private fun metaOf(root: Map<String, Any?>): ProjectMeta {
+        val id = root["id"] as? String ?: throw JsonException("Нет id проекта")
+        return ProjectMeta(
+            id = id,
+            name = root.str("name", "Проект"),
+            width = root.int("width", 1080).coerceAtLeast(1),
+            height = root.int("height", 1080).coerceAtLeast(1),
+            fps = com.vibetoon.domain.anim.FrameRates.clamp(root.int("fps", 24)),   // спринт 32: 1–120, как в редакторе
+            durationFrames = root.int("duration", 120).coerceAtLeast(1),
+            background = parseColor(root.str("background", "#00000000")),
+            createdAt = root.long("createdAt", 0L),
+            updatedAt = root.long("updatedAt", 0L),
+            loop = root["loop"] as? Boolean ?: true,
+            magnet = root["magnet"] as? Boolean ?: false,
+            folder = root["folder"] as? String ?: ""
+        )
+    }
+
+    /** Поля заголовка проекта - все они лежат на верхнем уровне project.json. */
+    val META_KEYS = setOf("format", "version", "id", "name", "width", "height", "fps", "duration", "background",
+        "createdAt", "updatedAt", "loop", "magnet", "folder")
+
+    /**
+     * Спринт 52: только заголовок проекта (для экрана проектов). Разбираются лишь поля верхнего уровня из [META_KEYS];
+     * слои, ключи и клипы пропускаются без построения объектов - у большого старого проекта это в разы быстрее
+     * [decode]. Структура файла при этом проверяется целиком, версия новее известной - ошибка, как в [decode].
+     */
+    fun decodeMeta(text: String): Result<ProjectMeta> = try {
+        val head = HashMap<String, Any?>()
+        for (m in MiniJson.topLevel(text)) if (m.key in META_KEYS) head[m.key] = MiniJson.parse(text.substring(m.valueStart, m.valueEnd))
+        val version = head.int("version", 1)
+        if (version > VERSION) Result.failure(IllegalStateException("Проект создан в более новой версии приложения (v$version)"))
+        else Result.success(metaOf(head))
+    } catch (e: JsonException) {
+        Result.failure(IllegalStateException("Повреждённый файл проекта: ${e.message}"))
+    }
+
+    /**
+     * Спринт 52: правка полей заголовка прямо в тексте project.json (папка, имя, время изменения) - без разбора и
+     * повторной записи всего проекта. [values]: ключ из [META_KEYS] -> новое значение (String, Number, Boolean); null -
+     * удалить поле. Остальной текст не меняется байт в байт. null - структура не распознана (вызывающий делает полную
+     * перезапись через [decode]/[encode]).
+     */
+    fun withTopLevel(text: String, values: Map<String, Any?>): String? {
+        if (values.keys.any { it !in META_KEYS || it == "id" || it == "format" || it == "version" }) return null
+        return try {
+            var t = text
+            for ((key, value) in values) {
+                val ms = MiniJson.topLevel(t)
+                val pretty = ms.firstOrNull()?.let { t.getOrNull(it.keyStart - 1) == ' ' } ?: true
+                val m = ms.firstOrNull { it.key == key }
+                val enc = if (value == null) null else MiniJson.stringify(value, pretty = false)
+                t = when {
+                    m != null && enc != null -> t.substring(0, m.valueStart) + enc + t.substring(m.valueEnd)
+                    m != null -> {
+                        // поле удаляется вместе с запятой перед ним (или после него, если оно первое)
+                        var a = m.keyStart
+                        while (a > 0 && t[a - 1].isWhitespace()) a--
+                        if (a > 0 && t[a - 1] == ',') t.substring(0, a - 1) + t.substring(m.valueEnd)
+                        else {
+                            var b = m.valueEnd
+                            while (b < t.length && t[b].isWhitespace()) b++
+                            if (b < t.length && t[b] == ',') b++
+                            while (b < t.length && t[b].isWhitespace()) b++
+                            t.substring(0, m.keyStart) + t.substring(b)
+                        }
+                    }
+                    enc == null -> t
+                    else -> {
+                        val anchor = ms.lastOrNull { it.key in META_KEYS } ?: return null
+                        val sep = if (pretty) ",\n  " else ","
+                        t.substring(0, anchor.valueEnd) + sep + MiniJson.stringify(key) + (if (pretty) ": " else ":") + enc + t.substring(anchor.valueEnd)
+                    }
+                }
+            }
+            t
+        } catch (e: JsonException) { null }
+    }
+
     fun decode(text: String): Result<ProjectData> = try {
         @Suppress("UNCHECKED_CAST")
         val root = MiniJson.parse(text) as? Map<String, Any?> ?: throw JsonException("Ожидался объект")
@@ -123,21 +203,7 @@ object ProjectJson {
         if (version > VERSION) {
             Result.failure(IllegalStateException("Проект создан в более новой версии приложения (v$version)"))
         } else {
-            val id = root["id"] as? String ?: throw JsonException("Нет id проекта")
-            val meta = ProjectMeta(
-                id = id,
-                name = root.str("name", "Проект"),
-                width = root.int("width", 1080).coerceAtLeast(1),
-                height = root.int("height", 1080).coerceAtLeast(1),
-                fps = com.vibetoon.domain.anim.FrameRates.clamp(root.int("fps", 24)),   // спринт 32: 1–120, как в редакторе
-                durationFrames = root.int("duration", 120).coerceAtLeast(1),
-                background = parseColor(root.str("background", "#00000000")),
-                createdAt = root.long("createdAt", 0L),
-                updatedAt = root.long("updatedAt", 0L),
-                loop = root["loop"] as? Boolean ?: true,
-                magnet = root["magnet"] as? Boolean ?: false,
-                folder = root["folder"] as? String ?: ""
-            )
+            val meta = metaOf(root)
             val psd = root.obj("psd")?.let {
                 PsdRef(it.str("file", ""), it.str("name", "PSD"), it.int("width", 1), it.int("height", 1))
             }

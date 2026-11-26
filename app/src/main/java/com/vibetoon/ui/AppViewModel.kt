@@ -34,6 +34,9 @@ sealed interface ImportUi {
     data class Failed(val message: String) : ImportUi
 }
 
+/** Спринт 52: бюджет кэша превью экрана проектов (~40 карточек 480 px). */
+private const val THUMB_BUDGET = 24L * 1024 * 1024
+
 /** Список проектов и переход между экранами. Редактор живёт в [MainViewModel]. */
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = ProjectRepository(app)
@@ -74,6 +77,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Спринт 46: свой порядок проектов (перетаскивание карточек), id сверху вниз. */
     val manualOrder: StateFlow<List<String>> = _order.asStateFlow()
 
+    private var refreshJob: kotlinx.coroutines.Job? = null
+    /** Спринт 52: записи на диск экрана проектов (перенос, имя, удаление) идут по очереди, без гонок одного проекта. */
+    private val diskLock = kotlinx.coroutines.sync.Mutex()
+
+    private val thumbs = com.vibetoon.domain.perf.BudgetLru<String, androidx.compose.ui.graphics.ImageBitmap>(THUMB_BUDGET, { it.width.toLong() * it.height * 4L })
+
     // Спринт 41: init стоит ПОСЛЕ всех полей. Раньше он был выше _sizes/_folders/prefs, и refresh(), успевший
     // завершиться до их инициализации (быстрый диск, Dispatchers.Main.immediate), падал с NPE на _sizes.value.
     init {
@@ -101,7 +110,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refresh() {
-        viewModelScope.launch {
+        // спринт 52: несколько обновлений подряд (перенос + выход из редактора) - работает только последнее
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
             // спринт 46: список публикуется сразу, размеры (обход папок) - следом; прежний список не сбрасывается
             val list = withContext(Dispatchers.IO) { repo.list() }
             _projects.value = list
@@ -111,7 +122,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _order.value = com.vibetoon.domain.project.ProjectListMath.pruneOrder(_order.value, alive)
                 prefs.edit().putString("manual_order", com.vibetoon.domain.project.ProjectListMath.encodeOrder(_order.value)).apply()
             }
+            // спринт 52: размеры - из кэша по штампу файлов; обходятся только изменившиеся проекты
             _sizes.value = withContext(Dispatchers.IO) { list.associate { it.id to repo.sizeOf(it.id) } }
+            thumbs.removeIf { k -> k.substringBefore(':') !in alive }
         }
     }
 
@@ -125,8 +138,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteFolder(name: String) {
         _folders.value = _folders.value - name
         prefs.edit().putStringSet("folders", _folders.value).apply()
+        val ids = _projects.value.filter { it.folder == name }.map { it.id }
+        if (ids.isEmpty()) return
+        _projects.value = com.vibetoon.domain.project.ProjectListMath.withFolder(_projects.value, ids, "")   // спринт 52: сразу на экране
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { _projects.value.filter { it.folder == name }.forEach { repo.moveToFolder(it.id, "") } }
+            diskLock.withLock { withContext(Dispatchers.IO) { ids.forEach { runCatching { repo.moveToFolder(it, "") } } } }
             refresh()
         }
     }
@@ -137,10 +153,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun moveToFolder(ids: Collection<String>, folder: String) {
         if (ids.isEmpty()) return
         if (folder.isNotBlank() && folder !in _folders.value) addFolder(folder)
+        // спринт 52: карточки переезжают сразу (раньше экран ждал полного чтения и перезаписи project.json каждого
+        // проекта, повторного разбора JSON для списка и обхода папок всех проектов для размеров)
+        _projects.value = com.vibetoon.domain.project.ProjectListMath.withFolder(_projects.value, ids, folder)
+        _note.tryEmit(if (folder.isBlank()) "Проектов перенесено из папки: ${ids.size}" else "Проектов перенесено в «$folder»: ${ids.size}")
+        val todo = ids.toList()
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { ids.forEach { repo.moveToFolder(it, folder) } }
-            refresh()
-            _note.tryEmit(if (folder.isBlank()) "Проектов перенесено из папки: ${ids.size}" else "Проектов перенесено в «$folder»: ${ids.size}")
+            val failed = diskLock.withLock { withContext(Dispatchers.IO) { todo.count { runCatching { repo.moveToFolder(it, folder) }.getOrNull() == null } } }
+            if (failed > 0) _note.tryEmit("Не удалось перенести проектов: $failed")
+            refresh()   // заголовки и размеры уже в кэше репозитория - без повторного чтения
         }
     }
 
@@ -148,7 +169,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteMany(ids: Collection<String>) {
         if (ids.isEmpty()) return
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { ids.forEach { repo.delete(it) } }
+            diskLock.withLock { withContext(Dispatchers.IO) { ids.forEach { repo.delete(it) } } }
             refresh()
             _note.tryEmit("Удалено проектов: ${ids.size}")
         }
@@ -241,13 +262,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "PSD"
 
     fun open(id: String) {
-        _screen.value = Screen.Editor(id)
+        // спринт 52: редактору - память; на экране проектов остаётся четверть кэша превью (последние карточки)
+        thumbs.resize(THUMB_BUDGET / 4)
+        // спринт 52: перенос в папку пишется в фоне - редактор читает проект, когда запись закончена (иначе его
+        // сохранение вернуло бы прежнюю папку). Обычно очередь пуста, и проект открывается без ожидания.
+        if (!diskLock.isLocked) { _screen.value = Screen.Editor(id); return }
+        viewModelScope.launch {
+            diskLock.withLock { }
+            _screen.value = Screen.Editor(id)
+        }
     }
 
     fun goProjects() {
+        // превью закрытого проекта переснято при выходе - старое не показываем
+        (_screen.value as? Screen.Editor)?.id?.let { id -> thumbs.removeIf { it.substringBefore(':') == id } }
+        thumbs.resize(THUMB_BUDGET)
         _screen.value = Screen.Projects
         refresh()
     }
+
+    /**
+     * Спринт 52: декодированные превью карточек и папок (ключ «id:updatedAt:sample»). Раньше превью декодировалось с диска
+     * при каждом появлении карточки - перенос в папку и обратно, открытие папки, возврат из редактора.
+     */
+    fun cachedThumb(key: String): androidx.compose.ui.graphics.ImageBitmap? = thumbs.get(key)
+    fun putThumb(key: String, bmp: androidx.compose.ui.graphics.ImageBitmap) { thumbs.put(key, bmp) }
+
+    /** onTrimMemory: превью отдают память (фон или нехватка - всё, умеренная нехватка - половину). */
+    fun onTrimMemory(level: Int) {
+        thumbs.resize(com.vibetoon.domain.perf.CellCachePolicy.trimmedBudget(thumbs.budgetBytes, level))
+    }
+
+    /** Возврат на передний план: прежний бюджет превью. */
+    fun restoreCaches() { if (_screen.value is Screen.Projects) thumbs.resize(THUMB_BUDGET) }
 
     /** Создаёт проект с заданными параметрами и сразу открывает рабочий экран. */
     fun create(spec: NewProjectSpec) {

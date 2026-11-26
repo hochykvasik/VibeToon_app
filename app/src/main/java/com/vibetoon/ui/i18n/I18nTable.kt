@@ -1914,6 +1914,8 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "С анимацией - копия со всеми ключами (трансформация, деформеры, эффекты). Без анимации - чистый слой без ключей, стоит как на текущем кадре." to R.string.ui_with_animation_a_copy_with_all_keys_,
     "Без анимации" to R.string.ui_without_animation,
     "С анимацией" to R.string.ui_with_animation,
+    "Короче на кадр (удерживайте)" to R.string.ui_one_frame_shorter_hold,
+    "Длиннее на кадр (удерживайте)" to R.string.ui_one_frame_longer_hold,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -2028,6 +2030,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Кодирование\\ и\\ сведение\\ звука:\\ (.+?)%\$" to R.string.ui_mixing_and_encoding_sound,
     "^(.+?)\\.\\ Проект\\ продлён\\ до\\ конца\\ видео\$" to R.string.ui_project_extended_to_the_end_of_the_v,
     "^Эффекты\\ фигур\\ \\((.+?)\\)\\ не\\ переносятся\$" to R.string.ui_shape_effects_are_not_imported,
+    "^Не\\ удалось\\ перенести\\ проектов:\\ (.+?)\$" to R.string.ui_could_not_move_projects,
     "^(.+?)\\ КБ\\.\\ Сохранено\\ в\\ папку\\ проекта\$" to R.string.ui_kb_saved_to_the_project_folder,
     "^Автопривязка:\\ слоёв\\ привязано\\ (.+?)\$" to R.string.ui_auto_bind_layers_bound,
     "^Длительность:\\ (.+?)\\ \\(мин:сек:кадры\\)\$" to R.string.ui_duration_min_sec_frames,

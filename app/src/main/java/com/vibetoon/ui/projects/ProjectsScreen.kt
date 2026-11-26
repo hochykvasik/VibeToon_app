@@ -143,6 +143,10 @@ fun ProjectsScreen(app: AppViewModel) {
     var live by remember { mutableStateOf<List<String>?>(null) }
     var expectSlot by remember { mutableStateOf<androidx.compose.ui.unit.IntOffset?>(null) }
     val byId = remember(allProjects) { allProjects.associateBy { it.id } }
+    // спринт 52: счётчики и превью папок - один проход при изменении списка, а не сортировка на каждую папку в каждой
+    // перерисовке сетки (перетаскивание карточки перерисовывает сетку на каждом кадре)
+    val folderCounts = remember(allProjects) { com.vibetoon.domain.project.ProjectListMath.folderCounts(allProjects) }
+    val folderPreviews = remember(allProjects, sortBy, sizes, manual) { com.vibetoon.domain.project.ProjectListMath.folderPreviews(allProjects, sortBy, sizes, manual) }
     val shown = live?.mapNotNull { byId[it] } ?: projects
     androidx.compose.runtime.LaunchedEffect(projects) { if (dragId == null) live = null }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -404,11 +408,10 @@ fun ProjectsScreen(app: AppViewModel) {
                     }
                 }
                 // спринт 46: папки - карточки с превью проектов (как папки iOS); на карточку можно перетащить проект
-                val folderCounts = com.vibetoon.domain.project.ProjectListMath.folderCounts(allProjects)
                 if (folder.isEmpty() && !searching) items(folderNames, key = { FOLDER_KEY + it }) { f ->
                     FolderCard(
                         f, folderCounts[f] ?: 0,
-                        com.vibetoon.domain.project.ProjectListMath.folderPreview(allProjects, f, sortBy, sizes, manual),
+                        folderPreviews[f].orEmpty(),
                         app, dropTarget = dropFolder == f,
                         onOpen = { folder = f; selected = emptySet() },
                         onDelete = { app.deleteFolder(f) },
@@ -628,15 +631,20 @@ private const val HEADER_KEY = "header"
 
 /** Превью проекта: декодируется на IO, не задерживает список. [sample] - уменьшение (2 - для мини-превью в папке). */
 @Composable
-private fun rememberThumb(app: AppViewModel, p: ProjectMeta, sample: Int = 1): androidx.compose.ui.graphics.ImageBitmap? =
-    androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, p.id, p.updatedAt, app, sample) {
+private fun rememberThumb(app: AppViewModel, p: ProjectMeta, sample: Int = 1): androidx.compose.ui.graphics.ImageBitmap? {
+    // спринт 52: превью из памяти приложения - карточка, переехавшая в папку или обратно, показывается сразу, без
+    // повторного декодирования PNG; с диска - только первый раз (на IO)
+    val key = "${p.id}:${p.updatedAt}:$sample"
+    return androidx.compose.runtime.produceState(app.cachedThumb(key), key, app) {
+        if (value != null) return@produceState
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 val f = app.thumbnailFile(p.id)
                 if (f.exists()) BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap() else null
             }.getOrNull()
-        }
+        }?.also { app.putThumb(key, it) }
     }.value
+}
 
 /**
  * Спринт 46: карточка папки как папка iOS: превью до 4 проектов сеткой 2×2, имя и число проектов. Тап открывает папку

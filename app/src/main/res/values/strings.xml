@@ -2207,4 +2207,7 @@
     <string name="ui_with_animation_a_copy_with_all_keys_">С анимацией - копия со всеми ключами (трансформация, деформеры, эффекты). Без анимации - чистый слой без ключей, стоит как на текущем кадре.</string>
     <string name="ui_without_animation">Без анимации</string>
     <string name="ui_with_animation">С анимацией</string>
+    <string name="ui_could_not_move_projects">Не удалось перенести проектов: {}</string>
+    <string name="ui_one_frame_shorter_hold">Короче на кадр (удерживайте)</string>
+    <string name="ui_one_frame_longer_hold">Длиннее на кадр (удерживайте)</string>
 </resources>

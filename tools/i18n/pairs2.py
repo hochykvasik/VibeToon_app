@@ -1883,4 +1883,7 @@ Hold - резкая смена формы. Остальные переходы �
 С анимацией - копия со всеми ключами (трансформация, деформеры, эффекты). Без анимации - чистый слой без ключей, стоит как на текущем кадре.|With animation - a copy with all keys (transform, deformers, effects). Without animation - a clean layer without keys, posed as on the current frame.
 Без анимации|Without animation
 С анимацией|With animation
+Не удалось перенести проектов: {}|Could not move projects: {}
+Короче на кадр (удерживайте)|One frame shorter (hold)
+Длиннее на кадр (удерживайте)|One frame longer (hold)
 """

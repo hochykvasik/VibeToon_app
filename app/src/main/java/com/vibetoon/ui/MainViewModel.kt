@@ -158,7 +158,7 @@ data class ColorAdjust(val exposure: Float = 0f, val contrast: Float = 0f, val s
 /** Начало id призраков кальки. */
 const val GHOST_BASE = 900_000
 /** Спринт 51: наибольшая «Длина нового кадра» (кадры). */
-const val MAX_FRAME_HOLD = 24
+const val MAX_FRAME_HOLD = 48   // спринт 52: 1–48 (ползунок «Новый кадр»)
 /** Тип эффекта Тонировка для кальки: kFragFx, режим 20. */
 private const val TINT_FX = 20f
 
@@ -714,6 +714,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         videoFrames.release()
         videoThumbs.clear()
         cellCache.clear()
+        // спринт 52: состояние спринта 51 тоже не переходит в следующий проект (призраки кальки прошлого проекта
+        // попадали в таблицу псевдонимов нового до первого обновления кальки)
+        ghosts = emptyList(); heldCellIds = emptySet()
+        _cellMap.value = emptyMap(); _cellSpans.value = emptyMap(); _duplicateAsk.value = null
         _perspTool.value = false
         _perspOverlay.value = FloatArray(0)
         _meshOverlay.value = MeshOverlay()
@@ -1089,6 +1093,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refreshSymbolState()
         _cellMap.value = media.filter { it.kind == MediaKind.IMAGE && it.cells.isNotEmpty() }.associate { it.id to it.cells.map { c -> c.start } }
         _cellSpans.value = media.filter { it.kind == MediaKind.IMAGE && it.cells.isNotEmpty() }.associate { it.id to FrameMath.spans(it.cells, duration()) }
+        heldCellIds = media.filter { m -> m.cells.any { it.hold > 0 } }.mapTo(HashSet()) { it.id }   // спринт 52
         val parentOf = regroup.toMap()
         val mediaInfos = media.filter { it.isVisual }.map {
             if (it.kind == MediaKind.GROUP) LayerInfo(it.id, it.name, 0, 0, 0, 0, 1f, true, 1, parentOf[it.id] ?: -1, "norm", false)   // группа пользователя
@@ -5917,7 +5922,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Спринт 31: система просит освободить память (фон, нехватка) - кэш рисунков уменьшается или очищается. */
-    fun onTrimMemory(level: Int) { cellCache.trim(level) }
+    fun onTrimMemory(level: Int) {
+        cellCache.trim(level)
+        // спринт 52: формы символов (текстуры) тоже отдают память; на экране формы остаются
+        val limit = com.vibetoon.domain.perf.CellCachePolicy.trimmedBudget(formCache.usedBytes(), level)
+        if (limit < formCache.usedBytes()) {
+            val drop = formCache.trim(limit, pinnedForms())
+            if (drop.isNotEmpty()) { refreshFormAliases(); dropFormTexturesLater(drop) }
+        }
+    }
 
     /** Спринт 31: возврат на передний план - прежний бюджет кэша рисунков. */
     fun restoreCaches() { cellCache.restoreBudget() }
@@ -6042,10 +6055,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun commitCells(id: Int, cells: List<FrameCell>, goto: Int, message: String) {
+    /** [undoKey] - спринт 52: правки подряд с одним ключом (удержание «− / +») - одна запись Undo, а не десятки. */
+    private fun commitCells(id: Int, cells: List<FrameCell>, goto: Int, message: String, undoKey: String? = null) {
         val i = media.indexOfFirst { it.id == id }
         if (i < 0) return
-        checkpoint("frames", force = true)
+        if (undoKey != null) checkpoint(undoKey) else checkpoint("frames", force = true)
         if (!cellShown.containsKey(id)) cellShown[id] = media[i].file
         media[i] = media[i].copy(cells = cells)
         rebuildLayers()
@@ -6082,10 +6096,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Плашки слоёв-рисунков рядом с [anchor] (та же группа): картинки со своей плашкой, видимые (глаз), не фон. */
     private fun drawingSpans(anchor: Int?): List<com.vibetoon.domain.project.OnionSkin.Span> {
-        val parent = anchor?.let { a -> layers.firstOrNull { it.id == a }?.parentId } ?: -1
+        // спринт 52: родитель - из одной таблицы (раньше поиск по всем слоям для каждой картинки на каждом кадре кальки)
+        val parentOf = HashMap<Int, Int>(layers.size * 2).apply { for (l in layers) put(l.id, l.parentId) }
+        val parent = anchor?.let { parentOf[it] } ?: -1
         val hidden = hiddenIds()
-        return media.filter { it.kind == MediaKind.IMAGE && !it.background && it.id in _clips.value && it.id !in hidden &&
-            (layers.firstOrNull { l -> l.id == it.id }?.parentId ?: -1) == parent }
+        val clips = _clips.value
+        return media.filter { it.kind == MediaKind.IMAGE && !it.background && it.id in clips && it.id !in hidden && (parentOf[it.id] ?: -1) == parent }
             .map { val c = clipOf(it.id); com.vibetoon.domain.project.OnionSkin.Span(it.id, c.start, if (c.loop) duration() else c.end) }
     }
 
@@ -6148,15 +6164,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_playing.value || delta == 0) return
         if (m.cells.isEmpty()) {
             val c = clipOf(m.id)
-            setClip(m.id, c.start, (c.end + delta).coerceAtLeast(c.start + 1))
+            val end = (c.end + delta).coerceIn(c.start + 1, duration())
+            if (end == c.end) return   // спринт 52: упёрлись в край - удержание не плодит записи и сообщения
+            setClip(m.id, c.start, end)
             _state.value = UiState.Message("Длина слоя-рисунка: ${clipOf(m.id).length}")
             return
         }
         val cur = FrameMath.active(m.cells, _frame.value) ?: return
-        val next = (FrameMath.lengthOf(m.cells, cur, duration()) + delta).coerceAtLeast(1)
+        val len0 = FrameMath.lengthOf(m.cells, cur, duration())
+        val next = (len0 + delta).coerceAtLeast(1)
         val list = FrameMath.withLength(m.cells, _frame.value, next)
         val now = list.firstOrNull { it.start == cur.start } ?: return
-        commitCells(m.id, list, _frame.value, "Длина рисунка: ${FrameMath.lengthOf(list, now, duration())}")
+        if (FrameMath.lengthOf(list, now, duration()) == len0) return   // спринт 52: упёрлись в соседний рисунок или в 1
+        commitCells(m.id, list, _frame.value, "Длина рисунка: ${FrameMath.lengthOf(list, now, duration())}", undoKey = "framelen${m.id}")
     }
 
     /** «< Кадр» / «Кадр >»: к началу соседнего рисунка (на одной дорожке или соседнего слоя-рисунка, он же выбирается). */
@@ -6205,10 +6225,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Слои с кадрами, у которых на кадре [f] пустой промежуток (рисунок закончился своей длиной). */
     private fun cellGapIds(f: Int): Set<Int> {
+        // спринт 52: на каждом кадре Play проверяются только слои с рисунками заданной длины (набор из rebuildLayers),
+        // а не все слои проекта
+        if (heldCellIds.isEmpty()) return emptySet()
         var out: HashSet<Int>? = null
-        for (m in media) if (m.cells.isNotEmpty() && m.cells.any { it.hold > 0 } && FrameMath.visible(m.cells, f, duration()) == null) (out ?: HashSet<Int>().also { out = it }).add(m.id)
+        val d = duration()
+        for (m in media) if (m.id in heldCellIds && FrameMath.visible(m.cells, f, d) == null) (out ?: HashSet<Int>().also { out = it }).add(m.id)
         return out ?: emptySet()
     }
+
+    /** Спринт 52: слои, у которых есть рисунки с длиной (пустые промежутки возможны только у них). */
+    private var heldCellIds: Set<Int> = emptySet()
 
     // ---- слияние, маска, растрирование, снимки холста (PNG/JPEG/GIF) ----
 
