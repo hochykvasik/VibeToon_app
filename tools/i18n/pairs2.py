@@ -1958,7 +1958,7 @@ Mesh: сетка и пины|Mesh: mesh and pins
 Порядок и группы|Order and groups
 Потяните строку за ручку ≡ справа: вверх-вниз меняет порядок, на группу - слой станет её дочерним, на слой в корне - выйдет из группы. Долгое нажатие на саму строку открывает меню слоя (переименовать, дублировать, слить вниз, создать символ…).|Drag a row by the ≡ handle on the right: up and down reorders, onto a group makes the layer its child, onto a root layer takes it out of the group. A long press on the row itself opens the layer menu (rename, duplicate, merge down, create symbol…).
 Свайпы и мультивыбор|Swipes and multi-select
-Свайп по строке влево открывает меню слоя, вправо - добавляет слой к выделению. Кнопка «Мультивыбор» над списком включает выбор нескольких слоёв; снизу появятся «В группу», «Слить вместе» и «Удалить выбранные».|Swiping a row to the left opens the layer menu, to the right adds the layer to the selection. The “Multi-select” button above the list turns on selecting several layers; “Group”, “Merge together” and “Delete selected” appear below.
+Свайп по строке влево открывает меню слоя, вправо - добавляет слой к выделению. Кнопка «Мультивыбор» над списком включает выбор нескольких слоёв; снизу появятся «Удалить выбранные», «Слить в один слой» (нижний слой сохраняет анимацию) и «Сгруппировать (папка)».|Swiping a row to the left opens the layer menu, to the right adds the layer to the selection. The “Multi-select” button above the list turns on selecting several layers; “Delete selected”, “Merge into one layer” (the bottom layer keeps its animation) and “Group (folder)” appear below.
 Прозрачность и наложение|Opacity and blending
 Выберите один слой: под списком появятся «Непр.» (прозрачность), кнопка режима наложения (Normal, Multiply, Screen…), «Alpha» (рисовать только по непрозрачному) и обтравка «Clip».|Select one layer: below the list you get “Opac.” (opacity), the blend mode button (Normal, Multiply, Screen…), “Alpha” (paint only over opaque pixels) and the “Clip” clipping mask.
 Кнопка ⊕ над списком: пиксельный, анимационный (покадровый), векторный слой, группа, фон, камера, слой-путь и слой костей.|The ⊕ button above the list: pixel, frame-by-frame animation, vector layer, group, background, camera, path layer and bone layer.
@@ -1983,7 +1983,7 @@ Mesh: сетка и пины|Mesh: mesh and pins
 Привязка плейхеда и плашек|Snapping the playhead and clips
 Нажмите «Магнит» на панели инструментов таймлайна. Плейхед при перетаскивании прилипает к ключам, маркерам и краям клипов, а края плашек - к флажкам, плейхеду и краям других плашек.|Tap “Magnet” on the timeline toolbar. While dragging, the playhead snaps to keys, markers and clip edges, and clip edges snap to flags, the playhead and edges of other clips.
 Нажмите кнопку ещё раз, чтобы свободно перемещать плейхед и плашки.|Tap the button again to move the playhead and clips freely.
-Включите «Мультивыбор», отметьте слои и нажмите «В группу». Группа вращается и масштабируется вокруг своей опорной точки.|Turn on “Multi-select”, check the layers and tap “Group”. A group rotates and scales around its own pivot.
+Включите «Мультивыбор», отметьте слои и нажмите «Сгруппировать (папка)». Группа вращается и масштабируется вокруг своей опорной точки.|Turn on “Multi-select”, check the layers and tap “Group (folder)”. A group rotates and scales around its own pivot.
 «Привязать к родителю (Parent)» во вкладке «Свойства»: слой повторяет сдвиг, поворот и масштаб родителя. Все связи видны в окне «Иерархия трансформаций».|“Bind to parent” in the “Properties” tab: the layer follows the parent's move, rotation and scale. All links are shown in the “Transform hierarchy” window.
 Жёлтый маркер на холсте перетаскивается; «Пивот в центр» во вкладке «Свойства» ставит точку в центр рамки. Пивот сохраняется в проекте и учитывается в экспорте.|The yellow marker on the canvas can be dragged; “Pivot to center” in the “Properties” tab puts the pivot in the center of the frame. The pivot is saved in the project and used in export.
 Выберите слой и поставьте ключи на разных кадрах кнопкой «◆ Add Key». Двигайте ключи инструментом «Выделение ключей рамкой»; «Список ключей» показывает все ключи слоя.|Select a layer and set keys on different frames with the “◆ Add Key” button. Move keys with the “Box-select keys” tool; “Key list” shows all keys of the layer.
@@ -1991,4 +1991,20 @@ Mesh: сетка и пины|Mesh: mesh and pins
 Края, разрез и расширение клипа|Clip edges, split and extend
 Границы клипа меняются перетаскиванием его краёв на таймлайне. «Разрезать клип» (ножницы) делит клип на плейхеде на две части, «Расширить клип» тянет клипы выделенных слоёв до конца сцены или проекта.|Clip bounds change by dragging its edges on the timeline. “Split clip” (scissors) splits the clip at the playhead into two parts, “Extend clip” stretches the clips of the selected layers to the end of the scene or project.
 Кнопка сейчас не видна: выберите слой или откройте нужную панель или режим (на телефоне часть кнопок таймлайна - под «Ещё» ⋮).|The button is not visible right now: select a layer or open the right panel or mode (on a phone some timeline buttons are under “More” ⋮).
+Слить в один слой|Merge into one layer
+Сгруппировать (папка)|Group (folder)
+Группы не сливаются: откройте группу и отметьте нужные слои внутри|Groups are not merged: open the group and check the layers inside it
+Слой заблокирован|The layer is locked
+Скрытый слой не сливается: включите глаз у всех сливаемых слоёв|A hidden layer is not merged: turn on the eye of every layer being merged
+Слои изменились: повторите слияние|The layers changed: merge again
+Слито в «{}», анимация сохранена. Часть верхнего слоя за рамкой нижнего обрезана (Undo вернёт)|Merged into “{}”, the animation is kept. The part of the upper layer outside the lower layer's frame was cut off (Undo restores it)
+Слито в «{}»: анимация нижнего слоя сохранена, ключи верхних застыли на текущем кадре|Merged into “{}”: the lower layer's animation is kept, the upper layers' keys froze at the current frame
+Слито в «{}»: ключи, кости и деформеры нижнего слоя сохранены|Merged into “{}”: the lower layer's keys, bones and deformers are kept
+Слито в один слой «{}»|Merged into one layer “{}”
+Скорость {}: плашка {} → {} кадров|Speed {}: clip {} → {} frames
+Скорость {}: плашка {} → {} кадров, проект продлён до предела {} кадров|Speed {}: clip {} → {} frames, the project was extended to the limit of {} frames
+Скорость {}: ключи и рисунки слоя пересчитаны, плашка {} → {} кадров, проект продлён до {} кадров|Speed {}: the layer's keys and drawings were retimed, clip {} → {} frames, the project was extended to {} frames
+Скорость {}: ключи и рисунки слоя пересчитаны, плашка {} → {} кадров|Speed {}: the layer's keys and drawings were retimed, clip {} → {} frames
+Подготовка Play…|Preparing Play…
+Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость 0.10x–3.0x: у звука и видео играет источник, у анимированного слоя пересчитывается время всех его ключей, рисунков и ключей времени символа (плашка растягивается, проект при нужде продлевается). Реверс работает для звука и видео; Цикл повторяет клип до конца проекта или сцены.|Drag the clip edges on the timeline with a finger; drag the selected clip by its middle to move it. Speed 0.10x–3.0x: sound and video play their source faster or slower, an animated layer has all its keys, drawings and symbol time keys retimed (the clip stretches, the project is extended if needed). Reverse works for sound and video; Loop repeats the clip to the end of the project or scene.
 """

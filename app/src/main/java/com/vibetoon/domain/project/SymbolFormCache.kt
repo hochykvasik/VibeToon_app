@@ -52,6 +52,9 @@ class SymbolFormCache(budgetBytes: Long) {
             (if (it.value.gen == gen) 8 else 0) + (if (!it.key.blended) 4 else 0) + (if (it.key.local in prefer) 2 else 0) + (if (it.key.local == 0) 1 else 0)
         }?.let { it.key to it.value }
 
+    /** Спринт 54: обычные (не смешанные) формы символа [def] - для рамки содержимого экземпляра (лассо, автопривязка). */
+    fun entriesOf(def: Int): List<Pair<Key, Entry>> = map.entries.filter { it.key.def == def && !it.key.blended }.map { it.key to it.value }
+
     /** Содержимое символов изменилось: все формы становятся запасными. */
     fun invalidate() { gen++ }
 

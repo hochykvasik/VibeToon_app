@@ -741,6 +741,8 @@ fun TimelinePanel(
                 // Drag-and-drop порядка слоёв: тянем за ручку ≡ в конце строки, бросок на слой ставит на его место, на группу - внутрь
                 var dragId by remember { mutableStateOf<Int?>(null) }
                 var dragDy by remember { mutableFloatStateOf(0f) }
+                val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+                val rowTapGuard = remember { longArrayOf(0L) }
                 val rowsForDrag = rememberUpdatedState(shownRows)
                 val rowPx = with(density) { ROW_H.toPx() }
                 for (r in shownRows) {
@@ -751,7 +753,9 @@ fun TimelinePanel(
                             .height(ROW_H)
                             .graphicsLayer { translationY = if (dragId == l.id) dragDy else 0f; alpha = if (dragId == l.id) 0.6f else 1f }
                             .background(if (l.id in selection) accent.copy(alpha = 0.25f) else Color.Transparent)
-                            .combinedClickable(onClick = { tapRow(l.id, r.isGroup) }, onLongClick = { longRow(l.id) })
+                            .combinedClickable(
+                                onClick = { if (android.os.SystemClock.uptimeMillis() >= rowTapGuard[0]) tapRow(l.id, r.isGroup) },
+                                onLongClick = { if (android.os.SystemClock.uptimeMillis() >= rowTapGuard[0]) longRow(l.id) })
                             .padding(start = (4 + INDENT_DP * r.depth).dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -782,25 +786,51 @@ fun TimelinePanel(
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                        // спринт 54: отступ между именем/миниатюрой и ручкой, узкая зона ручки
+                        androidx.compose.foundation.layout.Spacer(Modifier.width(com.vibetoon.domain.input.HandleDragGate.GAP_DP.dp))
                         Box(
-                            Modifier.width(36.dp).fillMaxHeight().pointerInput(l.id) {
-                                // нажатие на ручку забирается сразу: контекстное меню строки не открывается, порядок слоёв тянется с первого касания
+                            Modifier.width(com.vibetoon.domain.input.HandleDragGate.HANDLE_DP.dp).fillMaxHeight(0.8f)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                                .background(if (dragId == l.id) accent.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                                .pointerInput(l.id) {
+                                // спринт 54: слой берётся только после короткого удержания на месте (HandleDragGate); сдвиг пальца раньше -
+                                // это прокрутка таймлайна, жест отдаётся списку и порядок слоёв не меняется
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false)
-                                    down.consume()
-                                    dragId = l.id; dragDy = 0f
-                                    val list = rowsForDrag.value
-                                    val start = list.indexOfFirst { it.layer.id == l.id }
-                                    val downY = down.position.y
-                                    // Пакет 8: палец у верхнего/нижнего края окна дорожек - список прокручивается сам
-                                    val auto = keyScope.dragEdgeAutoScroll(vScroll, { vViewportPx }, 40.dp.toPx(), 16.dp.toPx(),
-                                        { com.vibetoon.domain.input.EdgeAutoScroll.contentPos(start, rowPx, downY, dragDy) - vScroll.value }) { used -> dragDy += used }
-                                    val lifted = try { drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() } } finally { auto.cancel() }
-                                    if (lifted && start >= 0) {
-                                        val t = list.getOrNull(com.vibetoon.domain.input.EdgeAutoScroll.targetIndex(start, dragDy, rowPx, list.size))
-                                        if (t != null && t.layer.id != l.id) vm.dropLayer(l.id, t.layer.id)
+                                    val slop = viewConfiguration.touchSlop
+                                    var decision = com.vibetoon.domain.input.HandleDragGate.Decision.WAIT
+                                    var now = down.uptimeMillis
+                                    while (decision == com.vibetoon.domain.input.HandleDragGate.Decision.WAIT) {
+                                        val left = com.vibetoon.domain.input.HandleDragGate.HOLD_MS - (now - down.uptimeMillis)
+                                        val ev = withTimeoutOrNull(left.coerceAtLeast(1L)) { awaitPointerEvent() }
+                                        decision = if (ev == null) com.vibetoon.domain.input.HandleDragGate.Decision.DRAG else {
+                                            val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                            now = ch.uptimeMillis
+                                            com.vibetoon.domain.input.HandleDragGate.decide(ch.uptimeMillis - down.uptimeMillis,
+                                                (ch.position - down.position).getDistance(), slop, ch.pressed, ch.isConsumed)
+                                        }
                                     }
-                                    dragId = null; dragDy = 0f
+                                    if (decision != com.vibetoon.domain.input.HandleDragGate.Decision.DRAG) return@awaitEachGesture
+                                    rowTapGuard[0] = Long.MAX_VALUE   // строка под ручкой не открывает меню и не выделяется, пока слой тащат
+                                    try {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        dragId = l.id; dragDy = 0f
+                                        val list = rowsForDrag.value
+                                        val start = list.indexOfFirst { it.layer.id == l.id }
+                                        val downY = down.position.y
+                                        // Пакет 8: палец у верхнего/нижнего края окна дорожек - список прокручивается сам
+                                        val auto = keyScope.dragEdgeAutoScroll(vScroll, { vViewportPx }, 40.dp.toPx(), 16.dp.toPx(),
+                                            { com.vibetoon.domain.input.EdgeAutoScroll.contentPos(start, rowPx, downY, dragDy) - vScroll.value }) { used -> dragDy += used }
+                                        val lifted = try { drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() } } finally { auto.cancel() }
+                                        if (lifted && start >= 0) {
+                                            val t = list.getOrNull(com.vibetoon.domain.input.EdgeAutoScroll.targetIndex(start, dragDy, rowPx, list.size))
+                                            if (t != null && t.layer.id != l.id) vm.dropLayer(l.id, t.layer.id)
+                                        }
+                                        dragId = null; dragDy = 0f
+                                    } finally {
+                                        dragId = null; dragDy = 0f
+                                        rowTapGuard[0] = android.os.SystemClock.uptimeMillis() + 300
+                                    }
                                 }
                             },
                             contentAlignment = Alignment.Center

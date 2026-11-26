@@ -161,4 +161,32 @@ object LayerMergeMath {
         }
         return RasterMath.FillResult(IRect(minX, minY, rw, rh), beforeRect, afterRect)
     }
+
+    /** Спринт 54: верхний слой для [mergeMany]: пиксели (premultiplied, с отступом [off]), отображение нижний -> верхний, режим. */
+    class Top(val px: ByteArray, val off: Int, val w: Int, val h: Int, val map: FloatArray, val mode: Int, val opacity: Float, val clipped: Boolean)
+
+    /**
+     * Спринт 54: «Слить в один слой» - несколько верхних слоёв по очереди (снизу вверх) накладываются на пиксели нижнего.
+     * Итог - ОДНА пара до/после по общей рамке изменений (одна запись Undo). Прозрачность нижнего запекается один раз.
+     * null - ничего не изменилось или данные неверны.
+     */
+    fun mergeMany(bottom: ByteArray, bOff: Int, bw: Int, bh: Int, tops: List<Top>, bottomOpacity: Float = 1f): RasterMath.FillResult? {
+        if (bw <= 0 || bh <= 0 || tops.isEmpty() || bOff < 0 || bOff.toLong() + bw.toLong() * bh * 4 > bottom.size) return null
+        val work = bottom.copyOfRange(bOff, bOff + bw * bh * 4)
+        var minX = Int.MAX_VALUE; var minY = Int.MAX_VALUE; var maxX = -1; var maxY = -1
+        tops.forEachIndexed { i, t ->
+            val r = merge(work, 0, bw, bh, t.px, t.off, t.w, t.h, t.map, t.mode, t.opacity, t.clipped, if (i == 0) bottomOpacity else 1f) ?: return@forEachIndexed
+            val rc = r.rect
+            for (yy in 0 until rc.h) System.arraycopy(r.after, yy * rc.w * 4, work, ((rc.y + yy) * bw + rc.x) * 4, rc.w * 4)
+            minX = min(minX, rc.x); minY = min(minY, rc.y); maxX = max(maxX, rc.x + rc.w - 1); maxY = max(maxY, rc.y + rc.h - 1)
+        }
+        if (maxX < 0) return null
+        val rw = maxX - minX + 1; val rh = maxY - minY + 1
+        val beforeRect = ByteArray(rw * rh * 4); val afterRect = ByteArray(rw * rh * 4)
+        for (yy in 0 until rh) {
+            System.arraycopy(bottom, bOff + ((minY + yy) * bw + minX) * 4, beforeRect, yy * rw * 4, rw * 4)
+            System.arraycopy(work, ((minY + yy) * bw + minX) * 4, afterRect, yy * rw * 4, rw * 4)
+        }
+        return RasterMath.FillResult(IRect(minX, minY, rw, rh), beforeRect, afterRect)
+    }
 }

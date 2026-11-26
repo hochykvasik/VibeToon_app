@@ -562,6 +562,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             media.clear()
             media.addAll(data.media)
             rebuildLayers()
+            migrateSymbolLinks(regen = false)   // спринт 54: привязка участников символа к кости - на экземпляр (старые проекты)
             // Готовность View не означает готовность GL. Старые текстуры и очередь очищаются
             // на активном рендерере до загрузки изображений нового проекта.
             val view = try {
@@ -2814,9 +2815,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Следование — только камера редактора и только при Play; проект и экспорт не меняются. */
+    /** Спринт 54: настройка «Следить за выделенным» читается один раз на старте Play, а не каждый кадр. */
+    private var followCameraPlay = false
+
     private fun followSelectionDuringPlayback() {
-        if (!_playing.value || !getApplication<Application>()
-                .getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("follow_camera", false)) return
+        if (!_playing.value || !followCameraPlay) return
         val id = _selected.value ?: return
         val sc = scene ?: return
         val bone = _bones.value.firstOrNull { it.id == id }
@@ -2993,10 +2996,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return _selection.value.filter { it in known }
     }
 
-    private fun updateSelectionFrame() {
-        refreshWarpOverlay()
-        refreshMeshOverlay()
-        refreshPerspOverlay()
+    private fun updateSelectionFrame(overlays: Boolean = true) {
+        if (overlays) {
+            refreshWarpOverlay()
+            refreshMeshOverlay()
+            refreshPerspOverlay()
+        }
         refreshRasterOverlays()
         val quads = (_selection.value + _lassoLayers.value).mapNotNull { id -> scene?.selectionQuads?.get(id)?.let { q -> contentQuad(id, q) ?: q } }
         RenderHost.view?.setSelection(if (quads.isEmpty()) null else FloatArray(quads.sumOf { it.size }).also { out -> var o = 0; for (q in quads) { q.copyInto(out, o); o += q.size } })
@@ -3506,11 +3511,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refreshGridView()
         // Спринт 43: деформации больше не выключаются при «неподдерживаемом» сочетании - SceneBuilder складывает их
         // (DeformStack). Непредвиденная ошибка не роняет приложение и ничего не отключает: остаётся прежний кадр.
-        val sc0 = try { buildEditorScene() } catch (e: RuntimeException) {
+        // спринт 54: во время Play проект не меняется - повтор кадра (цикл, разогрев) берёт готовую сцену
+        // любая другая пересборка во время Play (загрузилась текстура, текст перерисован) - состояние сменилось, кэш сбрасывается
+        val cacheable = _playing.value && _editingSymbol.value == null && pushForFrame
+        if (_playing.value && !pushForFrame) playScenes.clear()
+        val cached = if (cacheable) playScenes.get(_frame.value)?.shallowCopy() else null
+        val sc0 = cached ?: try { buildEditorScene() } catch (e: RuntimeException) {
             Log.e("VT/Scene", "scene build failed", e)
             _state.value = UiState.Message("Кадр не обновлён: ошибка построения сцены")
             return
         }
+        if (cacheable && cached == null) playScenes.put(_frame.value, sc0.shallowCopy())
         val sc = applySymbolContext(sc0)   // пакет 22: главная сцена вокруг открытого символа
         // формы символов едут вместе со сценой: на любом кадре экземпляр показывает форму именно этого кадра
         if (projectId != null && !appBackground) sc.aliases = buildAliases(_frame.value)
@@ -3524,7 +3535,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             refreshFxState()
         }
         refreshBoneOverlay()
-        updateSelectionFrame()
+        updateSelectionFrame(overlays = false)   // спринт 54: Warp/Mesh/Perspective уже обновил refreshBoneOverlay
         reloadNonResident()   // пакет 29: вытесненные текстуры, снова попавшие в сцену
         if (!_playing.value) pushEvictable()
     }
@@ -4477,6 +4488,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var hiddenCacheKey: Any? = null
     private var hiddenCache: Set<Int> = emptySet()
 
+    /**
+     * Спринт 54: общий внешний родитель участников символа (кость головы) переезжает на экземпляр - см.
+     * [com.vibetoon.domain.project.SymbolBoneLink]. true - привязки изменились.
+     */
+    private fun migrateSymbolLinks(regen: Boolean = true): Boolean {
+        val defs = media.filter { it.kind == MediaKind.GROUP && it.symDur > 0 }.associate { it.id to symbolMembers(it.id) }
+        if (defs.isEmpty()) return false
+        val insts = media.filter { it.kind == MediaKind.SYMBOL }.associate { it.id to it.symRef }
+        val next = com.vibetoon.domain.project.SymbolBoneLink.migrate(_links.value, defs, insts)
+        if (next == _links.value) return false
+        _links.value = next
+        skinLayers = skinLayers - insts.keys.filter { it in next }.toSet()
+        if (regen) invalidateForms()   // формы снимались с привязкой участников - переснимаются без неё (при загрузке кэш и так сбрасывается)
+        Log.i("VT/Symbols", "symbol links moved to instances")
+        return true
+    }
+
     private fun symbolMembers(gid: Int): Set<Int> {
         if (memberCacheLayers !== layers) { memberCache.clear(); memberCacheLayers = layers; hiddenCacheKey = null }
         return memberCache.getOrPut(gid) { SymbolMath.descendants(gid, layers.filter { it.parentId >= 0 }.associate { it.id to it.parentId }) }
@@ -4987,11 +5015,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (!uploaded) { formFails[key] = 3; formFailAt[key] = SystemClock.uptimeMillis(); continue }
                 formCache.budgetBytes = FORM_BUDGET_BYTES
                 val drop = formCache.put(key, SymbolFormCache.Entry(id, prepared.second, bytes, gen), pinnedForms())
+                for (inst in media) if (inst.kind == MediaKind.SYMBOL && inst.symRef == key.def) contentBox.remove(inst.id)   // спринт 54: рамка по формам
                 dropFormTexturesLater(drop)
                 verifyFormTexture(key, id, 0)
                 refreshFormAliases()
                 if (!_playing.value) pushEvictable()
                 if (!_playing.value) for ((inst, d) in formInstances()) if (d.id == key.def) invalidateThumb(inst.id)
+                // спринт 54: во время Play снимки форм идут с паузой - GL-поток рисует кадры между ними (без микрофризов)
+                if (_playing.value) kotlinx.coroutines.delay(com.vibetoon.domain.render.PlayWarmup.FORM_GAP_MS)
             }
         }
     }
@@ -5427,6 +5458,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (ctx >= 0) regroup = regroup.filter { it.first != iid } + (iid to ctx)
         _keySel.value = emptySet()
         rebuildLayers()
+        migrateSymbolLinks()   // спринт 54: рот был привязан к кости головы - теперь к ней привязан экземпляр
         if (ctx >= 0 && inheritGroupFx(iid, ctx)) refreshFxState()
         pushScene(); selectLayer(iid); updateSymbols(_frame.value); markDirty()
         if (plan != null) regenMarkerThumbs(gid, force = false)
@@ -6281,20 +6313,79 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return out
     }
 
-    /** Слияние слоёв [ids] в один растровый слой: рисунок на текущем кадре со всеми режимами наложения; исходные слои удаляются. */
+    /**
+     * Спринт 54: «Слить в один слой». План - [com.vibetoon.domain.model.MergePlan]: верхние слои накладываются в пиксели
+     * НИЖНЕГО выбранного слоя, он сохраняет id, группу, ключи, кости, сетку и эффекты; одна запись Undo. Группа не
+     * создаётся никогда. Снимок кадра ([mergeSnapshot]) - только для слоёв, которые нельзя слить в пиксели.
+     */
     fun mergeLayers(ids: Set<Int>) {
+        projectId ?: return
+        if (_playing.value) return
+        if (mergeDownBusy || _selectionExtractBusy.value) { _state.value = UiState.Message("Подождите завершения операции"); return }
+        val order = com.vibetoon.domain.model.StackOrder.visual(layers)
+        val byId = layers.associateBy { it.id }
+        val picked = order.filter { it in ids && it < BONE_ID_BASE }
+        val nodes = picked.mapNotNull { id ->
+            val l = byId[id] ?: return@mapNotNull null
+            if (l.kind != LayerKind.LAYER) return@mapNotNull com.vibetoon.domain.model.MergePlan.Node(id, isGroup = true)
+            val p = layerPropsOf(id)
+            com.vibetoon.domain.model.MergePlan.Node(
+                id = id, pixel = mergePixelLayer(id), targetOk = mergeTargetOk(id, p), plainTop = mergePlainTop(id, p),
+                visible = p.visible, locked = isLockedId(id), animated = layerHasMotion(id)
+            )
+        }
+        when (val plan = com.vibetoon.domain.model.MergePlan.plan(nodes)) {
+            is com.vibetoon.domain.model.MergePlan.Result.Refuse ->
+                if (plan.reason == com.vibetoon.domain.model.MergePlan.LOCKED) lockedNotice() else _state.value = UiState.Message(plan.reason)
+            is com.vibetoon.domain.model.MergePlan.Result.Pixels -> mergeIntoTarget(plan)
+            is com.vibetoon.domain.model.MergePlan.Result.Snapshot -> mergeSnapshot(plan.leaves.toSet(), plan.losesAnimation)
+        }
+    }
+
+    /** Спринт 54: у слоя есть движение, которое сохранится только при слиянии в его пиксели. */
+    private fun layerHasMotion(id: Int): Boolean =
+        _animation.value.tracks.keys.any { it == id || com.vibetoon.domain.anim.EffectTracks.belongs(it, id) } ||
+            _links.value.containsKey(id) || id in meshLayers || id in skinLayers || id in pinLayers || id in warpLayers ||
+            id in perspLayers || id in turbLayers || id in denseWarps
+
+    /** Нижний (целевой) слой: обычный режим, без цветокоррекции и обрезки, не служит маской другому слою. */
+    private fun mergeTargetOk(id: Int, p: LayerProps): Boolean {
+        val blend = SceneBuilder.blendCode(p.blend)
+        return (blend == SceneBuilder.BLEND_NORMAL || blend == SceneBuilder.BLEND_PASS) && p.crop == null && !p.hasColor &&
+            layerProps.values.none { it.mask == id }
+    }
+
+    /** Верхний слой: его пиксели переносятся как есть (без эффектов, деформеров, масок, пути, обрезки, цветокоррекции). */
+    private fun mergePlainTop(id: Int, p: LayerProps): Boolean =
+        p.mask < 0 && p.path < 0 && p.crop == null && !p.hasColor && layerProps.values.none { it.mask == id } &&
+            fxLayers[id].isNullOrEmpty() && id !in warpLayers && id !in meshLayers && id !in perspLayers && id !in skinLayers &&
+            id !in turbLayers && id !in pinLayers && id !in denseWarps
+
+    /**
+     * Запасной путь слияния: рисунок на текущем кадре со всеми режимами наложения в новый слой; исходные слои удаляются.
+     * Спринт 54: одна запись Undo (снимок состояния ДО удаления), честное сообщение, если анимация запеклась.
+     */
+    private fun mergeSnapshot(leaf: Set<Int>, losesAnimation: Boolean) {
         val pid = projectId ?: return
         if (_playing.value) return
-        val leaf = ids.filter { id -> layers.any { it.id == id && it.kind == LayerKind.LAYER } }.toSet()
-        if (leaf.size < 2) { _state.value = UiState.Message("Для слияния нужно минимум два обычных слоя"); return }
-        if (leaf.any { isLockedId(it) }) { lockedNotice(); return }
+        if (mergeDownBusy) { _state.value = UiState.Message("Подождите завершения операции"); return }
+        mergeDownBusy = true
+        val frame0 = _frame.value
+        val idsBefore = layers.map { it.id }
+        val histBefore = undoStack.size
         viewModelScope.launch {
+          try {
             val st = _animation.value.settings
             val (w, h) = captureDims()
-            val scene = withContext(Dispatchers.Default) { buildSceneAt(st.fps, leaf)(_frame.value) }
+            val scene = withContext(Dispatchers.Default) { buildSceneAt(st.fps, leaf)(frame0) }
             val bytes = captureNow(scene, true, w, h)
             closeExportSessions()   // пакет 29: декодеры и неприменённые картинки сборки
             if (bytes == null) { _state.value = UiState.Message("Не удалось собрать слой, повторите"); return@launch }
+            // спринт 54: пока шёл снимок, проект мог измениться - тогда ничего не трогаем (иначе Undo вернул бы не то)
+            if (projectId != pid || _frame.value != frame0 || _playing.value || layers.map { it.id } != idsBefore || undoStack.size != histBefore ||
+                leaf.any { id -> layers.none { it.id == id } }) {
+                _state.value = UiState.Message("Слои изменились: повторите слияние"); return@launch
+            }
             val newId = nextMediaId()
             val file = "m$newId.png"
             withContext(Dispatchers.IO) {
@@ -6327,7 +6418,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             RenderHost.view?.requestRender()
             selectLayer(newId)
             markDirty()
-            _state.value = UiState.Message("Слито слоёв: ${leaf.size}")
+            _state.value = UiState.Message(if (losesAnimation) "Слито слоёв: ${leaf.size}. Эти слои нельзя слить в пиксели нижнего, поэтому анимация застыла на текущем кадре (Undo вернёт слои)" else "Слито слоёв: ${leaf.size}")
+          } finally { mergeDownBusy = false }
         }
     }
 
@@ -6372,8 +6464,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val i = rows.indexOfFirst { it.layer.id == id }
         val below = rows.getOrNull(i + 1)?.layer
         if (i < 0 || below == null || below.kind != LayerKind.LAYER) { _state.value = UiState.Message("Под слоем нет обычного слоя, с которым можно слить"); return }
-        if (mergeDownIntoPixels(id, below.id)) return
-        mergeLayers(setOf(id, below.id))
+        mergeLayers(setOf(id, below.id))   // спринт 54: общий план - нижний слой сохраняет анимацию
     }
 
     private var mergeDownBusy = false
@@ -6387,76 +6478,83 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Спринт 50: «Слить вниз» в пиксели нижнего слоя. Верхний слой накладывается своим режимом наложения (Экран, Умножение,
-     * Добавление...), прозрачностью и обтравкой по тем же формулам, что и рендерер; нижний слой остаётся на своём месте,
-     * в своей группе, со своими ключами и свойствами (его Opacity запекается в пиксели). Один шаг Undo. false - случай
-     * не подходит (разные группы, эффекты, деформеры, обрезка, режим нижнего не Обычный, верхний выходит за рамку нижнего):
-     * тогда работает прежнее слияние снимком.
+     * Спринт 50/54: верхние слои накладываются в пиксели нижнего своими режимами наложения (Экран, Умножение,
+     * Добавление...), прозрачностью и обтравкой по тем же формулам, что и рендерер. Нижний слой остаётся на своём месте,
+     * в своей группе, со своими ключами, привязкой к кости, сеткой, деформерами и эффектами (его Opacity запекается в
+     * пиксели). Одна запись Undo: снимок состояния + пиксели до/после. Край верхнего за рамкой анимированного нижнего
+     * обрезается (с предупреждением), у статичных слоёв в этом случае работает снимок без потерь.
      */
-    private fun mergeDownIntoPixels(top: Int, bottom: Int): Boolean {
-        val pid = projectId ?: return true
-        if (_playing.value || stroker != null) return true
-        if (mergeDownBusy || _selectionExtractBusy.value) { _state.value = UiState.Message("Подождите завершения операции"); return true }
-        val lt = layers.firstOrNull { it.id == top } ?: return false
-        val lb = layers.firstOrNull { it.id == bottom } ?: return false
-        if (lt.parentId != lb.parentId || !mergePixelLayer(top) || !mergePixelLayer(bottom)) return false
-        if (isLockedId(top) || isLockedId(bottom)) { lockedNotice(); return true }
-        val pt = layerPropsOf(top); val pb = layerPropsOf(bottom)
-        if (!pt.visible || !pb.visible) { _state.value = UiState.Message("Скрытый слой не сливается: включите глаз у обоих слоёв"); return true }
-        fun plain(id: Int, p: LayerProps) = p.mask < 0 && p.path < 0 && p.crop == null && !p.hasColor && layerProps.values.none { it.mask == id } &&
-            fxLayers[id].isNullOrEmpty() && id !in warpLayers && id !in meshLayers && id !in perspLayers && id !in skinLayers &&
-            id !in turbLayers && id !in pinLayers && id !in denseWarps
-        if (!plain(top, pt) || !plain(bottom, pb)) return false
-        val bottomBlend = SceneBuilder.blendCode(pb.blend)
-        if (bottomBlend != SceneBuilder.BLEND_NORMAL && bottomBlend != SceneBuilder.BLEND_PASS) return false
-        val mode = SceneBuilder.blendCode(pt.blend)
-        val opacity = pt.opacity * effective(top).opacity
-        val clipped = pt.clip && !pb.clip
+    private fun mergeIntoTarget(plan: com.vibetoon.domain.model.MergePlan.Result.Pixels) {
+        val pid = projectId ?: return
+        if (_playing.value || stroker != null) return
+        val target = plan.target
+        val tops = plan.tops
+        val pb = layerPropsOf(target)
         val bottomOpacity = pb.opacity
-        val qt = texQuad(top)?.copyOf() ?: return false
-        val qb = texQuad(bottom)?.copyOf() ?: return false
+        val qb = texQuad(target)?.copyOf() ?: run { mergeSnapshot((tops + target).toSet(), plan.targetAnimated || plan.topsAnimated); return }
+        class TopIn(val id: Int, val q: FloatArray, val mode: Int, val opacity: Float, val clipped: Boolean)
+        val topIn = tops.map { id ->
+            val p = layerPropsOf(id)
+            val q = texQuad(id)?.copyOf() ?: run { mergeSnapshot((tops + target).toSet(), plan.targetAnimated || plan.topsAnimated); return }
+            TopIn(id, q, SceneBuilder.blendCode(p.blend), p.opacity * effective(id).opacity, p.clip && !pb.clip)
+        }
         val frame = _frame.value
         mergeDownBusy = true
         viewModelScope.launch {
             var fallback = false
             try {
-                val bt = readLayer(bottom) ?: run { _state.value = UiState.Message("Слой ещё не загружен, повторите"); return@launch }
-                val tp = readLayer(top) ?: run { _state.value = UiState.Message("Слой ещё не загружен, повторите"); return@launch }
-                val map = com.vibetoon.domain.raster.LayerMergeMath.pixelMap(qb, bt.w, bt.h, qt, tp.w, tp.h) ?: run { fallback = true; return@launch }
-                val res = withContext(Dispatchers.Default) {
-                    if (!clipped && com.vibetoon.domain.raster.LayerMergeMath.topOutside(tp.bytes, 8, tp.w, tp.h, map, bt.w, bt.h)) null
-                    else Result.success(com.vibetoon.domain.raster.LayerMergeMath.merge(bt.bytes, 8, bt.w, bt.h, tp.bytes, 8, tp.w, tp.h, map, mode, opacity, clipped, bottomOpacity))
-                } ?: run { fallback = true; return@launch }
-                if (projectId != pid || _frame.value != frame || _playing.value || stroker != null || layers.none { it.id == top } || layers.none { it.id == bottom } ||
-                    texQuad(top)?.contentEquals(qt) != true || texQuad(bottom)?.contentEquals(qb) != true) {
+                val bt = readLayer(target) ?: run { _state.value = UiState.Message("Слой ещё не загружен, повторите"); return@launch }
+                val inputs = ArrayList<com.vibetoon.domain.raster.LayerMergeMath.Top>(topIn.size)
+                var clippedEdge = false
+                for (t in topIn) {
+                    val tp = readLayer(t.id) ?: run { _state.value = UiState.Message("Слой ещё не загружен, повторите"); return@launch }
+                    val map = com.vibetoon.domain.raster.LayerMergeMath.pixelMap(qb, bt.w, bt.h, t.q, tp.w, tp.h) ?: run { fallback = true; return@launch }
+                    val outside = !t.clipped && withContext(Dispatchers.Default) { com.vibetoon.domain.raster.LayerMergeMath.topOutside(tp.bytes, 8, tp.w, tp.h, map, bt.w, bt.h) }
+                    if (outside) {
+                        if (!com.vibetoon.domain.model.MergePlan.clipOutside(plan.targetAnimated)) { fallback = true; return@launch }
+                        clippedEdge = true
+                    }
+                    inputs += com.vibetoon.domain.raster.LayerMergeMath.Top(tp.bytes, 8, tp.w, tp.h, map, t.mode, t.opacity, t.clipped)
+                }
+                val change = withContext(Dispatchers.Default) { com.vibetoon.domain.raster.LayerMergeMath.mergeMany(bt.bytes, 8, bt.w, bt.h, inputs, bottomOpacity) }
+                if (projectId != pid || _frame.value != frame || _playing.value || stroker != null || layers.none { it.id == target } ||
+                    tops.any { id -> layers.none { it.id == id } } || texQuad(target)?.contentEquals(qb) != true ||
+                    topIn.any { t -> texQuad(t.id)?.contentEquals(t.q) != true }) {
                     _state.value = UiState.Message("Слой изменился: повторите слияние"); return@launch
                 }
-                val change = res.getOrNull()
+                // одна запись Undo: состояние ДО (слои, ключи, свойства) + пиксели нижнего до/после
                 checkpoint("merge-down", force = true)
-                if (bottomOpacity < 1f) setProps(layerProps + (bottom to pb.copy(opacity = 1f)))
-                applySelection(setOf(top), top)
+                if (bottomOpacity < 1f) setProps(layerProps + (target to pb.copy(opacity = 1f)))
+                applySelection(tops.toSet(), tops.last())
                 deleteSelected(cp = false)
                 if (change != null) {
                     val r = change.rect
-                    val op = PaintOp(bottom, r.x, r.y, r.w, r.h, change.before, change.after)
+                    val op = PaintOp(target, r.x, r.y, r.w, r.h, change.before, change.after)
                     val saved = undoStack.removeLast()
                     undoStack.addLast(saved.withPaint(op))
-                    RenderHost.view?.paintRestore(bottom, r.x, r.y, r.w, r.h, change.after) { }
-                    invalidateThumb(bottom)
-                    paintDirty += bottom
+                    updateHistoryFlags()
+                    RenderHost.view?.paintRestore(target, r.x, r.y, r.w, r.h, change.after) { }
+                    invalidateThumb(target)
+                    paintDirty += target
+                    everEdited += target   // пиксели теперь только в GPU до сохранения: не вытеснять
                     viewModelScope.launch(Dispatchers.Default) { op.compress(); withContext(Dispatchers.Main) { enforcePaintBudget() } }
                 }
                 pushScene()
-                selectLayer(bottom)
+                selectLayer(target)
                 markDirty()
                 RenderHost.view?.requestRender()
-                _state.value = UiState.Message("Слито вниз: результат с режимом наложения сохранён в нижнем слое")
+                val name = layers.firstOrNull { it.id == target }?.name.orEmpty()
+                _state.value = UiState.Message(when {
+                    clippedEdge -> "Слито в «$name», анимация сохранена. Часть верхнего слоя за рамкой нижнего обрезана (Undo вернёт)"
+                    plan.topsAnimated -> "Слито в «$name»: анимация нижнего слоя сохранена, ключи верхних застыли на текущем кадре"
+                    plan.targetAnimated -> "Слито в «$name»: ключи, кости и деформеры нижнего слоя сохранены"
+                    else -> "Слито в один слой «$name»"
+                })
             } finally {
                 mergeDownBusy = false
-                if (fallback) mergeLayers(setOf(top, bottom))
+                if (fallback) mergeSnapshot((tops + target).toSet(), plan.targetAnimated || plan.topsAnimated)
             }
         }
-        return true
     }
 
     fun mergeVisible() {
@@ -6942,9 +7040,130 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         markDirty()
     }
 
-    fun setClipSpeed(speed: Float) = editClip {
-        val len = com.vibetoon.domain.project.retimedLength(it.length, it.speed, speed, duration() - it.start)
-        it.copy(speed = speed, end = it.start + len)
+    /** Спринт 54: у видео и звука скорость нативная (источник играет быстрее/медленнее), у остальных - пересчёт ключей. */
+    private fun nativeSpeed(id: Int): Boolean = media.any { it.id == id && (it.kind == MediaKind.VIDEO || it.kind == MediaKind.AUDIO) }
+
+    /** Спринт 54: скорость для вкладки «Клип»: у видео/звука - нативная, у анимированных слоёв - применённая к ключам. */
+    fun clipSpeedOf(id: Int): Float {
+        val c = clipOf(id)
+        return com.vibetoon.domain.anim.ClipSpeed.clamp(if (nativeSpeed(id)) c.speed else c.keySpeed * c.speed)
+    }
+
+    /** Продление проекта без отдельной записи Undo (вызывать после checkpoint). */
+    private fun setDurationInPlace(d: Int) {
+        val st = _animation.value.settings
+        if (d == st.durationFrames) return
+        meta = meta?.copy(durationFrames = d)
+        _animation.value = _animation.value.copy(settings = ProjectSettings(st.fps, d))
+    }
+
+    /**
+     * Спринт 54: скорость 0.10x–3.0x ([com.vibetoon.domain.anim.ClipSpeed]). Видео и звук - нативная скорость источника.
+     * Анимированный слой (картинка, PSD, группа, символ, слой костей): время ВСЕХ его ключей (трансформация, сетка, пины,
+     * Warp, перспектива, эффекты, путь, кости слоя), рисунков покадровки, ключей времени символов, громкости и плашек
+     * потомков пересчитывается от начала плашки; плашка растягивается или сжимается, проект при нужде продлевается.
+     * Одна запись Undo.
+     */
+    fun setClipSpeed(speed: Float) {
+        val id = _selected.value ?: return
+        if (_playing.value) return
+        if (isLockedId(id)) { lockedNotice(); return }
+        val target = com.vibetoon.domain.anim.ClipSpeed.clamp(speed)
+        val clip = clipOf(id)
+        val st = _animation.value.settings
+        val maxDur = TimeFormat.MAX_DURATION_FRAMES
+        if (nativeSpeed(id)) {
+            if (kotlin.math.abs(clip.speed - target) < 0.005f) return
+            val len = Math.round(clip.length * clip.speed / target).coerceAtLeast(1)
+            val (dur, _) = com.vibetoon.domain.anim.ClipSpeed.durationFor(clip.start, len, st.durationFrames, maxDur)
+            checkpoint("clipspeed$id", force = true)
+            setDurationInPlace(dur)
+            storeClip(id, clip.copy(speed = target, end = clip.start + minOf(len, dur - clip.start)))
+            override.clear(); pushScene(); markDirty()
+            _state.value = UiState.Message("Скорость ${com.vibetoon.domain.anim.ClipSpeed.label(target)}: плашка ${clip.length} → ${minOf(len, dur - clip.start)} кадров")
+            return
+        }
+        val current = com.vibetoon.domain.anim.ClipSpeed.clamp(clip.keySpeed * clip.speed)
+        if (kotlin.math.abs(current - target) < 0.005f && clip.speed == 1f) return
+        val anchor = clip.start
+        // прежняя скорость (до спринта 54) влияла только на дорожку трансформации через animFrame - сначала переносим её в ключи
+        val legacy = if (clip.speed != 1f) 1f / clip.speed else 1f
+        val factor = com.vibetoon.domain.anim.ClipSpeed.stretch(current, target)
+        val newLen = com.vibetoon.domain.anim.ClipSpeed.length(clip.length, factor)
+        val (dur, fits) = com.vibetoon.domain.anim.ClipSpeed.durationFor(anchor, newLen, st.durationFrames, maxDur)
+        val last = dur - 1
+        val parentOf = layers.filter { it.parentId >= 0 }.associate { it.id to it.parentId }
+        val subtree = HashSet<Int>().apply { add(id); addAll(SymbolMath.descendants(id, parentOf)) }
+        val boneIds = _bones.value.filter { b -> b.layer in subtree }.map { it.id }
+        checkpoint("clipspeed$id", force = true)
+        setDurationInPlace(dur)
+        var anim = _animation.value
+        val done = HashSet<Int>()
+        fun retimeTrack(tid: Int, f: Float) {
+            val tr = anim.tracks[tid] ?: return
+            if (tr.isEmpty()) return
+            val nf = com.vibetoon.domain.anim.ClipSpeed.retimeAll(tr.keys.map { it.frame }, anchor, f, last)
+            anim = anim.copy(tracks = anim.tracks + (tid to AnimationTrack(tid, tr.keys.mapIndexed { i, k -> k.copy(frame = nf[i]) })))
+        }
+        if (legacy != 1f) retimeTrack(id, legacy)
+        for (node in subtree + boneIds) for (tid in TrackGroups.ids(node, anim.tracks)) if (done.add(tid)) retimeTrack(tid, factor)
+        _animation.value = anim
+        fun rt(f: Int) = com.vibetoon.domain.anim.ClipSpeed.retime(f, anchor, factor).coerceIn(0, last)
+        // потомки: плашки (видео и звук внутри - ещё и нативная скорость), рисунки, ключи времени, громкость
+        val clipsNow = _clips.value.toMutableMap()
+        for (node in subtree) {
+            if (node == id) continue
+            val c = clipsNow[node] ?: continue
+            val s0 = rt(c.start); val e0 = maxOf(s0 + 1, rt(c.end)).coerceAtMost(dur)
+            clipsNow[node] = c.copy(start = s0.coerceAtMost(dur - 1), end = e0,
+                speed = if (nativeSpeed(node)) com.vibetoon.domain.anim.ClipSpeed.clamp(c.speed / factor) else c.speed,
+                keySpeed = if (nativeSpeed(node)) c.keySpeed else com.vibetoon.domain.anim.ClipSpeed.clamp(c.keySpeed / factor))
+        }
+        _clips.value = clipsNow
+        val ownEnd = anchor + minOf(newLen, dur - anchor)
+        var symbolsSynth = 0
+        for (i in media.indices) {
+            val m = media[i]
+            if (m.id !in subtree) continue
+            var n = m
+            if (m.cells.isNotEmpty()) {
+                val sorted = m.cells.sortedBy { it.start }
+                val starts = com.vibetoon.domain.anim.ClipSpeed.retimeAll(sorted.map { it.start }, anchor, factor, last)
+                n = n.copy(cells = sorted.mapIndexed { k, c -> c.copy(start = starts[k], hold = if (c.hold > 0) Math.round(c.hold * factor).coerceAtLeast(1) else 0) })
+            }
+            if (m.kind == MediaKind.SYMBOL) {
+                if (m.timeKeys.isNotEmpty()) {
+                    val sorted = m.timeKeys.sortedBy { it.frame }
+                    val fr = com.vibetoon.domain.anim.ClipSpeed.retimeAll(sorted.map { it.frame }, anchor, factor, last)
+                    n = n.copy(timeKeys = sorted.mapIndexed { k, t -> t.copy(frame = fr[k]) })
+                } else if (m.symLoop || m.symOnce) {
+                    // содержимое символа (Цикл / Один раз) тоже идёт со скоростью: ключи времени по проходам
+                    val def = media.firstOrNull { it.id == m.symRef }
+                    val ic = if (m.id == id) Clip(anchor, ownEnd) else (clipsNow[m.id] ?: Clip(anchor, ownEnd))
+                    val keys = com.vibetoon.domain.anim.ClipSpeed.symbolKeys(ic.start, def?.symDur ?: 0, 1f / target, ic.length, m.symLoop && !m.symOnce)
+                        .filter { it.first <= last }
+                        .map { (f, v, lin) -> com.vibetoon.domain.project.TimeKey(f, v, if (lin) com.vibetoon.domain.project.TimeEase.LINEAR else com.vibetoon.domain.project.TimeEase.HOLD) }
+                    if (keys.size >= 2) { n = n.copy(timeKeys = keys); symbolsSynth++ }
+                }
+            }
+            if (m.volKeys.isNotEmpty()) n = n.copy(volKeys = m.volKeys.map { it.copy(frame = rt(it.frame)) }.distinctBy { it.frame }.sortedBy { it.frame })
+            if (n !== m) media[i] = n
+        }
+        storeClip(id, clip.copy(start = anchor, end = ownEnd, speed = 1f, keySpeed = target))
+        override.clear()
+        rebuildLayers()
+        refreshSymbolState()
+        runCatching { updateSymbols(_frame.value) }
+        updateCells(_frame.value)
+        pushScene()
+        markDirty()
+        val label = com.vibetoon.domain.anim.ClipSpeed.label(target)
+        val newShown = ownEnd - anchor
+        _state.value = UiState.Message(when {
+            !fits -> "Скорость $label: плашка ${clip.length} → $newShown кадров, проект продлён до предела $dur кадров"
+            dur != st.durationFrames -> "Скорость $label: ключи и рисунки слоя пересчитаны, плашка ${clip.length} → $newShown кадров, проект продлён до $dur кадров"
+            else -> "Скорость $label: ключи и рисунки слоя пересчитаны, плашка ${clip.length} → $newShown кадров"
+        })
     }
     fun toggleClipReverse() = editClip { it.copy(reverse = !it.reverse) }
     fun toggleClipFreeze() = editClip { it.copy(freeze = !it.freeze) }
@@ -11058,7 +11277,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Содержимое слоя изменилось (текст, Liquify): миниатюра пересоздаётся. */
-    private fun invalidateThumb(id: Int) { thumbs.remove(id); contentBox.remove(id); contentBoxScheduled(id) }
+    private fun invalidateThumb(id: Int) {
+        // спринт 54: во время Play (смена рисунков покадровки каждый кадр) миниатюра и рамка не пересчитываются -
+        // это GL-чтения посреди проигрывания (микрофризы); всё отложенное обновится на паузе
+        if (_playing.value) { contentBox.remove(id); staleAfterPlay += id; return }
+        thumbs.remove(id); contentBox.remove(id); contentBoxScheduled(id)
+    }
+
+    /** Спринт 54: слои, чьи миниатюры устарели во время Play. */
+    private val staleAfterPlay = HashSet<Int>()
+
+    /** Спринт 54: сцены сеанса Play (см. [com.vibetoon.domain.render.PlaySceneCache]). */
+    private val playScenes = com.vibetoon.domain.render.PlaySceneCache<SceneData>(
+        com.vibetoon.domain.render.PlaySceneCache.DEFAULT_BUDGET, com.vibetoon.domain.render.PlaySceneCache.Companion::sceneBytes)
+    private var playSession = 0
+    /** Спринт 54: pushScene вызван сменой кадра (setFrame), а не правкой состояния. */
+    private var pushForFrame = false
 
     // ---- границы содержимого слоя (по альфе): рамка выделения, лассо и привязка к костям работают по нарисованному, а не по всему холсту ----
 
@@ -11074,6 +11308,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun ensureBox(id: Int): FloatArray {
         contentBox[id]?.let { return it }
         val view = RenderHost.view ?: return NO_BOX
+        media.firstOrNull { it.id == id && it.kind == MediaKind.SYMBOL }?.let { inst ->
+            // спринт 54: у экземпляра нет своей текстуры - рамка по альфе готовых форм (рот, а не весь холст)
+            val forms = formCache.entriesOf(inst.symRef).take(16)
+            val parts = ArrayList<Pair<FloatArray, FloatArray>>(forms.size)
+            for ((_, e) in forms) {
+                val a = kotlinx.coroutines.withTimeoutOrNull(3000) {
+                    kotlinx.coroutines.suspendCancellableCoroutine<ByteArray?> { c -> view.layerAlpha(e.texId) { if (c.isActive) c.resumeWith(Result.success(it)) } }
+                } ?: continue
+                if (a.size <= 8) continue
+                fun i32(o: Int) = (a[o].toInt() and 0xFF) or ((a[o + 1].toInt() and 0xFF) shl 8) or ((a[o + 2].toInt() and 0xFF) shl 16) or ((a[o + 3].toInt() and 0xFF) shl 24)
+                val w = i32(0); val h = i32(4)
+                if (w <= 0 || h <= 0 || a.size < 8 + w * h) continue
+                parts += e.rect to withContext(Dispatchers.Default) { com.vibetoon.domain.raster.RasterMath.alphaBox(a, 8, w, h) }
+            }
+            if (parts.isEmpty()) return NO_BOX   // форм ещё нет: рамка экземпляра целиком, без кэша (повтор позже)
+            val box = com.vibetoon.domain.project.SymbolBoneLink.union(parts).let { if (it.isEmpty()) FloatArray(0) else it }
+            contentBox[id] = box
+            return box
+        }
         val bytes = kotlinx.coroutines.withTimeoutOrNull(3000) {
             kotlinx.coroutines.suspendCancellableCoroutine<ByteArray?> { c -> view.layerAlpha(id) { if (c.isActive) c.resumeWith(Result.success(it)) } }
         }
@@ -13743,7 +13996,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         cancelPendingLasso()
         override.clear()
         _frame.value = f
-        pushScene()
+        pushForFrame = true
+        try { pushScene() } finally { pushForFrame = false }
         followSelectionDuringPlayback()
         updateVideoFrames(f)
         updateTextFx(f)
@@ -13879,8 +14133,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun play() {
         if (_playing.value) return
         cancelPendingLasso()
+        followCameraPlay = getApplication<Application>().getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE).getBoolean("follow_camera", false)
         prewarmForms()   // формы всех ключей снимаются до/в начале проигрывания
         _playing.value = true
+        playScenes.clear()
+        val session = ++playSession
         followSelectionDuringPlayback()
         val settings = _animation.value.settings
         val looping = _loop.value
@@ -13896,7 +14153,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         playbackStartFrame = startFrame
         var startNanos = -1L
         var lastF = startFrame
-        audioEngine.play(startFrame, settings.fps, ::clipOf, lastFrame + 1)
         val cb = object : Choreographer.FrameCallback {
             override fun doFrame(frameTimeNanos: Long) {
                 if (!_playing.value) return
@@ -13913,9 +14169,47 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 Choreographer.getInstance().postFrameCallback(this)
             }
         }
-        frameCallback = cb
-        Choreographer.getInstance().postFrameCallback(cb)
-        Log.i("VT/Anim", "play from frame $startFrame")
+        // спринт 54: короткий разогрев (текстуры, формы первого кадра, сцены первых кадров), потом звук и часы вместе
+        viewModelScope.launch {
+            val t0 = SystemClock.uptimeMillis()
+            val firstFrame = scene?.start ?: 0
+            val pre = com.vibetoon.domain.render.PlayWarmup.prebuildFrames(settings.fps, startFrame, firstFrame, lastFrame)
+            var left = pre.size
+            var noticed = false
+            while (_playing.value && session == playSession) {
+                val elapsed = SystemClock.uptimeMillis() - t0
+                // сцены собираются после загрузки текстур (загрузка пересобирает сцену и сбрасывает кэш) или со второй половины разогрева
+                if (left > 0 && (RenderNative.pendingUploadBytes() <= 0L || elapsed >= com.vibetoon.domain.render.PlayWarmup.MAX_MS / 2)) {
+                    prebuildPlayScene(pre[pre.size - left]); left--
+                }
+                val formsPending = formInstances().any { (inst, def) -> formCache.fresh(formKey(inst, def, startFrame)) == null } && formQueue.isNotEmpty()
+                if (com.vibetoon.domain.render.PlayWarmup.ready(elapsed, RenderNative.pendingUploadBytes(), formsPending, left)) break
+                if (!noticed && elapsed >= com.vibetoon.domain.render.PlayWarmup.NOTICE_MS) { noticed = true; _state.value = UiState.Message("Подготовка Play…") }
+                if (left > 0 && RenderNative.pendingUploadBytes() <= 0L) kotlinx.coroutines.yield() else kotlinx.coroutines.delay(16)
+            }
+            if (!_playing.value || session != playSession) return@launch
+            Log.i("VT/Anim", "play warmup ${SystemClock.uptimeMillis() - t0} ms, scenes ${pre.size - left}")
+            if (_frame.value != startFrame) setFrame(startFrame)
+            audioEngine.play(startFrame, settings.fps, ::clipOf, lastFrame + 1)
+            frameCallback = cb
+            Choreographer.getInstance().postFrameCallback(cb)
+            Log.i("VT/Anim", "play from frame $startFrame")
+        }
+    }
+
+    /** Спринт 54: сцена кадра [f] собирается заранее (разогрев Play) и кладётся в кэш сеанса. */
+    private fun prebuildPlayScene(f: Int) {
+        if (_editingSymbol.value != null || playScenes.get(f) != null) return
+        val keep = _frame.value
+        if (f == keep) return   // текущий кадр уже на экране и в кэше
+        try {
+            _frame.value = f
+            playScenes.put(f, buildEditorScene())
+        } catch (e: RuntimeException) {
+            Log.w("VT/Anim", "prebuild $f failed: ${e.message}")
+        } finally {
+            _frame.value = keep
+        }
     }
 
     fun pause() {
@@ -13924,6 +14218,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         audioEngine.pause()
         frameCallback?.let { Choreographer.getInstance().removeFrameCallback(it) }
         frameCallback = null
+        playSession++
+        playScenes.clear()
+        if (staleAfterPlay.isNotEmpty()) { val ids = staleAfterPlay.toList(); staleAfterPlay.clear(); for (id in ids) invalidateThumb(id) }
         refreshPanelsAfterPlay()
         refreshOnion()   // спринт 51: калька, скрытая на время Play (настройка), возвращается на паузе
         // спринт 46: кадр видео при Play был уменьшенным и быстрым - на паузе тот же момент перечитывается чётко
@@ -14008,6 +14305,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // получает в сцене сам) и без общей цепочки эффектов экземпляров у участников - иначе двойной сдвиг/тряска
         val snapCtx = if (symbol != null) symbolSnapshotContext(symbol) else null
         val neutral = snapCtx?.first.orEmpty()
+        val symMembers0 = if (symbol != null) symbolMembers(symbol) else null   // спринт 54: формы - без внешних привязок участников
         // пакет 24: свои слои сцен и переходы - в экспорте те же, что в редакторе (не в снимках символов и слоёв)
         val scenesExp = if (symbol == null && onlyLayers == null && com.vibetoon.domain.anim.SceneCanvas.active(_scenes.value)) _scenes.value else emptyList()
         val ownedExp = com.vibetoon.domain.anim.SceneCanvas.owned(scenesExp)
@@ -14018,7 +14316,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val heldCells = media.filter { it.kind == MediaKind.IMAGE && it.cells.any { c -> c.hold > 0 } }.associate { it.id to it.cells }
         val durExp = st.durationFrames
         val ids = baseCopy.keys + anim.tracks.keys.filter { it >= 0 } + clipsCopy.keys + fxIdsExp + adjCopy.keys + hiddenExp + outsideIds + neutral + ownedExp + heldCells.keys
-        val r = roots; val cw = canvasW; val ch = canvasH; val f = fit; val tids = textIds; val lnk = if (neutral.isEmpty()) _links.value else _links.value - neutral; val bnd = boneHeads(); val wl = warpLayers; val indep = independentBones(); val ml = meshLayers; val pl = perspLayers; val btl = boneTails(); val sk = effectiveSkins(); val tl = turbLayers; val fxl = if (snapCtx == null || symbol == null) fxLayers else com.vibetoon.domain.project.SymbolPlacement.snapshotFx(fxLayers, symbolMembers(symbol), snapCtx.second, neutral); val camId = if (symbol != null) -1 else cameraIdNow(); val pinl = pinLayers; val lsz = layers.associate { it.id to (it.width.toFloat() to it.height.toFloat()) }
+        val r = roots; val cw = canvasW; val ch = canvasH; val f = fit; val tids = textIds; val lnk = (if (neutral.isEmpty()) _links.value else _links.value - neutral).let { l -> if (symMembers0 != null) com.vibetoon.domain.project.SymbolBoneLink.snapshotLinks(l, symMembers0) else l }; val bnd = boneHeads(); val wl = warpLayers; val indep = independentBones(); val ml = meshLayers; val pl = perspLayers; val btl = boneTails(); val sk = effectiveSkins(); val tl = turbLayers; val fxl = if (snapCtx == null || symbol == null) fxLayers else com.vibetoon.domain.project.SymbolPlacement.snapshotFx(fxLayers, symbolMembers(symbol), snapCtx.second, neutral); val camId = if (symbol != null) -1 else cameraIdNow(); val pinl = pinLayers; val lsz = layers.associate { it.id to (it.width.toFloat() to it.height.toFloat()) }
         // Фиксируем те же опции, что и в редакторе: null-объекты не рисуются,
         // а глубина родительских групп применяется и при экспорте кадров.
         val sceneOptions = com.vibetoon.domain.render.SceneOptions.capture(media, layerProps)

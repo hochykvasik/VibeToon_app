@@ -2282,7 +2282,7 @@
     <string name="ui_order_and_groups">Порядок и группы</string>
     <string name="ui_drag_a_row_by_the_handle_on_the_righ">Потяните строку за ручку ≡ справа: вверх-вниз меняет порядок, на группу - слой станет её дочерним, на слой в корне - выйдет из группы. Долгое нажатие на саму строку открывает меню слоя (переименовать, дублировать, слить вниз, создать символ…).</string>
     <string name="ui_swipes_and_multi_select">Свайпы и мультивыбор</string>
-    <string name="ui_swiping_a_row_to_the_left_opens_the_">Свайп по строке влево открывает меню слоя, вправо - добавляет слой к выделению. Кнопка «Мультивыбор» над списком включает выбор нескольких слоёв; снизу появятся «В группу», «Слить вместе» и «Удалить выбранные».</string>
+    <string name="ui_swiping_a_row_to_the_left_opens_the_">Свайп по строке влево открывает меню слоя, вправо - добавляет слой к выделению. Кнопка «Мультивыбор» над списком включает выбор нескольких слоёв; снизу появятся «Удалить выбранные», «Слить в один слой» (нижний слой сохраняет анимацию) и «Сгруппировать (папка)».</string>
     <string name="ui_opacity_and_blending">Прозрачность и наложение</string>
     <string name="ui_select_one_layer_below_the_list_you_">Выберите один слой: под списком появятся «Непр.» (прозрачность), кнопка режима наложения (Normal, Multiply, Screen…), «Alpha» (рисовать только по непрозрачному) и обтравка «Clip».</string>
     <string name="ui_the_button_above_the_list_pixel_fram">Кнопка ⊕ над списком: пиксельный, анимационный (покадровый), векторный слой, группа, фон, камера, слой-путь и слой костей.</string>
@@ -2307,7 +2307,7 @@
     <string name="ui_snapping_the_playhead_and_clips">Привязка плейхеда и плашек</string>
     <string name="ui_tap_magnet_on_the_timeline_toolbar_w">Нажмите «Магнит» на панели инструментов таймлайна. Плейхед при перетаскивании прилипает к ключам, маркерам и краям клипов, а края плашек - к флажкам, плейхеду и краям других плашек.</string>
     <string name="ui_tap_the_button_again_to_move_the_pla_2">Нажмите кнопку ещё раз, чтобы свободно перемещать плейхед и плашки.</string>
-    <string name="ui_turn_on_multi_select_check_the_layer_2">Включите «Мультивыбор», отметьте слои и нажмите «В группу». Группа вращается и масштабируется вокруг своей опорной точки.</string>
+    <string name="ui_turn_on_multi_select_check_the_layer_2">Включите «Мультивыбор», отметьте слои и нажмите «Сгруппировать (папка)». Группа вращается и масштабируется вокруг своей опорной точки.</string>
     <string name="ui_bind_to_parent_in_the_properties_tab">«Привязать к родителю (Parent)» во вкладке «Свойства»: слой повторяет сдвиг, поворот и масштаб родителя. Все связи видны в окне «Иерархия трансформаций».</string>
     <string name="ui_the_yellow_marker_on_the_canvas_can_">Жёлтый маркер на холсте перетаскивается; «Пивот в центр» во вкладке «Свойства» ставит точку в центр рамки. Пивот сохраняется в проекте и учитывается в экспорте.</string>
     <string name="ui_select_a_layer_and_set_keys_on_diffe">Выберите слой и поставьте ключи на разных кадрах кнопкой «◆ Add Key». Двигайте ключи инструментом «Выделение ключей рамкой»; «Список ключей» показывает все ключи слоя.</string>
@@ -2315,4 +2315,20 @@
     <string name="ui_clip_edges_split_and_extend">Края, разрез и расширение клипа</string>
     <string name="ui_clip_bounds_change_by_dragging_its_e">Границы клипа меняются перетаскиванием его краёв на таймлайне. «Разрезать клип» (ножницы) делит клип на плейхеде на две части, «Расширить клип» тянет клипы выделенных слоёв до конца сцены или проекта.</string>
     <string name="ui_the_button_is_not_visible_right_now__2">Кнопка сейчас не видна: выберите слой или откройте нужную панель или режим (на телефоне часть кнопок таймлайна - под «Ещё» ⋮).</string>
+    <string name="ui_merge_into_one_layer">Слить в один слой</string>
+    <string name="ui_group_folder">Сгруппировать (папка)</string>
+    <string name="ui_groups_are_not_merged_open_the_group">Группы не сливаются: откройте группу и отметьте нужные слои внутри</string>
+    <string name="ui_the_layer_is_locked">Слой заблокирован</string>
+    <string name="ui_a_hidden_layer_is_not_merged_turn_on">Скрытый слой не сливается: включите глаз у всех сливаемых слоёв</string>
+    <string name="ui_the_layers_changed_merge_again">Слои изменились: повторите слияние</string>
+    <string name="ui_merged_into_the_animation_is_kept_th">Слито в «{}», анимация сохранена. Часть верхнего слоя за рамкой нижнего обрезана (Undo вернёт)</string>
+    <string name="ui_merged_into_the_lower_layer_s_animat">Слито в «{}»: анимация нижнего слоя сохранена, ключи верхних застыли на текущем кадре</string>
+    <string name="ui_merged_into_the_lower_layer_s_keys_b">Слито в «{}»: ключи, кости и деформеры нижнего слоя сохранены</string>
+    <string name="ui_merged_into_one_layer">Слито в один слой «{}»</string>
+    <string name="ui_speed_clip_frames">Скорость {}: плашка {} → {} кадров</string>
+    <string name="ui_speed_clip_frames_the_project_was_ex">Скорость {}: плашка {} → {} кадров, проект продлён до предела {} кадров</string>
+    <string name="ui_speed_the_layer_s_keys_and_drawings_">Скорость {}: ключи и рисунки слоя пересчитаны, плашка {} → {} кадров, проект продлён до {} кадров</string>
+    <string name="ui_speed_the_layer_s_keys_and_drawings__2">Скорость {}: ключи и рисунки слоя пересчитаны, плашка {} → {} кадров</string>
+    <string name="ui_preparing_play">Подготовка Play…</string>
+    <string name="ui_drag_the_clip_edges_on_the_timeline_">Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость 0.10x–3.0x: у звука и видео играет источник, у анимированного слоя пересчитывается время всех его ключей, рисунков и ключей времени символа (плашка растягивается, проект при нужде продлевается). Реверс работает для звука и видео; Цикл повторяет клип до конца проекта или сцены.</string>
 </resources>

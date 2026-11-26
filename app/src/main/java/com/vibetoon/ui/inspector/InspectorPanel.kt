@@ -261,7 +261,9 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
     }
     // выбрали экземпляр символа - открывается «Время»; ушли с него - обратно к трансформации
     LaunchedEffect(isSymbol) { tabName = if (isSymbol) TAB_TIME else if (tabName == TAB_TIME) TAB_TRANSFORM else tabName }
-    val selectedIndex = tabs.indexOf(tabName).coerceAtLeast(0)
+    // спринт 54: индекс только в границах текущего списка (вкладки «Время»/«Громкость»/«Текст» появляются и пропадают)
+    val lastIndex = remember { intArrayOf(0) }
+    val selectedIndex = com.vibetoon.domain.ui.TabIndex.indexOf(tabs, tabName, lastIndex[0]).also { lastIndex[0] = it }
 
     val pickFont = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importFont(uri)
@@ -269,7 +271,7 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
 
     Column(modifier.fillMaxWidth()) {
         // ScrollableTabRow: названия вкладок целиком, даже на узком телефоне
-        ScrollableTabRow(selectedTabIndex = selectedIndex, edgePadding = 0.dp) {
+        com.vibetoon.ui.shell.SafeScrollableTabRow(selectedTabIndex = selectedIndex, tabCount = tabs.size, edgePadding = 0.dp) {
             tabs.forEachIndexed { i, title ->
                 Tab(
                     selected = selectedIndex == i,
@@ -279,7 +281,7 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
             }
         }
         Box(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-            when (tabs[selectedIndex]) {
+            when (tabs.getOrNull(selectedIndex)) {
                 TAB_TRANSFORM -> TransformTab(state, playing, uniform, vm)
                 TAB_TIME -> selectedId?.let { com.vibetoon.ui.SymbolTimeTab(vm, it) }
                 TAB_VOLUME -> selectedId?.let { VolumeTab(vm, it, vm.frame.collectAsStateWithLifecycle().value) }
@@ -477,15 +479,7 @@ private fun ClipTab(vm: MainViewModel, id: Int?, clips: Map<Int, Clip>, duration
             NumberField("Начало (кадр)", clip.start.toFloat(), "fr", enabled, { vm.setClip(id, it.toInt(), clip.end) }, Modifier.weight(1f), perPx = 0.2f, min = 0f, max = (duration - 1).toFloat())
             NumberField("Конец (кадр)", clip.end.toFloat(), "fr", enabled, { vm.setClip(id, clip.start, it.toInt()) }, Modifier.weight(1f), perPx = 0.2f, min = 1f, max = duration.toFloat())
         }
-        Text("Скорость", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (sp in Clip.SPEEDS) {
-                FilterChip(
-                    selected = clip.speed == sp, onClick = { vm.setClipSpeed(sp) }, enabled = enabled,
-                    label = { Text(String.format(Locale.US, "%.2gx", sp)) }
-                )
-            }
-        }
+        ClipSpeedControl(vm, id, vm.clipSpeedOf(id), enabled)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = clip.reverse, onClick = vm::toggleClipReverse, enabled = enabled, label = { Text("⏪ Реверс") })
             FilterChip(selected = clip.freeze, onClick = vm::toggleClipFreeze, enabled = enabled, label = { com.vibetoon.ui.IconText(Icons.Default.AcUnit, "Стоп-кадр", 14.sp) })
@@ -493,10 +487,45 @@ private fun ClipTab(vm: MainViewModel, id: Int?, clips: Map<Int, Clip>, duration
         }
         Text(
             "Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. " +
-                "Скорость, реверс и Цикл работают для звука и видео; Цикл повторяет клип до конца проекта или сцены. " +
-                "Скорость и Цикл меняют и время ключей анимации слоя.",
+                "Скорость 0.10x–3.0x: у звука и видео играет источник, у анимированного слоя пересчитывается время всех его ключей, рисунков и ключей времени символа (плашка растягивается, проект при нужде продлевается). " +
+                "Реверс работает для звука и видео; Цикл повторяет клип до конца проекта или сцены.",
             fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
         )
+    }
+}
+
+/**
+ * Спринт 54: скорость 0.10x–3.0x как в Alight Motion: плавный ползунок (логарифмическая шкала, значение видно во время
+ * перетаскивания, применяется при отпускании - одна запись Undo), точные − / + по 0.05x и быстрые пресеты.
+ */
+@Composable
+private fun ClipSpeedControl(vm: MainViewModel, id: Int, applied: Float, enabled: Boolean) {
+    var pos by remember(id, applied) { mutableStateOf(com.vibetoon.domain.anim.ClipSpeed.toSlider(applied)) }
+    val shown = com.vibetoon.domain.anim.ClipSpeed.fromSlider(pos)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Скорость", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.weight(1f))
+            Text(com.vibetoon.domain.anim.ClipSpeed.label(shown), fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { vm.setClipSpeed(com.vibetoon.domain.anim.ClipSpeed.nudge(applied, up = false)) }, enabled = enabled && applied > com.vibetoon.domain.anim.ClipSpeed.MIN,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp), modifier = Modifier.size(36.dp)) { Text("−", fontSize = 18.sp) }
+            androidx.compose.material3.Slider(
+                value = pos, onValueChange = { pos = it }, enabled = enabled,
+                onValueChangeFinished = { vm.setClipSpeed(com.vibetoon.domain.anim.ClipSpeed.fromSlider(pos)) },
+                modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
+            )
+            OutlinedButton(onClick = { vm.setClipSpeed(com.vibetoon.domain.anim.ClipSpeed.nudge(applied, up = true)) }, enabled = enabled && applied < com.vibetoon.domain.anim.ClipSpeed.MAX,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp), modifier = Modifier.size(36.dp)) { Text("+", fontSize = 18.sp) }
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (sp in com.vibetoon.domain.anim.ClipSpeed.PRESETS) {
+                FilterChip(
+                    selected = kotlin.math.abs(applied - sp) < 0.005f, onClick = { vm.setClipSpeed(sp) }, enabled = enabled,
+                    label = { Text(com.vibetoon.domain.anim.ClipSpeed.label(sp), fontSize = 12.sp) }
+                )
+            }
+        }
     }
 }
 

@@ -195,7 +195,8 @@ fun CurveEditorDialog(
                                 if (target < 0) return@detectDragGestures
                                 change.consume()
                                 val c = curveNow.value
-                                val n = c.nodes[idx]
+                                // спринт 54: кривую могли заменить во время жеста (пресет, Undo) - узла с этим номером уже нет
+                                val n = c.nodes.getOrNull(idx) ?: run { target = -1; return@detectDragGestures }
                                 val x = ((change.position.x - pad) / (size.width - pad * 2)).coerceIn(0f, 1f)
                                 val y = (Y_MIN + (1f - (change.position.y - pad) / (size.height - pad * 2)) * (Y_MAX - Y_MIN)).coerceIn(-1f, 2f)
                                 val nn = when (target) {

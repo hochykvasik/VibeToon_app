@@ -146,7 +146,9 @@ private val TABS: List<Pair<String, List<Item>>> = listOf(
 @Composable
 fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
     val stub = LocalStub.current
-    var tab by rememberSaveable { mutableStateOf(0) }
+    var tabRaw by rememberSaveable { mutableStateOf(0) }
+    // спринт 54: сохранённый номер вкладки мог остаться от версии с другим числом вкладок
+    val tab = com.vibetoon.domain.ui.TabIndex.clamp(tabRaw, TABS.size)
     // пакет 10: сброс отображения и резервная копия настроек
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val appSt = com.vibetoon.ui.theme.LocalAppSettings.current
@@ -173,8 +175,8 @@ fun SettingsDialog(vm: MainViewModel?, onDismiss: () -> Unit) {
         buttons = { TextButton(onDismiss) { Text("Готово") } }
     ) {
             Column(Modifier.weight(1f, fill = false)) {
-                ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
-                    TABS.forEachIndexed { i, (title, _) -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(ru(title), fontSize = 13.sp, maxLines = 1, softWrap = false) }) }
+                com.vibetoon.ui.shell.SafeScrollableTabRow(selectedTabIndex = tab, tabCount = TABS.size, edgePadding = 0.dp) {
+                    TABS.forEachIndexed { i, (title, _) -> Tab(selected = tab == i, onClick = { tabRaw = i }, text = { Text(ru(title), fontSize = 13.sp, maxLines = 1, softWrap = false) }) }
                 }
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (TABS[tab].first == APPEARANCE) {

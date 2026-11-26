@@ -79,6 +79,14 @@ class SceneData(
     /** Рамка картинки слоя: у обрезанного - полная, у остальных - та же, что рамка выделения. */
     fun texQuad(id: Int): FloatArray? = textureQuads[id] ?: selectionQuads[id]
 
+    /**
+     * Спринт 54: новая сцена с теми же (неизменяемыми после сборки) массивами и служебными полями - повтор кадра Play
+     * из [PlaySceneCache] без гонки с GL-потоком, который ещё читает прежний объект.
+     */
+    fun shallowCopy(): SceneData = copyExtrasTo(SceneData(canvasWidth, canvasHeight, ops, params, textureIds, selectionQuads, parentWorlds,
+        boneDeltas, warpIds, warpData, meshIds, meshCounts, meshVerts, meshTris, perspIds, perspData, turbIds, turbData,
+        fxIds, fxCounts, fxData, groupLocalBounds, groupWorlds))
+
     /** Спринт 46: служебные поля сцены (формы, обрезка, фон) переносятся в пересобранную сцену. */
     fun copyExtrasTo(o: SceneData): SceneData {
         o.aliases = aliases; o.cropIds = cropIds; o.cropRects = cropRects; o.textureQuads = textureQuads

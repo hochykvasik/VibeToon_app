@@ -170,7 +170,12 @@ data class Clip(
     /** Смещение в источнике (кадры проекта при скорости 1x) на первом кадре клипа: нужно после разрезания. */
     val offset: Int = 0,
     /** Зацикливание: после конца клип начинается заново и виден до конца проекта. */
-    val loop: Boolean = false
+    val loop: Boolean = false,
+    /**
+     * Спринт 54: скорость, уже применённая к ключам и рисункам анимированного слоя ([com.vibetoon.domain.anim.ClipSpeed]).
+     * Только для показа и следующего пересчёта: [animFrame] её НЕ использует (время ключей уже пересчитано).
+     */
+    val keySpeed: Float = 1f
 ) {
     val length get() = end - start
 
@@ -208,7 +213,7 @@ data class Clip(
 
     companion object {
         const val MIN_LENGTH = 1
-        val SPEEDS = listOf(0.25f, 0.5f, 1f, 2f, 4f)
+        val SPEEDS = com.vibetoon.domain.anim.ClipSpeed.PRESETS   // спринт 54: 0.10x–3.0x
 
         /** Клип в границах проекта: start >= 0, end <= duration, длина не меньше MIN_LENGTH. */
         fun clamped(start: Int, end: Int, duration: Int, old: Clip? = null): Clip {

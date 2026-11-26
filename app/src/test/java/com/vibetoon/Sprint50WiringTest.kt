@@ -63,14 +63,15 @@ class Sprint50WiringTest {
     }
 
     @Test fun mergeDownKeepsBlendResult() {
+        // спринт 54: «Слить вниз» идёт общим планом MergePlan -> mergeIntoTarget (несколько верхних, одна запись Undo)
         val merge = body(vm, "fun mergeDown(")
-        assertTrue(merge.contains("if (mergeDownIntoPixels(id, below.id)) return"))
-        val px = vm.substring(vm.indexOf("private fun mergeDownIntoPixels("))
-        assertTrue(px.contains("SceneBuilder.blendCode(pt.blend)"))
-        assertTrue(px.contains("LayerMergeMath.merge(bt.bytes, 8"))
+        assertTrue(merge.contains("mergeLayers(setOf(id, below.id))"))
+        val px = vm.substring(vm.indexOf("private fun mergeIntoTarget("))
+        assertTrue(px.contains("SceneBuilder.blendCode(p.blend)"))
+        assertTrue(px.contains("LayerMergeMath.mergeMany(bt.bytes, 8"))
         assertTrue(px.contains("LayerMergeMath.topOutside("))
         assertTrue(px.contains("saved.withPaint(op)"))
-        assertTrue(px.contains("if (fallback) mergeLayers(setOf(top, bottom))"))
+        assertTrue(px.contains("if (fallback) mergeSnapshot("))
     }
 
     @Test fun groupEffectsRenderOnGroupBuffer() {

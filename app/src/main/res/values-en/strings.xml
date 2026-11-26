@@ -2282,7 +2282,7 @@
     <string name="ui_order_and_groups">Order and groups</string>
     <string name="ui_drag_a_row_by_the_handle_on_the_righ">Drag a row by the ≡ handle on the right: up and down reorders, onto a group makes the layer its child, onto a root layer takes it out of the group. A long press on the row itself opens the layer menu (rename, duplicate, merge down, create symbol…).</string>
     <string name="ui_swipes_and_multi_select">Swipes and multi-select</string>
-    <string name="ui_swiping_a_row_to_the_left_opens_the_">Swiping a row to the left opens the layer menu, to the right adds the layer to the selection. The “Multi-select” button above the list turns on selecting several layers; “Group”, “Merge together” and “Delete selected” appear below.</string>
+    <string name="ui_swiping_a_row_to_the_left_opens_the_">Swiping a row to the left opens the layer menu, to the right adds the layer to the selection. The “Multi-select” button above the list turns on selecting several layers; “Delete selected”, “Merge into one layer” (the bottom layer keeps its animation) and “Group (folder)” appear below.</string>
     <string name="ui_opacity_and_blending">Opacity and blending</string>
     <string name="ui_select_one_layer_below_the_list_you_">Select one layer: below the list you get “Opac.” (opacity), the blend mode button (Normal, Multiply, Screen…), “Alpha” (paint only over opaque pixels) and the “Clip” clipping mask.</string>
     <string name="ui_the_button_above_the_list_pixel_fram">The ⊕ button above the list: pixel, frame-by-frame animation, vector layer, group, background, camera, path layer and bone layer.</string>
@@ -2307,7 +2307,7 @@
     <string name="ui_snapping_the_playhead_and_clips">Snapping the playhead and clips</string>
     <string name="ui_tap_magnet_on_the_timeline_toolbar_w">Tap “Magnet” on the timeline toolbar. While dragging, the playhead snaps to keys, markers and clip edges, and clip edges snap to flags, the playhead and edges of other clips.</string>
     <string name="ui_tap_the_button_again_to_move_the_pla_2">Tap the button again to move the playhead and clips freely.</string>
-    <string name="ui_turn_on_multi_select_check_the_layer_2">Turn on “Multi-select”, check the layers and tap “Group”. A group rotates and scales around its own pivot.</string>
+    <string name="ui_turn_on_multi_select_check_the_layer_2">Turn on “Multi-select”, check the layers and tap “Group (folder)”. A group rotates and scales around its own pivot.</string>
     <string name="ui_bind_to_parent_in_the_properties_tab">“Bind to parent” in the “Properties” tab: the layer follows the parent\'s move, rotation and scale. All links are shown in the “Transform hierarchy” window.</string>
     <string name="ui_the_yellow_marker_on_the_canvas_can_">The yellow marker on the canvas can be dragged; “Pivot to center” in the “Properties” tab puts the pivot in the center of the frame. The pivot is saved in the project and used in export.</string>
     <string name="ui_select_a_layer_and_set_keys_on_diffe">Select a layer and set keys on different frames with the “◆ Add Key” button. Move keys with the “Box-select keys” tool; “Key list” shows all keys of the layer.</string>
@@ -2315,4 +2315,20 @@
     <string name="ui_clip_edges_split_and_extend">Clip edges, split and extend</string>
     <string name="ui_clip_bounds_change_by_dragging_its_e">Clip bounds change by dragging its edges on the timeline. “Split clip” (scissors) splits the clip at the playhead into two parts, “Extend clip” stretches the clips of the selected layers to the end of the scene or project.</string>
     <string name="ui_the_button_is_not_visible_right_now__2">The button is not visible right now: select a layer or open the right panel or mode (on a phone some timeline buttons are under “More” ⋮).</string>
+    <string name="ui_merge_into_one_layer">Merge into one layer</string>
+    <string name="ui_group_folder">Group (folder)</string>
+    <string name="ui_groups_are_not_merged_open_the_group">Groups are not merged: open the group and check the layers inside it</string>
+    <string name="ui_the_layer_is_locked">The layer is locked</string>
+    <string name="ui_a_hidden_layer_is_not_merged_turn_on">A hidden layer is not merged: turn on the eye of every layer being merged</string>
+    <string name="ui_the_layers_changed_merge_again">The layers changed: merge again</string>
+    <string name="ui_merged_into_the_animation_is_kept_th">Merged into “{}”, the animation is kept. The part of the upper layer outside the lower layer\'s frame was cut off (Undo restores it)</string>
+    <string name="ui_merged_into_the_lower_layer_s_animat">Merged into “{}”: the lower layer\'s animation is kept, the upper layers\' keys froze at the current frame</string>
+    <string name="ui_merged_into_the_lower_layer_s_keys_b">Merged into “{}”: the lower layer\'s keys, bones and deformers are kept</string>
+    <string name="ui_merged_into_one_layer">Merged into one layer “{}”</string>
+    <string name="ui_speed_clip_frames">Speed {}: clip {} → {} frames</string>
+    <string name="ui_speed_clip_frames_the_project_was_ex">Speed {}: clip {} → {} frames, the project was extended to the limit of {} frames</string>
+    <string name="ui_speed_the_layer_s_keys_and_drawings_">Speed {}: the layer\'s keys and drawings were retimed, clip {} → {} frames, the project was extended to {} frames</string>
+    <string name="ui_speed_the_layer_s_keys_and_drawings__2">Speed {}: the layer\'s keys and drawings were retimed, clip {} → {} frames</string>
+    <string name="ui_preparing_play">Preparing Play…</string>
+    <string name="ui_drag_the_clip_edges_on_the_timeline_">Drag the clip edges on the timeline with a finger; drag the selected clip by its middle to move it. Speed 0.10x–3.0x: sound and video play their source faster or slower, an animated layer has all its keys, drawings and symbol time keys retimed (the clip stretches, the project is extended if needed). Reverse works for sound and video; Loop repeats the clip to the end of the project or scene.</string>
 </resources>

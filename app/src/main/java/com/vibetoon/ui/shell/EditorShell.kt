@@ -1378,8 +1378,8 @@ private fun RightPanel(vm: MainViewModel, add: AddActions, color: Long, onColor:
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, modifier = modifier.keyboardInsetPanel()) {
         Column(Modifier.fillMaxSize()) {
             // свайп вправо по шапке панели (вкладки) закрывает её
-            TabRow(
-                selectedTabIndex = tab,
+            SafeTabRow(
+                selectedTabIndex = tab, tabCount = 2,
                 modifier = Modifier.height(40.dp).pointerInput(Unit) {
                     var sum = 0f
                     detectHorizontalDragGestures(onDragStart = { sum = 0f }, onDragEnd = { if (sum > 80f) onClose() }) { _, d -> sum += d }
@@ -1513,11 +1513,12 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
             OutlinedButton(onClick = { vm.deleteSelected() }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
                 com.vibetoon.ui.IconText(Icons.Default.Delete, "Удалить выбранные (${selection.size})", 11.sp)
             }
-            OutlinedButton(onClick = { vm.groupSelected() }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
-                com.vibetoon.ui.IconText(Icons.Default.Folder, "В группу", 11.sp)
-            }
+            // спринт 54: «Слить в один слой» - первым и отдельно от «Сгруппировать (папка)», чтобы не перепутать
             OutlinedButton(onClick = { vm.mergeSelected() }, enabled = selection.size >= 2, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
-                com.vibetoon.ui.IconText(Icons.Default.MergeType, "Слить вместе", 11.sp)
+                com.vibetoon.ui.IconText(Icons.Default.MergeType, "Слить в один слой", 11.sp)
+            }
+            OutlinedButton(onClick = { vm.groupSelected() }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
+                com.vibetoon.ui.IconText(Icons.Default.Folder, "Сгруппировать (папка)", 11.sp)
             }
             Box {
                 OutlinedButton(onClick = { boneMenu = true }, enabled = bonesList.isNotEmpty(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {

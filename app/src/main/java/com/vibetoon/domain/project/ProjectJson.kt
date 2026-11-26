@@ -237,7 +237,8 @@ object ProjectJson {
                 val s = o.int("s", 0).coerceAtLeast(0)
                 clips[i] = Clip(
                     s, o.int("e", meta.durationFrames).coerceAtLeast(s + 1),
-                    o.dbl("speed", 1.0).toFloat(), o["rev"] == true, o["freeze"] == true, o.int("off", 0), o["loop"] == true
+                    o.dbl("speed", 1.0).toFloat(), o["rev"] == true, o["freeze"] == true, o.int("off", 0), o["loop"] == true,
+                    o.dbl("kspeed", 1.0).toFloat().takeIf { it.isFinite() && it > 0f } ?: 1f
                 )
             }
             val markers = (root["markers"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }.filter { it >= 0 }.distinct().sorted()
@@ -565,7 +566,7 @@ object ProjectJson {
 
     private fun clipToMap(c: Clip) = linkedMapOf<String, Any?>(
         "s" to c.start, "e" to c.end, "speed" to c.speed.toDouble(), "rev" to c.reverse, "freeze" to c.freeze, "off" to c.offset, "loop" to c.loop
-    )
+    ).also { if (c.keySpeed != 1f) it["kspeed"] = c.keySpeed.toDouble() }
 
     private fun transformToMap(t: LayerTransform) = linkedMapOf<String, Any?>(
         "dx" to t.dx.toDouble(), "dy" to t.dy.toDouble(),
