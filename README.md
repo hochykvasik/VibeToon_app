@@ -43,7 +43,7 @@ I build this project **completely on my own, out of pure enthusiasm**, in my fre
 
 ##  Built-In Tutorials
 
-If you are opening the app for the first time, no worries! VibeToon includes **14 interactive tutorials and an app overview tour** that highlight buttons right on the screen and walk you through:
+If you're a beginner, no worries! VibeToon includes **14 interactive tutorials and an app overview tour** that highlight buttons right on the screen and walk you through:
 - Frame-by-frame animation and onion skinning.
 - Binding layers and symbols to bones.
 - Mesh deformation, FX, and the reference window.
@@ -132,7 +132,7 @@ Because I am the **only developer** working on this app, I can't answer every me
 
 ##  Обучение внутри приложения
 
-Если вы открыли приложение впервые — не переживайте! Внутри VibeToon встроено **14 интерактивных туториалов и вводный тур**, которые подсвечивают кнопки прямо на рабочем экране и шаг за шагом объясняют:
+Если вы новичок - не переживайте! Внутри VibeToon встроено **14 интерактивных туториалов и вводный тур**, которые подсвечивают кнопки прямо на рабочем экране и шаг за шагом объясняют:
 - Как пользоваться покадровой анимацией и калькой.
 - Как привязывать объекты и символы к костям.
 - Как работать с сеткой Mesh, эффектами (FX) и окном референса.
