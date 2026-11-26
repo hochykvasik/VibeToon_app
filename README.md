@@ -8,7 +8,7 @@
 ---
 <a id="english"></a
 
-## 🎨 About the Project
+## About the Project
 
 Hi! **VibeToon** is a personal project that I built and tested on my own. Android really missed a practical animation app with modern features like bones, onion skinning, symbols, and layer workflows, so I decided to make one myself.
 
@@ -50,7 +50,7 @@ If you are opening the app for the first time, no worries! VibeToon includes **1
 
 ---
 
-## 📥 Installation
+## Installation
 
 1. Go to the **[Releases](../../releases)** section on this GitHub page.
 2. Download the latest `vibetoon-debug.apk` (or release APK if available).
@@ -98,7 +98,7 @@ Because I am the **only developer** working on this app, I can't answer every me
 
 ---
 
-## 🎨 О проекте
+## О проекте
 
 Привет! **VibeToon** - это мой личный пет-проект, который я разрабатывала и тестировала самостоятельно. На Android очень не хватало удобного приложения для анимации с современным функционалом (скелетный риггинг, калька, символы, работа со слоями), поэтому я решила создать такое приложение сама.
 
@@ -117,7 +117,7 @@ Because I am the **only developer** working on this app, I can't answer every me
   
 ---
 
-## ✨+ Основные возможности
+## Основные возможности
 
 -  **Таймлайн и кадры:** гибка работа со слоями, покадровая анимация, настраиваемая длина кадров (от 1 до 48) и удобное управление.
 -  **Калька (Onion Skinning):** продвинутый режим просмотра прошлых и будущих кадров с настройкой цвета, прозрачности и шага.
