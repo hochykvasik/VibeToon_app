@@ -670,6 +670,8 @@ private fun TopBar(
                     DropdownMenuItem(text = { Text("Аудио (MP3, WAV)") }, onClick = { actions = false; add.audio() })
                     DropdownMenuItem(text = { Text("Текст") }, onClick = { actions = false; add.text() })
                     DropdownMenuItem(text = { Text("Камера (Pan & Zoom)") }, onClick = { actions = false; vm.addCameraLayer() })
+                    // спринт 56: картинка-образец в плавающем окне (в проект и экспорт не попадает)
+                    DropdownMenuItem(text = { Text("Окно референса…") }, onClick = { actions = false; add.reference() })
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("Сбросить вид холста") }, onClick = { actions = false; vm.resetCamera() })
                     DropdownMenuItem(text = { Text("Повернуть холст на 90°") }, onClick = { actions = false; vm.rotateCamera90() })

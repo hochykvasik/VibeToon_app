@@ -712,15 +712,40 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
         onProgress: (Int) -> Unit, cancel: java.util.concurrent.atomic.AtomicBoolean, onDone: (Result<Unit>) -> Unit
     ) {
         exportActive = true
+        // спринт 56: итог доставляется ровно один раз - из GL-потока (готово/ошибка/отмена) или при закрытии вида
+        val delivered = java.util.concurrent.atomic.AtomicBoolean(false)
+        val deliver: (Result<Unit>) -> Unit = { r -> if (delivered.compareAndSet(false, true)) onDone(r) }
+        exportAbandon = {
+            if (!delivered.get()) {
+                cancel.set(true)   // если GL-поток ещё жив, ближайшая задача освободит кодек
+                exportActive = false
+                deliver(Result.failure(com.vibetoon.domain.export.ExportInterrupted(com.vibetoon.domain.export.ExportOutcome.REASON_VIEW_CLOSED)))
+            }
+        }
         queueEvent {
             if (!surfacePaused) rememberEgl()   // спринт 41: контекст для продолжения в фоне
             vtRenderer.startExport(spec, background, sceneAt, onProgress, cancel, { exportInterrupted() }) { r ->
                 exportActive = false
-                onDone(r)
+                exportAbandon = null
+                setParked(false)
+                deliver(r)
                 super.requestRender()   // кадр редактора после экспорта
             }
             exportTask()
         }
+    }
+
+    /** Спринт 56: закрытие вида посреди экспорта (вызывается до остановки GL-потока): итог «прерван», без GL-вызовов. */
+    @Volatile private var exportAbandon: (() -> Unit)? = null
+
+    /** Спринт 56: цепочка экспорта запаркована/снова идёт - для подписи «ждёт» в уведомлении. Вызывается из любого потока. */
+    var onExportParked: ((Boolean) -> Unit)? = null
+    @Volatile private var parkedReported = false
+
+    private fun setParked(on: Boolean) {
+        if (parkedReported == on) return
+        parkedReported = on
+        onExportParked?.invoke(on)
     }
 
     /** Кадр экспорта сейчас сделать нельзя: переход состояния или фон без внеэкранного контекста. */
@@ -734,12 +759,14 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
     private fun exportTask() {
         var park = mustPark()
         if (!park && surfacePaused && !ensureBackgroundCurrent()) park = true
-        if (vtRenderer.exportStep(park)) { queueEvent { exportTask() }; return }
+        if (vtRenderer.exportStep(park)) { if (parkedReported) setParked(false); queueEvent { exportTask() }; return }
         if (!vtRenderer.exportRunning) return
         // Задача ничего не сделала (пауза/переход): ждём конца перехода или возврата; если он уже прошёл - продолжаем.
         val resumeNow = synchronized(exportLock) {
             if (mustParkLocked() || (surfacePaused && backgroundUnavailable)) { exportParked = true; false } else true
         }
+        // спринт 56: запаркованный в фоне экспорт (нет внеэкранного контекста) - уведомление подписывает «ждёт»
+        setParked(!resumeNow && surfacePaused)
         if (resumeNow) queueEvent { exportTask() }
     }
 
@@ -763,6 +790,10 @@ class VtGLSurfaceView(context: Context) : GLSurfaceView(context) {
 
     /** Освобождает нативные GL-объекты в GL-потоке. */
     fun releaseNative() {
+        // спринт 56: вид закрывается посреди экспорта - GL-поток сейчас остановится, и цепочка кадров не продолжится.
+        // Раньше экспорт молча пропадал: окно и уведомление навсегда оставались на прежнем проценте.
+        exportAbandon?.invoke()
+        exportAbandon = null
         vtRenderer.deactivate()
         queueEvent { vtRenderer.release() }
     }

@@ -168,6 +168,10 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
     val openAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.AUDIO, uri)
     }
+    // спринт 56: картинка для плавающего окна референса (в проект не добавляется)
+    val openReference = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.loadReference(uri)
+    }
     val addActions = AddActions(
         psd = { openPsd.launch(arrayOf("*/*")) },
         image = { openImage.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
@@ -178,10 +182,13 @@ fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri
         sequence = { asSymbol -> sequenceAsSymbol = asSymbol; openSequence.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
         videoAsSymbol = { openVideoAsSymbol.launch(arrayOf("video/mp4", "video/*")) },
         psdInsert = { openPsdInsert.launch(arrayOf("*/*")) },
-        svgInsert = { openSvgInsert.launch(arrayOf("image/svg+xml", "text/xml", "application/xml", "*/*")) }
+        svgInsert = { openSvgInsert.launch(arrayOf("image/svg+xml", "text/xml", "application/xml", "*/*")) },
+        reference = { openReference.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) }
     )
 
     com.vibetoon.ui.shell.EditorShell(vm, onBack, addActions) { showExport = true }
+    // спринт 56: плавающее окно референса - над редактором, под окнами и подсказками
+    ReferenceWindowOverlay(vm, onReplace = addActions.reference)
     com.vibetoon.ui.shell.CoachOverlay()
     // спринт 36: итог вставки SVG - что не перенесено
     val svgNotes by vm.svgNotes.collectAsStateWithLifecycle()
@@ -259,7 +266,9 @@ class AddActions(
     /** Пакет 23: другой PSD в текущий проект (по PSD Import Mode). */
     val psdInsert: () -> Unit = {},
     /** Спринт 36: фигуры SVG - векторными слоями текущего проекта. */
-    val svgInsert: () -> Unit = {}
+    val svgInsert: () -> Unit = {},
+    /** Спринт 56: картинка в плавающее окно референса (не в проект). */
+    val reference: () -> Unit = {}
 )
 
 @Composable
@@ -406,7 +415,7 @@ private fun RasterOverlayLayer(vm: MainViewModel) {
 @Composable
 fun EditorSurface(vm: MainViewModel, modifier: Modifier) {
     AndroidView(
-        factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextRecreated = { vm.onGlContextRecreated() }; it.onTextureEvents = { ev -> vm.onTextureEvents(ev) }; RenderHost.view = it } },
+        factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextRecreated = { vm.onGlContextRecreated() }; it.onTextureEvents = { ev -> vm.onTextureEvents(ev) }; it.onExportParked = { on -> vm.onExportParked(on) }; RenderHost.view = it } },
         onRelease = { it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
         modifier = modifier
     )

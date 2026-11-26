@@ -113,7 +113,7 @@ class Sprint42WiringTest {
         assertTrue(n.contains("setUsesChronometer(true)"))
         assertTrue(n.contains("setProgress(100, pct, false)"))
         assertFalse("без Compose", work.contains("L(\""))
-        assertTrue(work.contains("cur.copy(pct = pct, done = done, total = total)"))
+        assertTrue(work.contains("cur.copy(done = done, total = total, lastProgressAt = now"))   // спринт 56: + время кадра для «ждёт»
     }
 
     @Test fun newStringsHaveEnglishPairs() {

@@ -142,7 +142,7 @@ class Sprint41WiringTest {
         assertTrue(Regex("importJob = viewModelScope\\.launch \\{").findAll(vm).count() == 0)
         assertTrue(Regex("importJob = launchImport \\{").findAll(vm).count() >= 9)
         assertFalse("метки возврата переименованы вместе с launchImport", Regex("launchImport \\{[^}]*return@launch\\b").containsMatchIn(vm))
-        assertTrue(vm.contains("BackgroundWork.begin(ctx, \"Экспорт\")"))
+        assertTrue(vm.contains("BackgroundWork.begin(ctx, \"Экспорт\""))   // спринт 56: + id проекта для возврата по уведомлению
         assertTrue(vm.contains("RenderHost.view?.backgroundWorkChanged()"))
         assertTrue(vm.contains("private fun glUsable(): Boolean = !appBackground || RenderHost.view?.backgroundRenderAllowed == true"))
         assertTrue(body(vm, "private suspend fun captureExportFrame(").contains("while (!glUsable())"))

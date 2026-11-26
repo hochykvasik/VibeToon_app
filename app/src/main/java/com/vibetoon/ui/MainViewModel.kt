@@ -183,7 +183,8 @@ sealed interface ExportUi {
     data class Running(val done: Int, val total: Int, val phase: String? = null) : ExportUi
     /** [note] - дополнительная строка (пакет 12: звук в MP4 добавлен / не добавлен). */
     data class Done(val file: File, val gallerySaved: Boolean = false, val note: String? = null) : ExportUi
-    data class Failed(val message: String) : ExportUi
+    /** Спринт 56: [interrupted] - экспорт оборван не по вине проекта (закрыт экран), итог «прерван». */
+    data class Failed(val message: String, val interrupted: Boolean = false) : ExportUi
 }
 
 sealed interface UiState {
@@ -651,6 +652,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Idle
         staleAfterPlay.clear()   // спринт 55: до pause() - иначе пауза пересчитала бы миниатюры слоёв уходящего проекта
         pause()
+        // спринт 56: итог экспорта прежнего проекта не всплывает окном в следующем (идущий экспорт выход не пускает)
+        if (_export.value !is ExportUi.Running) _export.value = ExportUi.Idle
         arapMemo.clear()
         clearSelection(); penCancel(); _rasterTool.value = null
         _loop.value = true; _magnet.value = false; vecLayer = -1; vecPts.clear(); vecPressures.clear(); vecGen.clear()
@@ -919,6 +922,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Выход из проекта: сохранение и миниатюра (вид без рамки и в исходном масштабе), затем [done]. */
     fun closeProject(done: () -> Unit) {
         if (closing || _selectionExtractBusy.value || rasterRecoveryRequired) return
+        // спринт 56: выход в список проектов посреди экспорта закрыл бы GL-вид и оборвал экспорт молча
+        if (!com.vibetoon.domain.export.EditorLeave.allowed(_export.value is ExportUi.Running)) { showMessage(com.vibetoon.domain.export.ExportOutcome.LEAVE_BLOCKED); return }
         closing = true
         importJob?.cancel(); importJob = null
         openJob?.cancel(); openJob = null
@@ -5968,8 +5973,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (trim.dropDeformCaches(level)) { deformCache.clear(); arapMemo.clear() }
         else for (id in trim.stale(arapMemo, layers.mapTo(HashSet()) { it.id })) arapMemo.remove(id)
         // спринт 52: формы символов (текстуры) тоже отдают память; на экране формы остаются
+        // спринт 56: но не посреди экспорта - его кадры ссылаются на эти текстуры (кадр вышел бы без символа)
         val limit = com.vibetoon.domain.perf.CellCachePolicy.trimmedBudget(formCache.usedBytes(), level)
-        if (limit < formCache.usedBytes()) {
+        if (com.vibetoon.domain.export.EditorLeave.trimFormsAllowed(_export.value is ExportUi.Running) && limit < formCache.usedBytes()) {
             val drop = formCache.trim(limit, pinnedForms())
             if (drop.isNotEmpty()) { refreshFormAliases(); dropFormTexturesLater(drop) }
         }
@@ -14253,24 +14259,105 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // виден процент. init стоит ПОСЛЕ объявления _export (порядок инициализации).
     private var exportWork = 0L
     private var exportWorkStarted = false
+    /** Спринт 56: проект и файл идущего экспорта - для итога в шторке и уборки, если экран закроют посреди работы. */
+    private var exportProject: String? = null
+    private var exportFile: java.io.File? = null
+
+    private val cancelFromNotice: () -> Unit = { if (_export.value is ExportUi.Running) cancelExport() }
 
     init {
+        // Спринт 56: единое состояние задачи экспорта. Каждый запуск кончается ровно одним итогом (готово, отменено,
+        // прервано, ошибка): прогресс в шторке снимается, итог показывается там (если приложение свёрнуто) и в окне экспорта.
         viewModelScope.launch {
             _export.collect { st ->
                 val ctx = getApplication<Application>()
                 if (st is ExportUi.Running) {
                     if (!exportWorkStarted) {
                         exportWorkStarted = true
-                        exportWork = com.vibetoon.work.BackgroundWork.begin(ctx, "Экспорт")   // 0 - фон выключен в настройках
+                        exportProject = projectId
+                        exportWork = com.vibetoon.work.BackgroundWork.begin(ctx, "Экспорт", projectId)   // 0 - фон выключен в настройках
+                        projectId?.let { com.vibetoon.work.ExportNotices.markInflight(ctx, it, _projectName.value) }
                         RenderHost.view?.backgroundWorkChanged()
                     }
                     com.vibetoon.work.BackgroundWork.progress(ctx, exportWork, st.done, st.total)
                 } else if (exportWorkStarted) {
                     exportWorkStarted = false
-                    com.vibetoon.work.BackgroundWork.end(ctx, exportWork)
-                    exportWork = 0L
+                    val next = when (st) {
+                        is ExportUi.Done -> com.vibetoon.domain.export.ExportOutcome.Ui.DONE
+                        is ExportUi.Failed -> com.vibetoon.domain.export.ExportOutcome.Ui.FAILED
+                        else -> com.vibetoon.domain.export.ExportOutcome.Ui.IDLE
+                    }
+                    val kind = com.vibetoon.domain.export.ExportOutcome.classify(true, next, (st as? ExportUi.Failed)?.interrupted == true, exportCancel.get())
+                    val detail = when (st) { is ExportUi.Done -> st.file.name; is ExportUi.Failed -> st.message; else -> null }
+                    com.vibetoon.work.BackgroundWork.finish(ctx, exportWork, kind, detail, exportProject)
+                    com.vibetoon.work.ExportNotices.clearInflight(ctx)
+                    exportWork = 0L; exportProject = null; exportFile = null
                 }
             }
+        }
+        // спринт 56: «Отменить экспорт» в уведомлении
+        com.vibetoon.work.BackgroundWork.cancelHandler = cancelFromNotice
+    }
+
+    // ---------------------------------------------------------------- Спринт 56: окно референса
+    // Картинка-образец в плавающем окне поверх редактора (как в ibisPaint). Только интерфейс: в сцену, проект и экспорт
+    // не попадает. Живёт, пока окно не закрыто (переживает переход между проектами), картинка уменьшена до 1024 px.
+
+    /** Картинка референса: [aspect] - ширина/высота. */
+    class ReferenceImage(val bitmap: androidx.compose.ui.graphics.ImageBitmap, val aspect: Float, val name: String)
+
+    private val _reference = MutableStateFlow<ReferenceImage?>(null)
+    val reference: StateFlow<ReferenceImage?> = _reference.asStateFlow()
+    private val _referenceFrame = MutableStateFlow<com.vibetoon.domain.ui.ReferenceWindow.Frame?>(null)
+    val referenceFrame: StateFlow<com.vibetoon.domain.ui.ReferenceWindow.Frame?> = _referenceFrame.asStateFlow()
+    private var referenceJob: kotlinx.coroutines.Job? = null
+
+    fun loadReference(uri: android.net.Uri) {
+        referenceJob?.cancel()
+        referenceJob = viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val img = withContext(Dispatchers.IO) {
+                runCatching {
+                    val cr = ctx.contentResolver
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    cr.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+                    val opts = android.graphics.BitmapFactory.Options().apply {
+                        inSampleSize = com.vibetoon.domain.ui.ReferenceWindow.sampleSize(bounds.outWidth, bounds.outHeight)
+                    }
+                    var bmp = cr.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) } ?: return@runCatching null
+                    val maxSide = com.vibetoon.domain.ui.ReferenceWindow.MAX_SIDE_PX
+                    if (maxOf(bmp.width, bmp.height) > maxSide) {
+                        val k = maxSide.toFloat() / maxOf(bmp.width, bmp.height)
+                        val scaled = android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * k).toInt().coerceAtLeast(1), (bmp.height * k).toInt().coerceAtLeast(1), true)
+                        if (scaled !== bmp) bmp.recycle()
+                        bmp = scaled
+                    }
+                    val name = runCatching {
+                        cr.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: ""
+                    ReferenceImage(bmp.asImageBitmap(), bmp.width.toFloat() / bmp.height.coerceAtLeast(1), name)
+                }.getOrNull()
+            }
+            if (img == null) { showMessage("Не удалось открыть картинку референса"); return@launch }
+            val wasOpen = _reference.value != null
+            _reference.value = img
+            // новая картинка - окно разворачивается; позиция и ширина остаются, если окно уже было открыто
+            if (!wasOpen) _referenceFrame.value = null else _referenceFrame.value = _referenceFrame.value?.copy(collapsed = false)
+        }
+    }
+
+    fun setReferenceFrame(f: com.vibetoon.domain.ui.ReferenceWindow.Frame) { _referenceFrame.value = f }
+
+    fun closeReference() {
+        referenceJob?.cancel()
+        _reference.value = null
+        _referenceFrame.value = null
+    }
+
+    /** Спринт 56: цепочка кадров MP4 запаркована в фоне (из GL-потока) - уведомление подписывает «ждёт». */
+    fun onExportParked(parked: Boolean) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            if (exportWork != 0L) com.vibetoon.work.BackgroundWork.setParked(getApplication<Application>(), exportWork, parked)
         }
     }
 
@@ -14464,6 +14551,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val planNote = plan.notes.joinToString("\n").ifEmpty { null }
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
         val file = projects.fileOf(pid, "exports/${safeName(_projectName.value)}-$stamp-${java.util.UUID.randomUUID().toString().take(8)}.mp4")
+        exportFile = file
 
         val bg = meta?.background?.toInt() ?: 0
         exportCancel = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -14517,7 +14605,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             }
                         }.onFailure {
                             com.vibetoon.domain.export.ExportFiles.discard(file)
-                            _export.value = if (cancel.get()) ExportUi.Idle else ExportUi.Failed(it.message ?: "Не удалось записать видео")
+                            // спринт 56: вид закрыт посреди экспорта - «прерван» (а не тихий возврат в «нет экспорта»)
+                            _export.value = if (it is com.vibetoon.domain.export.ExportInterrupted) ExportUi.Failed(it.message ?: com.vibetoon.domain.export.ExportOutcome.REASON_VIEW_CLOSED, interrupted = true)
+                                else if (cancel.get()) ExportUi.Idle else ExportUi.Failed(it.message ?: "Не удалось записать видео")
                         }
                     }
                 }
@@ -14621,9 +14711,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun dismissExport() { if (_export.value !is ExportUi.Running) _export.value = ExportUi.Idle }
 
+    /**
+     * Спринт 56: экран редактора уничтожен (смахнули из «Недавних», система закрыла окно) посреди экспорта. Сборщик
+     * состояния уже остановлен вместе с viewModelScope - раньше уведомление так и оставалось «экспорт 21 %» с таймером.
+     * Теперь: отмена цепочки кадров, недописанный файл удаляется, прогресс снимается, в шторке - «экспорт прерван», а при
+     * следующем открытии приложения - окно с причиной и кнопкой «Открыть проект».
+     */
+    private fun finishExportOnClear() {
+        if (com.vibetoon.work.BackgroundWork.cancelHandler === cancelFromNotice) com.vibetoon.work.BackgroundWork.cancelHandler = null
+        if (!exportWorkStarted && _export.value !is ExportUi.Running) return
+        val ctx = getApplication<Application>()
+        exportCancel.set(true)
+        runCatching { RenderHost.view?.kickExport() }
+        exportFile?.let { f -> runCatching { com.vibetoon.domain.export.ExportFiles.discard(f) } }
+        val reason = com.vibetoon.domain.export.ExportOutcome.REASON_APP_CLOSED
+        com.vibetoon.work.BackgroundWork.finish(ctx, exportWork, com.vibetoon.domain.export.ExportOutcome.Kind.INTERRUPTED, reason, exportProject ?: projectId)
+        com.vibetoon.work.ExportNotices.clearInflight(ctx)
+        if (com.vibetoon.domain.export.ExportOutcome.needsInAppNotice(com.vibetoon.domain.export.ExportOutcome.Kind.INTERRUPTED, editorAlive = false))
+            com.vibetoon.work.ExportNotices.raise(com.vibetoon.work.ExportNotices.Notice(
+                com.vibetoon.domain.export.ExportOutcome.Kind.INTERRUPTED, reason, exportProject ?: projectId, _projectName.value))
+        exportWorkStarted = false; exportWork = 0L; exportProject = null; exportFile = null
+    }
+
     private fun safeName(n: String) = n.replace(Regex("""[^\p{L}\p{N}_-]+"""), "_").trim('_').ifEmpty { "video" }.take(40)
 
     override fun onCleared() {
+        finishExportOnClear()
         runCatching { appPrefs().unregisterOnSharedPreferenceChangeListener(appPrefsListener) }
         pause()
         audioEngine.release()

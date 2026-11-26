@@ -273,6 +273,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Спринт 56: открыть проект из уведомления/окна итога экспорта, если он ещё есть (могли удалить). */
+    fun openIfExists(id: String) {
+        if (_screen.value is Screen.Editor) return
+        if (repo.thumbnailFile(id).parentFile?.isDirectory == true) open(id)
+    }
+
     fun goProjects() {
         // превью закрытого проекта переснято при выходе - старое не показываем
         (_screen.value as? Screen.Editor)?.id?.let { id -> thumbs.removeIf { it.substringBefore(':') == id } }

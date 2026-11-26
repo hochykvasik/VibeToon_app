@@ -2007,4 +2007,37 @@ Mesh: сетка и пины|Mesh: mesh and pins
 Скорость {}: ключи и рисунки слоя пересчитаны, плашка {} → {} кадров|Speed {}: the layer's keys and drawings were retimed, clip {} → {} frames
 Подготовка Play…|Preparing Play…
 Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость 0.10x–3.0x: у звука и видео играет источник, у анимированного слоя пересчитывается время всех его ключей, рисунков и ключей времени символа (плашка растягивается, проект при нужде продлевается). Реверс работает для звука и видео; Цикл повторяет клип до конца проекта или сцены.|Drag the clip edges on the timeline with a finger; drag the selected clip by its middle to move it. Speed 0.10x–3.0x: sound and video play their source faster or slower, an animated layer has all its keys, drawings and symbol time keys retimed (the clip stretches, the project is extended if needed). Reverse works for sound and video; Loop repeats the clip to the end of the project or scene.
+VibeToon: экспорт завершён|VibeToon: export finished
+VibeToon: экспорт отменён|VibeToon: export cancelled
+VibeToon: экспорт прерван|VibeToon: export interrupted
+VibeToon: экспорт не удался|VibeToon: export failed
+VibeToon: экспорт ждёт {} %|VibeToon: export waiting {} %
+VibeToon: экспорт ждёт|VibeToon: export waiting
+Работа приостановлена · вернитесь в VibeToon, чтобы продолжить|Work is paused · return to VibeToon to continue
+Сохранено: {}|Saved: {}
+Файл сохранён в папку проекта|The file was saved in the project folder
+Файл не записан|No file was written
+Не удалось записать файл|Could not write the file
+Нажмите, чтобы открыть VibeToon|Tap to open VibeToon
+Приложение было закрыто, экспорт остановлен. Откройте проект и запустите экспорт снова|The app was closed and the export stopped. Open the project and start the export again
+Экран редактора закрылся во время экспорта. Запустите экспорт снова|The editor screen closed during the export. Start the export again
+Прошлый экспорт не завершился: приложение было закрыто системой. Запустите экспорт снова|The previous export did not finish: the system closed the app. Start the export again
+Дождитесь окончания экспорта или отмените его|Wait for the export to finish or cancel it
+Итоги экспорта|Export results
+Отменить экспорт|Cancel export
+Экспорт завершён|Export finished
+Экспорт отменён|Export cancelled
+Экспорт прерван|Export interrupted
+Экспорт не удался|Export failed
+Проект: {}|Project: {}
+Открыть проект|Open project
+Не удалось открыть картинку референса|Could not open the reference image
+Перетащите, чтобы передвинуть окно|Drag to move the window
+Референс|Reference
+Заменить картинку|Replace image
+Развернуть окно|Expand window
+Свернуть окно|Collapse window
+Закрыть референс|Close reference
+Потяните, чтобы изменить размер|Drag to resize
+Окно референса…|Reference window…
 """
