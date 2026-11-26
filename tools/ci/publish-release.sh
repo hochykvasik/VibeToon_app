@@ -19,8 +19,15 @@ if [[ "$status" != identical && "$status" != behind ]]; then
   exit 1
 fi
 if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-  echo "Release $tag already exists; refusing to overwrite it." >&2
-  exit 1
+  # релиз создан вручную на сайте (вместе с тегом): APK прикрепляется, если его ещё нет; готовый файл не заменяется
+  assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+  if grep -qx 'vibetoon-debug.apk' <<<"$assets"; then
+    echo "Release $tag already has vibetoon-debug.apk; refusing to overwrite it." >&2
+    exit 1
+  fi
+  gh release upload "$tag" "$apk" --repo "$GITHUB_REPOSITORY"
+  echo "Attached vibetoon-debug.apk to the existing release $tag."
+  exit 0
 fi
 pre=()
 [[ "$tag" == *-* ]] && pre=(--prerelease)

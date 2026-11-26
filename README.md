@@ -21,4 +21,4 @@
 - [`docs/SPRINT_SETTINGS_RU.md`](docs/SPRINT_SETTINGS_RU.md) — настройки, пороги и ограничения.
 
 ## Выпуск релиза
-CI запускается на ветке разработки, на `main`, на pull request в `main` и на тегах `v*`. Тег `vX.Y.Z` или `vX.Y.Z-суффикс` на коммите из `main` собирает APK, прогоняет тесты и создаёт GitHub Release с `vibetoon-debug.apk`. Описание берётся из `docs/RELEASE_NOTES_RU.md`, тег с суффиксом публикуется как pre-release.
+CI запускается на ветке разработки, на `main`, на pull request в `main` и на тегах `v*`. Тег `vX.Y.Z` или `vX.Y.Z-суффикс` на коммите из `main` собирает APK, прогоняет тесты и создаёт GitHub Release с `vibetoon-debug.apk`. Описание берётся из `docs/RELEASE_NOTES_RU.md`, тег с суффиксом публикуется как pre-release. Если релиз создан вручную на сайте, CI только прикрепит к нему APK.

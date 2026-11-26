@@ -7,7 +7,9 @@ cat > "$tmp/gh" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CALLS"
 if [[ $1 == api ]]; then printf '%s\n' "$COMPARE"; exit 0; fi
+if [[ $1 == release && $2 == view && "$*" == *--json* ]]; then printf '%s\n' "${ASSETS:-}"; exit 0; fi
 if [[ $1 == release && $2 == view ]]; then exit "${EXISTS:-1}"; fi
+if [[ $1 == release && $2 == upload ]]; then exit 0; fi
 if [[ $1 == release && $2 == create ]]; then exit 0; fi
 exit 2
 MOCK
@@ -36,9 +38,16 @@ export GITHUB_REF_NAME=v1.0.0 COMPARE=behind
 run
 grep -q 'release create v1.0.0 ' "$CALLS"
 ! grep -q -- '--prerelease' "$CALLS"
-# существующий релиз не перезаписывается
+# релиз создан вручную без APK - APK прикрепляется, новый релиз не создаётся
 : > "$CALLS"
-export EXISTS=0
-if run; then echo 'Existing release was overwritten' >&2; exit 1; fi
+export EXISTS=0 ASSETS=''
+run
+grep -q 'release upload v1.0.0 ' "$CALLS"
 ! grep -q 'release create' "$CALLS"
+# в релизе уже есть APK - не перезаписывается
+: > "$CALLS"
+export ASSETS=$'notes.txt\nvibetoon-debug.apk'
+if run; then echo 'Existing APK was overwritten' >&2; exit 1; fi
+! grep -q 'release create' "$CALLS"
+! grep -q 'release upload' "$CALLS"
 echo 'Release publishing guard tests passed'
