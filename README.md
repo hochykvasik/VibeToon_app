@@ -89,9 +89,9 @@ Because I am the **only developer** working on this app, I can't answer every me
 
 
 
-<a id="русский"></a>
-#  VibeToon
 
+#  VibeToon
+<a id="русский"></a>
 > **Бесплатное Android-приложение для 2D-анимации и рисования на планшетах и телефонах.**
 > Создано инди-разработчиком на энтузиазме в качестве альтернативы ToonSquid для Android.
 
