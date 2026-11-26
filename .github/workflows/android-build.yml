@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - arena/e0fe5b26-vibetoon-app
+      - main
+    # спринт 58: тег vX.Y.Z[-суффикс] на коммите main - сборка, тесты и GitHub Release с APK
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -54,6 +61,8 @@ jobs:
           /tmp/vibetoon-render-perf-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
+      - name: Test release publishing guards
+        run: bash tools/ci/tests/publish-release-test.sh
       - name: Check RU/EN dictionary
         run: |
           python3 tools/i18n/check_pairs.py
@@ -99,3 +108,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash tools/ci/publish-beta.sh vibetoon-debug.apk
+      - name: Publish GitHub Release (tag v*)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/ci/publish-release.sh vibetoon-debug.apk docs/RELEASE_NOTES_RU.md

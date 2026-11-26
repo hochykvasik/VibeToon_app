@@ -8337,7 +8337,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!tiltActive()) { st.setTilt(1f, 1f, Float.NaN); return }
         val ts = tiltSettings
         st.setTilt(com.vibetoon.domain.input.TiltMath.sizeFactor(ts, tiltNorm), com.vibetoon.domain.input.TiltMath.flowFactor(ts, tiltNorm),
-            com.vibetoon.domain.input.TiltMath.angle(ts, tiltOrientation, Math.toRadians(camera.rotDeg.toDouble()).toFloat(), tiltNorm))
+            com.vibetoon.domain.input.TiltMath.angle(ts, tiltOrientation, Math.toRadians(camera.rotDeg.toDouble()).toFloat(), tiltNorm, camera.flipX, camera.flipY))
         for (m in mirrorStrokers) m.setTilt(com.vibetoon.domain.input.TiltMath.sizeFactor(ts, tiltNorm), com.vibetoon.domain.input.TiltMath.flowFactor(ts, tiltNorm), Float.NaN)
     }
 

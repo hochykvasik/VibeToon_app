@@ -70,7 +70,7 @@ class VtRenderer(
         TextureMemoryHost.maxTextureSize = maxTex
         Log.i(TAG_GL, "texture budget ${budget / (1024 * 1024)} MB")
         lastEvictable?.let { RenderNative.setEvictable(handle, it) }
-        // Текстуры потеряны вместе с контекстом; сцену отправим заново (TODO: перезагрузка слоёв).
+        // Текстуры потеряны вместе с контекстом; сцену отправим заново, слои перезагружает MainViewModel.onGlContextRecreated (scheduleGlRestore).
         lastScene?.let { applyScene(it) }
         editorSceneStale = false
         onReady()

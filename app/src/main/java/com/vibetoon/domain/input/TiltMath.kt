@@ -80,12 +80,17 @@ object TiltMath {
      * длинная ось сплющенного штампа идёт вдоль направления пера (getOrientation: 0 - перо смотрит вверх, по часовой),
      * с поправкой на поворот холста [canvasRotation]. NaN - поворот по настройке кисти.
      */
-    fun angle(s: Settings, orientationRadians: Float, canvasRotation: Float = 0f, t: Float = 1f): Float {
+    fun angle(s: Settings, orientationRadians: Float, canvasRotation: Float = 0f, t: Float = 1f, flipX: Boolean = false, flipY: Boolean = false): Float {
         // спринт 44: почти вертикальное перо - направление не определено (у многих дигитайзеров ориентация считается
         // из наклона): штамп не сплющен, и поворот кисти из её настроек не подменяется случайным углом
         if (!s.active || s.mode != Mode.ANGLE || !orientationRadians.isFinite() || !(t >= MIN_ANGLE_TILT)) return Float.NaN
-        val a = orientationRadians - (Math.PI / 2).toFloat() - canvasRotation
-        val twoPi = (2.0 * Math.PI).toFloat()
+        val pi = Math.PI.toFloat()
+        // экран = R(поворот) · F(отражение) · холст: сначала снимаем поворот, затем отражение вида (спринт 58 -
+        // раньше у отражённого холста плоское перо ложилось зеркально к направлению пера)
+        var a = orientationRadians - pi / 2 - canvasRotation
+        if (flipX) a = pi - a
+        if (flipY) a = -a
+        val twoPi = 2 * pi
         return ((a % twoPi) + twoPi) % twoPi
     }
 

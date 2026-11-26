@@ -407,6 +407,75 @@ private fun RasterOverlayLayer(vm: MainViewModel) {
     }
 }
 
+/** Касание пера (TOOL_TYPE_STYLUS / TOOL_TYPE_ERASER). */
+private fun PointerInputChange.isPen(): Boolean = type == PointerType.Stylus || type == PointerType.Eraser
+
+/** Спринт 58: новое касание пера в событии, которое должно забрать жест, начатый ладонью ([StylusTakeover]). */
+private fun penTakeover(vm: MainViewModel, ev: PointerEvent, gestureByTouch: Boolean): PointerInputChange? =
+    ev.changes.firstOrNull { it.isPen() && com.vibetoon.domain.input.StylusTakeover.shouldTakeOver(gestureByTouch, it.pressed, it.previousPressed, vm.paintToolActive()) }
+
+/**
+ * Спринт 58: остаток жеста после перехвата пером. Перо рисует штрих (те же правила, что у обычного штриха пером:
+ * обратный конец и кнопка, нажим с историей, наклон, отмена системой, фантом на отпускании), касания пальцем
+ * поглощаются. Пока ладонь лежит, каждое новое касание пера - новый штрих. Возвращается, когда отпущены все указатели.
+ */
+private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.penStrokesAfterTakeover(
+    vm: MainViewModel, first: PointerInputChange, tracker: StylusTracker, density: Float
+) {
+    var pen: PointerInputChange? = first
+    while (true) {
+        val down = pen
+        if (down != null && vm.paintToolActive()) {
+            vm.paintStylus(true)
+            val draws = vm.stylusStart(down.type == PointerType.Eraser || tracker.eraserTip, tracker.barrelPressed, down.position.x, down.position.y)
+            var lastP = com.vibetoon.domain.input.StylusSample.pressure(down.pressure, true)
+            var lastPos = down.position
+            if (draws) vm.paintTilt(tracker.tiltRadians, tracker.orientationRadians, first = true)
+            if (draws && vm.paintDown(down.position.x, down.position.y, lastP, true)) {
+                down.consume()
+                var cancelled = false
+                while (true) {
+                    val ev = try { awaitPointerEvent() } catch (e: kotlinx.coroutines.CancellationException) {
+                        vm.paintCancel(); vm.paintStylus(false); vm.stylusTipEnd(); throw e
+                    }
+                    ev.changes.filter { !it.isPen() }.forEach { it.consume() }   // ладонь не участвует
+                    val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!c.pressed && com.vibetoon.domain.input.StylusSample.release(c.isConsumed, c.uptimeMillis, c.previousUptimeMillis,
+                            tracker.canceled(c.uptimeMillis)) == com.vibetoon.domain.input.StylusSample.Release.CANCEL) {
+                        vm.paintCancel(); cancelled = true; break
+                    }
+                    if (!c.pressed) {
+                        if (com.vibetoon.domain.input.StylusSample.keepReleasePoint(lastPos.x, lastPos.y, c.position.x, c.position.y, density))
+                            vm.paintMove(c.position.x, c.position.y, com.vibetoon.domain.input.StylusSample.releasePressure(c.pressure, true, lastP))
+                        break
+                    }
+                    val pm = com.vibetoon.domain.input.StylusSample.pressure(c.pressure, true, lastP)
+                    vm.paintTilt(tracker.tiltRadians, tracker.orientationRadians)
+                    val hp = com.vibetoon.domain.input.StylusSample.historical(tracker.historyFor(c.uptimeMillis), lastP, pm, c.historical.size, true)
+                    c.historical.forEachIndexed { i, h -> vm.paintMove(h.position.x, h.position.y, hp[i]) }
+                    vm.paintMove(c.position.x, c.position.y, pm)
+                    lastP = pm; lastPos = c.position
+                    c.consume()
+                }
+                if (!cancelled) vm.paintUp()
+            }
+            vm.stylusTipEnd()
+            vm.paintStylus(false)
+        }
+        pen = null
+        // ладонь ещё лежит: ждём следующего касания пера или отпускания всех указателей
+        var any = false
+        while (pen == null) {
+            val ev = awaitPointerEvent()
+            any = ev.changes.any { it.pressed }
+            pen = penTakeover(vm, ev, gestureByTouch = true)
+            ev.changes.filter { it !== pen }.forEach { it.consume() }
+            if (!any) break
+        }
+        if (pen == null && !any) return
+    }
+}
+
 /**
  * Спринт 42: поверхность OpenGL на всё окно редактора. Её размер не зависит от панелей (таймлайн, правая панель,
  * полный экран) - они непрозрачно лежат поверх, а холст вписывается в видимую область (RenderHost.setViewRect).
@@ -517,7 +586,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                     var lastUp = t0
                     while (true) {
                         val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                        if (gs?.touchDetection == true && ev.changes.any { (it.type == PointerType.Stylus || it.type == PointerType.Eraser) && (it.pressed || it.previousPressed) }) validTouch = false
+                        // спринт 58: жест с пером - не «касание 2/3 пальцами» (ладонь + точка пером не делают Undo), при любой настройке
+                        if (ev.changes.any { it.isPen() && (it.pressed || it.previousPressed) }) validTouch = false
                         for (c in ev.changes) {
                             if (c.pressed && c.id !in start) start[c.id] = c.position
                             start[c.id]?.let { s -> maxMove = maxOf(maxMove, (c.position - s).getDistance()) }
@@ -540,7 +610,13 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                     if (touchFilter.blockTouch(gs?.touchDetection == true, down.type == PointerType.Touch, down.uptimeMillis)) {
                         tapUp = -1L
                         down.consume()
-                        do { val ev = awaitPointerEvent(); ev.changes.filter { it.type == PointerType.Touch }.forEach { it.consume() } } while (ev.changes.any { it.pressed })
+                        do {
+                            val ev = awaitPointerEvent()
+                            // спринт 58: перо коснулось при лежащей ладони - рисует (а не ждёт, пока ладонь поднимут)
+                            val pen = penTakeover(vm, ev, gestureByTouch = true)
+                            if (pen != null) { penStrokesAfterTakeover(vm, pen, stylusTracker, density); break }
+                            ev.changes.filter { it.type == PointerType.Touch }.forEach { it.consume() }
+                        } while (ev.changes.any { it.pressed })
                         vm.finishCanvasGesture()
                         return@awaitEachGesture
                     }
@@ -634,8 +710,12 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                             down.consume()
                             do {
                                 val e = awaitPointerEvent()
+                                // спринт 58: ладонь легла сразу после штриха, перо снова коснулось - новый штрих
+                                val pen = penTakeover(vm, e, gestureByTouch = true)
+                                if (pen != null) { penStrokesAfterTakeover(vm, pen, stylusTracker, density); break }
                                 e.changes.forEach { it.consume() }
                             } while (e.changes.any { it.pressed })
+                            vm.finishCanvasGesture()
                             return@awaitEachGesture
                         }
                         if (stylus) vm.paintStylus(true)
@@ -664,6 +744,14 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                                     vm.paintCancel(); vm.paintStylus(false); vm.stylusTipEnd(); throw e
                                 }
                                 val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                // спринт 58: перо коснулось во время штриха пальцем (это была ладонь) - след ладони отменяется, рисует перо
+                                val takeover = if (stylus) null else penTakeover(vm, ev, gestureByTouch = true)
+                                if (takeover != null) {
+                                    vm.paintCancel()
+                                    penStrokesAfterTakeover(vm, takeover, stylusTracker, screenDensity)
+                                    vm.finishCanvasGesture()
+                                    return@awaitEachGesture
+                                }
                                 if (!stylus && ev.changes.any { it.id != down.id && it.pressed }) { vm.paintCancel(); cancelled = true; break }
                                 // спринт 44: ACTION_CANCEL / FLAG_CANCELED (жест «Назад», системная защита от ладони) - штрих отменяется, а не запекается
                                 if (!c.pressed && com.vibetoon.domain.input.StylusSample.release(c.isConsumed, c.uptimeMillis, c.previousUptimeMillis,
@@ -698,6 +786,17 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                         val event: PointerEvent = awaitPointerEvent()
                         lastUptime = event.changes.maxOfOrNull { it.uptimeMillis } ?: lastUptime
                         val now = event.changes.maxOfOrNull { it.uptimeMillis } ?: android.os.SystemClock.uptimeMillis()
+                        // спринт 58: ладонь начала жест (камера, слой, кость), перо коснулось при активной кисти - жест забирает перо
+                        val takeover = if (down.type == PointerType.Touch) penTakeover(vm, event, gestureByTouch = true) else null
+                        if (takeover != null) {
+                            if (pivotCapture) { vm.pivotUp(); pivotCapture = false }
+                            if (capture) { vm.boneCancel(); capture = false }
+                            if (multi) vm.snapCameraRotation()
+                            penStrokesAfterTakeover(vm, takeover, stylusTracker, density)
+                            vm.finishCanvasGesture()
+                            tapUp = -1L
+                            return@awaitEachGesture
+                        }
                         val pressed = event.changes.filter { it.pressed && !touchFilter.blockTouch(gs?.touchDetection == true, it.type == PointerType.Touch, now) }
                         // Если перо появилось после пальца, не передаём его координаты захваченному пальцем инструменту.
                         if (touchFilter.blockTouch(gs?.touchDetection == true, down.type == PointerType.Touch, now)) {

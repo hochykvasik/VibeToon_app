@@ -53,7 +53,7 @@ class Sprint44WiringTest {
         assertTrue(t.contains("StylusButtons.pressed(ev.buttonState, true)"))
         assertTrue(t.contains("FLAG_CANCELED = 0x20"))
         assertTrue(t.contains("MotionEvent.ACTION_HOVER_EXIT) { reset(); return }"))
-        assertTrue(vm.contains("TiltMath.angle(ts, tiltOrientation, Math.toRadians(camera.rotDeg.toDouble()).toFloat(), tiltNorm)"))
+        assertTrue(vm.contains("TiltMath.angle(ts, tiltOrientation, Math.toRadians(camera.rotDeg.toDouble()).toFloat(), tiltNorm, camera.flipX, camera.flipY)"))
         assertTrue(vm.contains("EditorInputPolicy.palmBlocked(stylusDown, stylusLast, SystemClock.uptimeMillis())"))
     }
 
