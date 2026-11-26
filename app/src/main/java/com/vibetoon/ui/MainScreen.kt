@@ -288,7 +288,7 @@ fun StatusLine(vm: MainViewModel) {
     val text = if (audioReadiness is com.vibetoon.domain.project.AudioReadiness.Preparing) "Подготовка аудио…"
         else if (opening && state !is UiState.Error) "Загрузка проекта…"   // спринт 47: не «пустой проект», пока данные не загружены
         else when (val s = state) {
-        UiState.Idle -> if (!vm.hasLayers) "Нажмите «＋ Добавить», чтобы импортировать PSD, изображение, видео или аудио" else ""
+        UiState.Idle -> if (!vm.hasLayers) "Импорт PSD, изображения, видео или аудио - в «Действиях» (сверху слева); рисовать можно сразу кистью" else ""
         is UiState.Message -> com.vibetoon.ui.i18n.boneStatusMessage(s.text)
         UiState.Loading -> "Загрузка…"
         is UiState.Rendering -> "Загрузка слоёв: ${s.done}/${s.total}"

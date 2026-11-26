@@ -371,7 +371,7 @@ fun ProjectsScreen(app: AppViewModel) {
                                 Text("Рекомендуем начать с учебного проекта", fontWeight = FontWeight.SemiBold)
                                 Text("Готовые фигуры и подсказки помогут освоить редактор.", fontSize = 12.sp)
                             }
-                            androidx.compose.material3.Button(onClick = { app.startLesson(TUTORIALS.first { it.lesson }.coachSession()) }) { Text("Начать урок") }
+                            androidx.compose.material3.Button(onClick = { app.startLesson(WELCOME_TOUR.coachSession()) }) { Text("Начать урок") }
                         }
                     }
                 }

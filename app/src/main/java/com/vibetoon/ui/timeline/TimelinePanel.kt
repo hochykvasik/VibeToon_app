@@ -412,10 +412,10 @@ fun TimelinePanel(
             val fb = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
             val hold by vm.frameHold.collectAsStateWithLifecycle()
             var holdMenu by remember { mutableStateOf(false) }
-            OutlinedButton(onClick = { vm.jumpDrawing(false) }, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp)) { Text("< Кадр", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { vm.jumpDrawing(false) }, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp).coachTarget("< Кадр")) { Text("< Кадр", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { vm.jumpDrawing(true) }, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp)) { Text("Кадр >", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::addEmptyFrame, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp).coachTarget("+ Кадр")) { Text("+ Кадр", fontSize = 12.sp, maxLines = 1, softWrap = false) }
-            OutlinedButton(onClick = vm::duplicateFrame, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp)) { Text("Дубль кадра", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::duplicateFrame, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp).coachTarget("Дубль кадра")) { Text("Дубль кадра", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             TlIcon(Icons.Default.DeleteSweep, "Удалить кадр", enabled = !playing) { vm.deleteFrame() }
             Text("Длина:", fontSize = 12.sp, maxLines = 1, softWrap = false)
             // спринт 52: удержание - автоповтор с ускорением (сначала по 1 кадру, потом по 2 и по 4)
@@ -431,7 +431,7 @@ fun TimelinePanel(
                     onClick = { holdMenu = true },
                     label = { Text("Новый кадр: $shownHold", fontSize = 12.sp, maxLines = 1, softWrap = false) },
                     leadingIcon = { Icon(Icons.Default.SwapHoriz, null, Modifier.size(16.dp)) },
-                    modifier = Modifier.pointerInput(playing) {
+                    modifier = Modifier.coachTarget("Новый кадр").pointerInput(playing) {   // спринт 53: цель урока покадровой анимации
                         if (playing) return@pointerInput
                         var start = 0; var acc = 0f
                         detectHorizontalDragGestures(

@@ -145,7 +145,7 @@ class MainActivity : ComponentActivity() {
                 }
                 }
                 if (!settings.onboarded) WelcomeDialog(settings, onTour = {
-                    app.startLesson(com.vibetoon.ui.projects.TUTORIALS.first { it.lesson }.coachSession())   // спринт 45: вводный тур
+                    app.startLesson(com.vibetoon.ui.projects.WELCOME_TOUR.coachSession())   // спринт 45: вводный тур
                 })
                 // Прошлый запуск закончился падением: показываем причину
                 var report by remember { mutableStateOf(lastCrash) }

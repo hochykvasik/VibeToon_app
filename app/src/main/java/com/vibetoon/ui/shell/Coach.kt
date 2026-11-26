@@ -99,17 +99,19 @@ fun CoachOverlay() {
             drawRoundRect(s.color.copy(alpha = 0.25f + 0.2f * k), tl, sz, CornerRadius(18f), style = Stroke(width = 14f))
             drawRoundRect(s.color, tl, sz, CornerRadius(18f), style = Stroke(width = 5f))
         }
+        // спринт 53: подсвеченная кнопка внизу (таймлайн, строка рисунков) - карточка уходит наверх, чтобы не закрывать её
+        val cardOnTop = rect != null && com.vibetoon.domain.tutorial.CoachPlacement.cardOnTop(rect.center.y, viewport.height)
         Surface(
             color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp, shadowElevation = 8.dp,
             shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp).widthIn(max = 520.dp).fillMaxWidth()
+            modifier = Modifier.align(if (cardOnTop) Alignment.TopCenter else Alignment.BottomCenter).padding(12.dp).widthIn(max = 520.dp).fillMaxWidth()
         ) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("${com.vibetoon.ui.i18n.L(s.title)} · шаг ${Coach.index + 1} из ${s.steps.size}", fontSize = 11.sp, color = s.color)
                 Text(step.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Text(step.text, fontSize = 13.sp, lineHeight = 18.sp)
                 if (step.target != null && (if (popupTarget) !Coach.popupTargetVisible else rect == null))
-                    Text("Кнопка сейчас не видна на экране: откройте нужную панель или режим.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    Text("Кнопка сейчас не видна: выберите слой или откройте нужную панель или режим (на телефоне часть кнопок таймлайна - под «Ещё» ⋮).", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = Coach::stop) { Text("Пропустить") }
                     androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))

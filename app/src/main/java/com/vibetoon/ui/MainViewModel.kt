@@ -1641,7 +1641,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             com.vibetoon.domain.project.AssetCatalog.Type.VIDEO, com.vibetoon.domain.project.AssetCatalog.Type.AUDIO -> { insertMediaAsset(pid, relPath); return }
             com.vibetoon.domain.project.AssetCatalog.Type.PSD -> {
                 // пакет 23: другой PSD из библиотеки раскладывается в медиа-слои по PSD Import Mode
-                if (com.vibetoon.domain.project.PsdInsertPlan.isProjectPsd(relPath.substringAfterLast('/'))) _state.value = UiState.Message("PSD проекта уже разложен на слои: выберите другой PSD или «+ → PSD в текущий проект»")
+                if (com.vibetoon.domain.project.PsdInsertPlan.isProjectPsd(relPath.substringAfterLast('/'))) _state.value = UiState.Message("PSD проекта уже разложен на слои: выберите другой PSD или «Действия» → «PSD в текущий проект»")
                 else if (importJob?.isActive != true && _state.value != UiState.Loading && _state.value !is UiState.Rendering) {
                     _state.value = UiState.Loading
                     insertPsdFile(pid, relPath, com.vibetoon.domain.project.PsdInsertPlan.titleOf(relPath), deleteOnFail = false)
@@ -2020,7 +2020,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _links.value = l
         }
         rebuildLayers(); pushScene(); selectLayer(id); markDirty()
-        _state.value = UiState.Message(if (adopt) "Слой костей создан: в него перенесены кости проекта" else "Слой костей создан: режим «Кости» и «＋ Кость» рисуют кости этого слоя")
+        _state.value = UiState.Message(if (adopt) "Слой костей создан: в него перенесены кости проекта" else "Слой костей создан: режим «Кости» и «+Кость» рисуют кости этого слоя")
     }
 
     /** «Кости этого слоя»: слой становится активным, включается режим костей (Bind Pose для новых костей). */
@@ -5849,7 +5849,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun frameLayerOrNotice(): MediaItem? {
         val m = frameLayer()
-        if (m == null) _state.value = UiState.Message("Выберите слой-картинку (кнопка «Новый слой») - на нём ведётся покадровая анимация")
+        if (m == null) _state.value = UiState.Message("Выберите слой (или ⊕ → «Анимационный (покадровый)») - на нём ведётся покадровая анимация")
         else if (isLockedId(m.id)) { lockedNotice(); return null }
         return m
     }
@@ -5860,7 +5860,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         updateSymbols(f)
         for (m in media) {
             if (m.kind != MediaKind.IMAGE) continue
-            // пакет 17: кадров не осталось (Undo «Добавить пустой кадр» / «Вставить в рисунок») - вернуть файл слоя
+            // пакет 17: кадров не осталось (Undo «+ Кадр» / «Вставить в рисунок») - вернуть файл слоя
             val file = FrameMath.shownFile(m.cells, f, m.file, cellShown[m.id]) ?: continue
             val plain = m.cells.isEmpty()
             if (plain && cellShown[m.id] == m.file) { cellShown.remove(m.id); continue }
@@ -8782,7 +8782,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = UiState.Message(when {
                     clip != null -> "Новый рисунок «${item.name}»: кадры ${clip.start + 1}–${clip.end}, рисуйте"
                     vector -> "Векторный слой «${item.name}»: рисуйте кистью (путь, линия, прямоугольник, эллипс) или добавляйте «Фигуры»"
-                    animated -> "Анимационный слой «${item.name}»: рисуйте, «Добавить пустой кадр» ставит следующий рисунок"
+                    animated -> "Анимационный слой «${item.name}»: рисуйте, «+ Кадр» ставит следующий рисунок"
                     lock -> "Фон «${item.name}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв)"
                     else -> "Новый слой «${item.name}»"
                 })
@@ -11486,7 +11486,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Привязывает сетку выделенного слоя ко всем костям проекта (авто-веса) или снимает привязку. */
     fun toggleSkin() {
         val t = warpTarget() ?: run { _state.value = UiState.Message("Выберите один слой"); return }
-        if (t !in meshLayers) { _state.value = UiState.Message("Сначала создайте сетку («Сгенерировать»)"); return }
+        if (t !in meshLayers) { _state.value = UiState.Message("Сначала создайте сетку: «Авто-сетка» или «+Пин» по слою"); return }
         checkpoint("skin", force = true)
         if (t in skinLayers) {
             skinLayers = skinLayers - t
@@ -11506,7 +11506,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _meshTool = MutableStateFlow(MeshTool.PIN_MOVE)
     val meshTool: StateFlow<MeshTool> = _meshTool.asStateFlow()
     private val _meshDensity = MutableStateFlow(8)
-    /** Число ячеек по длинной стороне слоя при «Сгенерировать». */
+    /** Число ячеек по длинной стороне слоя при «Авто-сетка». */
     val meshDensity: StateFlow<Int> = _meshDensity.asStateFlow()
     private val _meshOverlay = MutableStateFlow(MeshOverlay())
     val meshOverlay: StateFlow<MeshOverlay> = _meshOverlay.asStateFlow()
@@ -11535,7 +11535,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _meshMode.value = on
         meshActive = -1
         refreshMeshOverlay()
-        if (on) _state.value = UiState.Message("Сетка: выберите слой, затем «Сгенерировать» или «+Сетка» (тап добавляет вершину)")
+        if (on) _state.value = UiState.Message("Сетка: выберите слой и нажмите «Авто-сетка» или коснитесь его инструментом «+Пин»")
     }
 
     fun setMeshTool(t: MeshTool) { _meshTool.value = t; meshActive = -1; refreshMeshOverlay() }
@@ -12038,7 +12038,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } else applySelection(emptySet(), null)
         draft = null
         pushScene()
-        _state.value = UiState.Message(if (on) "Режим костей: «＋ Кость» и протяжка пальцем рисуют кость" else "Режим объектов")
+        _state.value = UiState.Message(if (on) "Режим костей: «+Кость» и протяжка пальцем рисуют кость" else "Режим объектов")
     }
 
     fun setBoneTool(t: BoneTool) {

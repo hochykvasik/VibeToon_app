@@ -47,7 +47,7 @@ object FrameMath {
 
     /**
      * Пакет 17: что показать в текстуре слоя-картинки на [frame]: рисунок кадра или (кадров больше нет, например после
-     * Undo «Добавить пустой кадр») сам файл слоя - только если текстура раньше показывала рисунок кадра ([shown] != null).
+     * Undo «+ Кадр») сам файл слоя - только если текстура раньше показывала рисунок кадра ([shown] != null).
      */
     fun shownFile(cells: List<FrameCell>, frame: Int, file: String, shown: String?): String? =
         if (cells.isNotEmpty()) active(cells, frame)?.file else if (shown != null) file else null

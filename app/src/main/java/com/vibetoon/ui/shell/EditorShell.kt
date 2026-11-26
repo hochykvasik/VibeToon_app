@@ -1486,11 +1486,11 @@ private fun LayersTab(vm: MainViewModel, add: AddActions) {
             IconButton(onClick = { vm.setLayersListMode(true) }, modifier = Modifier.size(36.dp)) {
                 Icon(Icons.Default.ViewList, com.vibetoon.ui.i18n.L("Список"), tint = if (listMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             }
-            IconButton(onClick = { multi = !multi }, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = { multi = !multi }, modifier = Modifier.size(36.dp).coachTarget("Мультивыбор")) {   // спринт 53: цель уроков
                 Icon(Icons.Default.Checklist, com.vibetoon.ui.i18n.L("Мультивыбор"), tint = if (multi) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
             }
             Box {
-                IconButton(onClick = { addMenu = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.AddCircle, com.vibetoon.ui.i18n.L("Добавить слой")) }
+                IconButton(onClick = { addMenu = true }, modifier = Modifier.size(36.dp).coachTarget("Добавить слой")) { Icon(Icons.Default.AddCircle, com.vibetoon.ui.i18n.L("Добавить слой")) }
                 DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
                     DropdownMenuItem(text = { Text("Пиксельный") }, onClick = { addMenu = false; vm.addPaintLayer() })
                     DropdownMenuItem(text = { Text("Анимационный (покадровый)") }, onClick = { addMenu = false; vm.addAnimationLayer() })
