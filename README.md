@@ -3,7 +3,7 @@
 > **Бесплатное Android-приложение для 2D-анимации и рисования на планшетах и телефонах.**
 > *Free 2D animation and drawing app for Android tablets and phones.*
 > 
-[🇷🇺 Русская версия](#русская-версия) · [🇬🇧 English](#english)
+[🇷🇺 Русский](#русский) · [🇬🇧 English](#english)
 
 ---
 <a id="english"></a
@@ -17,7 +17,9 @@ Hi! **VibeToon** is a personal project that I built and tested on my own. Androi
 While I handled the main development and art on my own, this project wouldn't have happened without the support of people close to me (I won't share real names):
 
 **baked-ice** — huge thanks for sharing access to Claude and helping with AI tools, which made writing and debugging code much faster.
+
 **Huggy** — a second tester on the project who helped catch bugs
+
 **TikTok users** — thank you for the inspiration, great feature ideas, and support for the app on TikTok!
 ----
 
@@ -109,7 +111,9 @@ Because I am the **only developer** working on this app, I can't answer every me
 Хотя основную разработку и отрисовку я вела самостоятельно, этот проект не состоялся бы без поддержки близких людей (имена указывать не буду):
 
 - **baked-ice** - огромное спасибо за предоставленный доступ к Claude и помощь с AI-инструментами, благодаря которым удалось ускорить написание и отладку кода.
+
 - **Huggy** - второй тестировщик проекта, который помогал находить баги.
+
 - **Полльзователи Тик Тока** - спасибо за вдохновение, крутые идеи по функционалу и поддержку приложения в TikTok!
   
 ---
