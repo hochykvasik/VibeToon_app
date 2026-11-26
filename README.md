@@ -1,4 +1,4 @@
-# VibeToon_app
+# VibeToon
 
 > **Бесплатное Android-приложение для 2D-анимации и рисования на планшетах и телефонах.**
 > *Free 2D animation and drawing app for Android tablets and phones.*
@@ -16,11 +16,11 @@ Hi! **VibeToon** is a personal project that I built and tested on my own. Androi
 💙 Credits & Team
 While I handled the main development and art on my own, this project wouldn't have happened without the support of people close to me (I won't share real names):
 
-**baked-ice** — huge thanks for sharing access to Claude and helping with AI tools, which made writing and debugging code much faster.
+**baked-ice** - huge thanks for sharing access to Claude and helping with AI tools, which made writing and debugging code much faster.
 
-**Huggy** — a second tester on the project who helped catch bugs
+**Huggy** - a second tester on the project who helped catch bugs
 
-**TikTok users** — thank you for the inspiration, great feature ideas, and support for the app on TikTok!
+**TikTok users** - thank you for the inspiration, great feature ideas, and support for the app on TikTok!
 ----
 
 ⚠️ **Please note:**
@@ -103,7 +103,7 @@ Because I am the **only developer** working on this app, I can't answer every me
 Привет! **VibeToon** - это мой личный пет-проект, который я разрабатывала и тестировала самостоятельно. На Android очень не хватало удобного приложения для анимации с современным функционалом (скелетный риггинг, калька, символы, работа со слоями), поэтому я решила создать такое приложение сама.
 
 ⚠️ **Важное примечание:** 
-Я делаю этот проект **на чистом энтузиазме**, в свободное время. Это не продукт большой коммерческой студии (вроде Procreate или Adobe). Приложение распространяется **абсолютно бесплатно**, поэтому прошу относиться с пониманием к возможным багам или мелким шероховатостям — я стараюсь делать всё, что в моих силах!
+Я делаю этот проект **на чистом энтузиазме**, в свободное время. Это не продукт большой коммерческой студии (вроде Procreate или Adobe). Приложение распространяется **абсолютно бесплатно**, поэтому прошу относиться с пониманием к возможным багам или мелким шероховатостям - я стараюсь делать всё, что в моих силах!
 
 💙 Благодарности и Команда 
 
