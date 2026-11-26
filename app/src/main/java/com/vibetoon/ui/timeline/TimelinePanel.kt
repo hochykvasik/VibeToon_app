@@ -146,6 +146,7 @@ fun TimelinePanel(
     val selection by vm.selection.collectAsStateWithLifecycle()
     val clips by vm.clips.collectAsStateWithLifecycle()
     val cellMap by vm.cellMap.collectAsStateWithLifecycle()
+    val cellSpans by vm.cellSpans.collectAsStateWithLifecycle()
     val symMarkers by vm.symMarkers.collectAsStateWithLifecycle()
     val waves by vm.waveforms.collectAsStateWithLifecycle()
     // пакет 11: плёнка кадров и волна звука на полосах видео-клипов
@@ -281,6 +282,12 @@ fun TimelinePanel(
         val phone = com.vibetoon.ui.shell.LocalPhone.current
         var toolsOpen by remember { mutableStateOf(false) }
         if (onionDialog) OnionSkinDialog(vm) { onionDialog = false }   // спринт 37: до/после - свои глубина, прозрачность, цвет
+        // спринт 51: точное время плашки и настройки лесенки
+        var showExactTime by remember { mutableStateOf(false) }
+        var showStagger by remember { mutableStateOf(false) }
+        val exactId = selected
+        if (showExactTime && exactId != null) ExactTimeDialog(vm, exactId) { showExactTime = false }
+        if (showStagger) StaggerDialog(vm) { showStagger = false }
         val stepByFrames = com.vibetoon.ui.theme.LocalAppSettings.current?.stepFrames ?: true
         // ---- Панель воспроизведения ----
         Row(
@@ -396,6 +403,34 @@ fun TimelinePanel(
             OutlinedButton(onClick = vm::selectLayerKeys, enabled = selected != null && !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Выбрать все ключи слоя", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             TextButton(onClick = vm::toggleKeyMode, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) { Text("Все слои", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
+        // ---- Спринт 51: покадровая анимация (как в ToonSquid) - рисунки на дорожке или слои-рисунки лесенкой ----
+        if (!collapsed && selected != null) Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            val fb = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+            val hold by vm.frameHold.collectAsStateWithLifecycle()
+            var holdMenu by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { vm.jumpDrawing(false) }, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp)) { Text("< Кадр", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { vm.jumpDrawing(true) }, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp)) { Text("Кадр >", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::addEmptyFrame, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp).coachTarget("+ Кадр")) { Text("+ Кадр", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::duplicateFrame, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp)) { Text("Дубль кадра", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            TlIcon(Icons.Default.DeleteSweep, "Удалить кадр", enabled = !playing) { vm.deleteFrame() }
+            Text("Длина:", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            TlIcon(Icons.Default.Remove, "Короче на кадр", enabled = !playing) { vm.nudgeFrameLength(-1) }
+            TlIcon(Icons.Default.Add, "Длиннее на кадр", enabled = !playing) { vm.nudgeFrameLength(1) }
+            Box {
+                AssistChip(onClick = { holdMenu = true }, label = { Text("Новый кадр: $hold", fontSize = 12.sp, maxLines = 1, softWrap = false) })
+                DropdownMenu(expanded = holdMenu, onDismissRequest = { holdMenu = false }) {
+                    for (n in listOf(1, 2, 3, 4, 6, 8, 12, 24)) DropdownMenuItem(
+                        text = { Text("Длина нового кадра: $n") },
+                        leadingIcon = { if (n == hold) Icon(Icons.Default.Check, null) },
+                        onClick = { vm.setFrameHold(n); holdMenu = false }
+                    )
+                }
+            }
+        }
         // ---- Панель инструментов таймлайна ----
         if (!collapsed && (!phone || toolsOpen)) Row(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -426,15 +461,23 @@ fun TimelinePanel(
                     }
                 }
             }
-            TlIcon(Icons.Default.Brush, "Добавить пустой кадр") { vm.addEmptyFrame() }
-            TlIcon(Icons.Default.ContentCopy, "Дублировать кадр") { vm.duplicateFrame() }
-            TlIcon(Icons.Default.DeleteSweep, "Удалить кадр") { vm.deleteFrame() }
+            // спринт 51: плашка выделенных слоёв - к плейхеду и флажкам, вписать между флажками, точное время
+            Box {
+                var clipMenu by remember { mutableStateOf(false) }
+                TlIcon(Icons.Default.Straighten, "Плашка: флажки и плейхед", enabled = selected != null && !playing) { clipMenu = true }
+                DropdownMenu(expanded = clipMenu, onDismissRequest = { clipMenu = false }) {
+                    for ((op, title) in CLIP_OPS) DropdownMenuItem(text = { Text(title) }, enabled = !com.vibetoon.domain.anim.ClipTiming.needsMarker(op) || markers.isNotEmpty(),
+                        onClick = { vm.clipTool(op); clipMenu = false })
+                    DropdownMenuItem(text = { Text("Точное время…") }, onClick = { clipMenu = false; showExactTime = true })
+                    DropdownMenuItem(text = { Text("Магнит (прилипание краёв)") }, leadingIcon = { if (magnet) Icon(Icons.Default.Check, null) }, onClick = { vm.toggleMagnet() })
+                }
+            }
             TlIcon(Icons.Default.OpenInFull, "Расширить клип", enabled = selected != null && !playing) { vm.extendSelectedClips() }
             // Ножницы: разрезать клип выделенного слоя на плейхеде на две независимые части
             TlIcon(Icons.Default.ContentCut, "Разрезать клип", enabled = selected != null && !playing) { vm.splitSelected() }
             TlIcon(Icons.Default.ContentCopy, "Дублировать слой", enabled = selected != null && !playing) { vm.duplicateSelected() }
             // Лесенка: клипы выделенных слоёв встают со сдвигом на 1 кадр
-            TlIcon(Icons.Default.Stairs, "Лесенка", enabled = selection.size >= 2 && !playing) { vm.staggerSelected() }
+            TlIcon(Icons.Default.Stairs, "Лесенка", enabled = selection.size >= 2 && !playing, onLong = { showStagger = true }) { vm.staggerSelected() }
             // Маркеры кадров: перейти к предыдущему, поставить/убрать, перейти к следующему
             TlIcon(Icons.Default.SkipPrevious, "Предыдущий маркер", enabled = markers.isNotEmpty()) { vm.jumpMarker(false) }
             TlIcon(Icons.Default.Flag, "Маркер кадра", active = markerHere) { vm.toggleMarker() }
@@ -990,13 +1033,14 @@ fun TimelinePanel(
                             drawRoundRect(accent, Offset(bx0, size.height * 0.12f), androidx.compose.ui.geometry.Size(hw, size.height * 0.76f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
                             drawRoundRect(accent, Offset(bx1 - hw, size.height * 0.12f), androidx.compose.ui.geometry.Size(hw, size.height * 0.76f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
                             // засечки рисунков покадрового слоя: квадрат на каждом кадре, где начинается рисунок, и полоска экспозиции до следующего
-                            val cs = cellMap[l.id]
+                            val cs = cellSpans[l.id]
                             if (cs != null) {
-                                val sorted = cs.sorted()
+                                // спринт 51: у каждого рисунка своя полоска [начало, конец): длина рисунка, а не «до конца таймлайна»
                                 val cy = size.height * 0.3f
                                 val ch = size.height * 0.4f
-                                sorted.forEachIndexed { i, s ->
-                                    val end = (sorted.getOrNull(i + 1) ?: bx1.div(frameWPx).toInt()).toFloat()
+                                cs.forEach { sp ->
+                                    val s = sp[0]
+                                    val end = minOf(sp[1], bx1.div(frameWPx).toInt().coerceAtLeast(s + 1)).toFloat()
                                     val x0 = s * frameWPx
                                     val xe = (end * frameWPx).coerceAtLeast(x0 + frameWPx)
                                     drawRect(cellColor.copy(alpha = 0.25f), Offset(x0, cy), androidx.compose.ui.geometry.Size(xe - x0, ch))
@@ -1399,14 +1443,30 @@ private fun Modifier.clipGestures(id: Int, frameWPx: Float, clip: State<Clip>, s
                 }
                 c.consume()
                 val f = (pos / frameWPx).roundToInt()
+                // спринт 51: магнит - края плашки прилипают к флажкам, плейхеду и краям соседних плашек
+                val th = (10.dp.toPx() / frameWPx).roundToInt().coerceAtLeast(1)
+                val len = clip.value.length
                 when (mode) {
-                    1 -> vm.setClip(id, f, clip.value.end)
-                    2 -> vm.setClip(id, clip.value.start, f)
-                    else -> vm.moveClipTo(id, f)
+                    1 -> vm.setClip(id, vm.snapClipDrag(id, 1, f, clip.value.end, th), clip.value.end)
+                    2 -> vm.setClip(id, clip.value.start, vm.snapClipDrag(id, 2, clip.value.start, f, th))
+                    else -> vm.moveClipTo(id, vm.snapClipDrag(id, 3, f, f + len, th))
                 }
             }
         }
     }
+
+/** Спринт 51: команды меню «Плашка» (перенос и обрезка к плейхеду и ближайшему флажку). */
+private val CLIP_OPS = listOf(
+    com.vibetoon.domain.anim.ClipTiming.Op.START_TO_PLAYHEAD to "Начало к плейхеду",
+    com.vibetoon.domain.anim.ClipTiming.Op.END_TO_PLAYHEAD to "Конец к плейхеду",
+    com.vibetoon.domain.anim.ClipTiming.Op.TRIM_START_TO_PLAYHEAD to "Обрезать слева до плейхеда",
+    com.vibetoon.domain.anim.ClipTiming.Op.TRIM_END_TO_PLAYHEAD to "Обрезать справа до плейхеда",
+    com.vibetoon.domain.anim.ClipTiming.Op.START_TO_MARKER to "Начало к флажку",
+    com.vibetoon.domain.anim.ClipTiming.Op.END_TO_MARKER to "Конец к флажку",
+    com.vibetoon.domain.anim.ClipTiming.Op.TRIM_START_TO_MARKER to "Обрезать слева до флажка",
+    com.vibetoon.domain.anim.ClipTiming.Op.TRIM_END_TO_MARKER to "Обрезать справа до флажка",
+    com.vibetoon.domain.anim.ClipTiming.Op.FIT_MARKERS to "Вписать между флажками"
+)
 
 /** Компактная иконка-кнопка панелей таймлайна; [active] подсвечивает включённый режим. */
 @Composable

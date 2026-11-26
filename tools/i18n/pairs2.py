@@ -1817,4 +1817,70 @@ Hold - резкая смена формы. Остальные переходы �
 Выделение сделано на другом слое: выберите его или выделите область заново|The selection was made on another layer: select it or make the selection again
 Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы). Ниже своих - прежняя общая цепочка вложенных слоёв|Group: effects apply to the whole group - on the canvas, in Play and export (keys on the group row). Below the group's own effects is the former shared chain of nested layers
 Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы), независимо от слоёв внутри|Group: effects apply to the whole group - on the canvas, in Play and export (keys on the group row), regardless of the layers inside
+Слой продублирован без анимации|Layer duplicated without animation
+Калька включена: соседние рисунки слоя или соседние слои-рисунки; долгое нажатие - глубина, шаг, прозрачность и цвета|Onion skin on: neighboring drawings of the layer or neighboring drawing layers; long press for depth, step, opacity and colors
+Длина нового кадра: {}|New frame length: {}
+Новый кадр: {}, длина {}|New frame: {}, length {}
+Длина слоя-рисунка: {}|Drawing layer length: {}
+Длина рисунка: {}|Drawing length: {}
+Рисунков в этом направлении нет|No drawings in this direction
+Пустой кадр: здесь нет рисунка|Empty frame: there is no drawing here
+Пустой кадр: создан новый рисунок на кадре {} - рисуйте|Empty frame: a new drawing was created at frame {} - draw
+Новый рисунок «{}»: кадры {}–{}, рисуйте|New drawing “{}”: frames {}–{}, draw
+Часть отделена в новый слой и перенесена: дальше её можно двигать отдельно|The part was split into a new layer and moved: now you can move it separately
+встык|back to back
+встык, промежуток {}|back to back, gap {}
+каскад, шаг {}|cascade, step {}
+Лесенка: {} клипов, {}|Stagger: {} clips, {}
+Лесенка снизу вверх: {} клипов, {}|Stagger bottom to top: {} clips, {}
+Лесенка: {} клипов, {}; {} не поместились в проект и упёрлись в его конец (увеличьте длительность)|Stagger: {} clips, {}; {} didn't fit in the project and stop at its end (increase the duration)
+Флажков нет: поставьте маркер кадра кнопкой ⚑|No flags: place a frame marker with the ⚑ button
+Плашка уже на месте|The clip is already in place
+Плашка: кадры {}–{} ({})|Clip: frames {}–{} ({})
+Шаг:|Step:
+каждый|every
+через {}|skip {}
+Калька во время воспроизведения|Onion skin during playback
+Соседние слои-рисунки (Рисунок 1, Рисунок 2…) тоже|Neighboring drawing layers (Drawing 1, Drawing 2…) too
+Работает на слое с кадрами (кнопка «+ Кадр») и на рисунках-слоях лесенкой: призраки - соседние слои той же группы со своими плашками. Настройки сохраняются в настройках приложения и в резервной копии настроек.|Works on a layer with frames (the + Frame button) and on staggered drawing layers: ghosts are neighboring layers of the same group with their own clips. Settings are kept in the app settings and in the settings backup.
+< Кадр|< Frame
+Кадр >|Frame >
++ Кадр|+ Frame
+Дубль кадра|Duplicate frame
+Длина:|Length:
+Короче на кадр|One frame shorter
+Длиннее на кадр|One frame longer
+Новый кадр: {}|New frame: {}
+Плашка: флажки и плейхед|Clip: flags and playhead
+Точное время…|Exact time…
+Магнит (прилипание краёв)|Magnet (snap edges)
+Начало к плейхеду|Start to playhead
+Конец к плейхеду|End to playhead
+Обрезать слева до плейхеда|Trim left to playhead
+Обрезать справа до плейхеда|Trim right to playhead
+Начало к флажку|Start to flag
+Конец к флажку|End to flag
+Обрезать слева до флажка|Trim left to flag
+Обрезать справа до флажка|Trim right to flag
+Вписать между флажками|Fit between flags
+Точное время|Exact time
+Секунды|Seconds
+Кадры|Frames
+Начало|Start
+Конец|End
+Длительность|Duration
+Кадры {}–{}, длительность {} кадр. при {} fps|Frames {}–{}, duration {} fr. at {} fps
+Введите число: 2.5, 2с, 48к или 1:05|Enter a number: 2.5, 2s, 48f or 1:05
+Суффиксы: с / s - секунды, к / f - кадры; запятая или точка. Конец - граница: плашка 2–5 с видна до кадра перед 5 с.|Suffixes: s - seconds, f - frames; comma or dot. The end is a boundary: a 2–5 s clip is visible up to the frame before 5 s.
+Встык|Back to back
+Каскад со сдвигом|Cascade with offset
+Промежуток между плашками: {} кадр.|Gap between clips: {} fr.
+Сдвиг начала каждой следующей: {} кадр.|Start offset of each next clip: {} fr.
+Направление: снизу вверх (с последнего выбранного)|Direction: bottom to top (from the last selected)
+Направление: сверху вниз (по порядку выбора)|Direction: top to bottom (in selection order)
+Встык: следующая плашка начинается там, где кончилась предыдущая (+ промежуток, минус - нахлёст). Каскад: начала сдвигаются на шаг, длины не меняются.|Back to back: the next clip starts where the previous one ended (+ gap, minus - overlap). Cascade: starts shift by the step, lengths stay the same.
+У слоя есть ключи анимации. Как сделать копию?|The layer has animation keys. How should it be copied?
+С анимацией - копия со всеми ключами (трансформация, деформеры, эффекты). Без анимации - чистый слой без ключей, стоит как на текущем кадре.|With animation - a copy with all keys (transform, deformers, effects). Without animation - a clean layer without keys, posed as on the current frame.
+Без анимации|Without animation
+С анимацией|With animation
 """

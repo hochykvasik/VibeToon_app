@@ -414,7 +414,7 @@ object ProjectJson {
         if (m.background) it["bg"] = true
         if (m.muted) it["mu"] = true
         if (m.vectors.isNotEmpty()) it["vec"] = m.vectors.map { v -> vectorJson(v) }
-        if (m.cells.isNotEmpty()) it["cells"] = m.cells.map { c -> linkedMapOf<String, Any?>("s" to c.start, "f" to c.file) }
+        if (m.cells.isNotEmpty()) it["cells"] = m.cells.map { c -> linkedMapOf<String, Any?>("s" to c.start, "f" to c.file).also { o -> if (c.hold > 0) o["h"] = c.hold } }
         if (m.isText) {
             it["text"] = m.text
             it["color"] = colorToString(m.textColor)
@@ -456,7 +456,7 @@ object ProjectJson {
             textDir = TextBidi.coerce(o.int("tdir", 0)),
             lineSpacing = o.dbl("tls", 1.0).toFloat().coerceIn(0.5f, 3f),
             letterSpacing = o.dbl("tlt", 0.0).toFloat().coerceIn(-0.2f, 1f),
-            cells = (o["cells"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { FrameCell((it["s"] as? Number)?.toInt() ?: 0, it["f"] as? String ?: return@let null) } },
+            cells = (o["cells"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { FrameCell((it["s"] as? Number)?.toInt() ?: 0, it["f"] as? String ?: return@let null, ((it["h"] as? Number)?.toInt() ?: 0).coerceIn(0, 100_000)) } },
             vector = o["vector"] as? Boolean ?: false,
             volKeys = (o["vk"] as? List<*>).orEmpty().mapNotNull { c -> (c as? Map<*, *>)?.let { m -> VolKey((m["f"] as? Number)?.toInt() ?: 0, ((m["v"] as? Number)?.toFloat() ?: 1f).coerceIn(0f, 1f)) } }.sortedBy { it.frame },
             background = o["bg"] as? Boolean ?: false,

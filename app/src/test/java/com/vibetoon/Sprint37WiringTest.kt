@@ -27,7 +27,8 @@ class Sprint37WiringTest {
     }
 
     @Test fun onionSettingsAreWiredAndPersisted() {
-        assertTrue(vm.contains("OnionSkin.plan(m.cells, _frame.value, _onionSettings.value)"))
+        // спринт 51: настройки читаются один раз в refreshOnion (st = _onionSettings.value)
+        assertTrue(vm.contains("val st = _onionSettings.value") && vm.contains("OnionSkin.plan(m.cells, _frame.value, st)"))
         assertTrue(vm.contains("putString(\"onion_settings\", com.vibetoon.domain.project.OnionSkin.encode(n))"))
         assertTrue(vm.contains("ghostTransform(g)"))
         assertTrue(vm.contains("if (!_onionSettings.value.outOfPegs) return effective(g.owner)"))

@@ -21,7 +21,7 @@ class Sprint50WiringTest {
     }
 
     @Test fun selectionDetachAcceptsPsdLayers() {
-        val ex = body(vm, "private fun extractSelection(cut: Boolean, partName: String)")
+        val ex = body(vm, "private fun extractSelection(cut: Boolean, partName: String")
         // источник - PNG или слой PSD; мультивыбор не мешает, проверка - общая detachRejection
         assertTrue(ex.contains("detachRejection(s.id)?.let"))
         assertFalse(ex.contains("_selection.value.size != 1"))
@@ -42,12 +42,12 @@ class Sprint50WiringTest {
     }
 
     @Test fun psdLayersDuplicateAsImages() {
-        val dup = body(vm, "fun duplicateLayer(id: Int, above: Int?)")
-        assertTrue(dup.contains("duplicatePsdLayer(id, above)"))
+        val dup = body(vm, "fun duplicateLayer(id: Int, above: Int?")
+        assertTrue(dup.contains("duplicatePsdLayer(id, above, withAnimation)"))   // спринт 51: с выбором «с анимацией / без»
         val psd = body(vm, "private fun duplicatePsdLayer(")
         assertTrue(psd.contains("readLayer(id)"))
         assertTrue(psd.contains("LayerDetach.toArgb(lp.bytes, 8, lp.w, lp.h)"))
-        assertTrue(psd.contains("cloneLayerState(id, newId, psd = true, fitAt = fitAt)"))
+        assertTrue(psd.contains("cloneLayerState(id, newId, psd = true, fitAt = fitAt, animated = withAnimation)"))
         assertTrue(psd.contains("uploadTextureFor(pid, item)"))
     }
 

@@ -38,6 +38,7 @@ import com.vibetoon.ui.motion.AlertDialog
 /**
  * Спринт 37: настройки кальки (долгое нажатие на кнопку «Калька» в таймлайне). Рисунки ДО и ПОСЛЕ текущего - свои
  * глубина (0-4), непрозрачность и цвет тонировки; общие флажки «Затухание», «Тонировать цветом» и «Out of Pegs».
+ * Спринт 51: шаг (каждый N-й рисунок), калька во время Play и по соседним слоям-рисункам.
  */
 @Composable
 fun OnionSkinDialog(vm: MainViewModel, onDismiss: () -> Unit) {
@@ -55,12 +56,19 @@ fun OnionSkinDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                     onDepth = { vm.setOnionSettings(s.copy(after = it)) },
                     onAlpha = { vm.setOnionSettings(s.copy(afterAlpha = it)) },
                     onColor = { vm.setOnionSettings(s.copy(afterColor = it)) })
+                // спринт 51: шаг, калька при Play и по отдельным слоям-рисункам
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Шаг:", fontSize = 12.sp)
+                    for (st in 1..OnionSkin.MAX_STEP) FilterChip(selected = s.step == st, onClick = { vm.setOnionSettings(s.copy(step = st)) }, label = { Text(if (st == 1) "каждый" else "через ${st - 1}") })
+                }
+                OnionSwitch("Калька во время воспроизведения", s.playback) { vm.setOnionSettings(s.copy(playback = it)) }
+                OnionSwitch("Соседние слои-рисунки (Рисунок 1, Рисунок 2…) тоже", s.layers) { vm.setOnionSettings(s.copy(layers = it)) }
                 OnionSwitch("Затухание: дальние рисунки бледнее", s.falloff) { vm.setOnionSettings(s.copy(falloff = it)) }
                 OnionSwitch("Тонировать цветом (выкл. - исходные цвета рисунков)", s.tint) { vm.setOnionSettings(s.copy(tint = it)) }
                 OnionSwitch("Out of Pegs: призраки на своих местах", s.outOfPegs) { vm.setOnionSettings(s.copy(outOfPegs = it)) }
                 Text("Out of Pegs: соседние рисунки стоят там, где слой был на их кадрах (с ключами трансформации), и не едут вместе с текущим рисунком, пока его двигают или трансформируют. Выкл. - призраки повторяют текущее положение слоя.",
                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-                Text("Работает на слое-картинке с кадрами (кнопка «Добавить пустой кадр»). Настройки сохраняются в настройках приложения и в резервной копии настроек.",
+                Text("Работает на слое с кадрами (кнопка «+ Кадр») и на рисунках-слоях лесенкой: призраки - соседние слои той же группы со своими плашками. Настройки сохраняются в настройках приложения и в резервной копии настроек.",
                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
             }
         },

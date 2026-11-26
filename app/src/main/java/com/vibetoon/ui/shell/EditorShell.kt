@@ -550,6 +550,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
         }
     }
     if (showSettings) SettingsDialog(vm) { showSettings = false }
+    com.vibetoon.ui.timeline.DuplicateAnimationDialog(vm)   // спринт 51: дубль слоя с ключами - с анимацией или без
     if (showColor) com.vibetoon.ui.inspector.ColorPickerDialog(
         initial = color, onColor = { color = it }, onEyedropper = { showColor = false; tool = ToolId.PIPETTE.name; vm.showMessage("Пипетка: коснитесь холста, чтобы взять цвет") }, onDismiss = { showColor = false }
     )
