@@ -10,7 +10,7 @@ import java.io.File
 class ProjectRenderStartupTest {
     @Test fun recommendedAndTutorialEntryShareTheReadyRestorePublishSequence() = runBlocking {
         val source = File("src/main/java/com/vibetoon/ui/projects/ProjectsScreen.kt").readText()
-        assertTrue(source.contains("app.startLesson(TUTORIALS.first { it.lesson }.coachSession())"))
+        assertTrue(source.contains("app.startLesson(WELCOME_TOUR.coachSession())"))   // спринт 53: тур выбирается явно
         assertTrue(source.contains("app.startLesson(t.coachSession())"))
         val project = StarterProject.data("tutorial", 1)
         val steps = mutableListOf<String>()
