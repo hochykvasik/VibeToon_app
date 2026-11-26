@@ -15,6 +15,7 @@
 #include "render/MaskPolicy.h"
 #include "render/GroupCachePolicy.h"
 #include "render/TextureBudgetPolicy.h"
+#include "render/TexTombstones.h"
 
 namespace vt {
 
@@ -235,20 +236,21 @@ private:
     struct TexAlias { int primary = -1, fallback = -1; float pr[4] = {0.f, 0.f, 1.f, 1.f}; float fr[4] = {0.f, 0.f, 1.f, 1.f}; };
     std::unordered_map<int, TexAlias> aliases_;
     std::unordered_map<int, std::array<float, 4>> crops_;   // спринт 45: обрезка слоёв
-    std::unordered_set<int> droppedTex_;
+    TexTombstones droppedTex_;   // спринт 55: ограниченный список (раньше рос всю сессию)
     // --- кэш результата эффектов (см. FxCachePolicy.h) ---
     struct FxEntry {
         GLuint tex = 0, fbo = 0;
         int bx = 0, by = 0, bw = 0, bh = 0;      // рамка на экране (GL, начало снизу)
         float va[6] = {1.f, 0.f, 0.f, 1.f, 0.f, 0.f};
-        uint64_t epoch = 0;
+        uint64_t key = 0;                        // спринт 55: ключ содержимого слоя (FxKeyPolicy), а не глобальная эпоха
         int vw = 0, vh = 0;                      // размер экрана, для которого посчитана запись
         bool used = false;
     };
     void bumpEpoch() { ++epoch_; }
     bool fxCacheEnabled() const;
-    bool drawFxFromCache(const Item& it, const float va[6], float reach, float opacity, int blend);
-    void storeFxCache(const Item& it, GLuint srcFbo, const int box[4], const float va[6]);
+    bool drawFxFromCache(const Item& it, const float va[6], float reach, float opacity, int blend, uint64_t key);
+    void storeFxCache(const Item& it, GLuint srcFbo, const int box[4], const float va[6], uint64_t key);
+    uint64_t fxContentKey(const Item& it, const std::vector<std::array<float, 10>>& fx) const;
     void dropFxEntry(int layerId);
     void dropFxCache();
     void gcFxCache();                            // после кадра: удалить записи слоёв, не нарисованных в этом кадре
@@ -385,6 +387,11 @@ private:
     size_t fxCacheBytes_ = 0;
     std::unordered_map<uint64_t, GroupEntry> groupCache_;
     std::unordered_map<int, int> groupOcc_;      // появлений id группы в текущем кадре
+    // спринт 55: буферы кадра переиспользуются (раньше - новые векторы на каждом кадре и каждом слое с эффектами)
+    std::vector<Frame> frameStack_;
+    std::vector<Fbo> frameMasks_;
+    std::vector<const float*> fxChain_;
+    uint64_t frameNo_ = 0;                       // номер кадра для редкой проверки glGetError (GlErrorPolicy)
     std::unordered_map<int, uint32_t> texGen_;   // версия содержимого текстуры слоя (правка на месте, замена, загрузка)
     uint32_t texSalt_ = 0;                       // смена всех текстур разом (новый контекст, смена проекта)
     uint64_t epoch_ = 1;                         // любая смена сцены/текстур/размера делает кэш эффектов устаревшим

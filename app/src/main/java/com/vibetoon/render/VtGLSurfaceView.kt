@@ -41,6 +41,10 @@ class VtRenderer(
     @Volatile private var disposed = false
     fun deactivate() { disposed = true }
     private var lastScene: SceneData? = null
+    /** Спринт 55: в native сейчас сцена снимка (форма, миниатюра), а не редактора - вернуть перед кадром/hit-test. */
+    private var editorSceneStale = false
+    /** Спринт 55: разделы сцены, уже отправленные в native (без повторной отправки тех же массивов). */
+    private val sections = com.vibetoon.domain.render.SceneSectionTracker()
     private var sampleReq: Triple<Int, Int, (Int) -> Unit>? = null
     private val afterFrameChecks = ArrayList<Pair<Int, (IntArray?) -> Unit>>()
     fun checkTextureAfterFrame(id: Int, callback: (IntArray?) -> Unit) { afterFrameChecks.add(id to callback) }
@@ -56,6 +60,7 @@ class VtRenderer(
         // Контекст мог быть потерян: старый рендерер освобождаем и создаём заново.
         if (handle != 0L) RenderNative.destroy(handle)
         handle = RenderNative.create()
+        sections.reset()   // новый рендерер: в нём ещё ничего нет
         val maxTex = RenderNative.initGL(handle)
         Log.i(TAG_GL, "initGL maxTexture=$maxTex")
         // пакет 29: бюджет текстур по памяти устройства; список вытесняемых - тот же, что у прежнего рендерера
@@ -67,6 +72,7 @@ class VtRenderer(
         lastEvictable?.let { RenderNative.setEvictable(handle, it) }
         // Текстуры потеряны вместе с контекстом; сцену отправим заново (TODO: перезагрузка слоёв).
         lastScene?.let { applyScene(it) }
+        editorSceneStale = false
         onReady()
         onContextRecreated()
     }
@@ -93,7 +99,8 @@ class VtRenderer(
             android.opengl.GLES30.glClear(android.opengl.GLES30.GL_COLOR_BUFFER_BIT)
             return
         }
-        takeScene()?.let { lastScene = it; applyScene(it) }
+        val fresh = takeScene()
+        if (fresh != null) { lastScene = fresh; applyScene(fresh); editorSceneStale = false } else ensureEditorScene()
         val p = frameParams()
         // спринт 42: камера пользователя задана для видимой области холста, рендерер рисует всю поверхность
         val cam = com.vibetoon.domain.render.ViewRectFit.effective(p.camera, p.viewRect, bufW, bufH,
@@ -118,8 +125,10 @@ class VtRenderer(
             val (bx, by) = com.vibetoon.domain.render.ViewRectFit.toBuffer(x.toFloat(), y.toFloat(), p.viewRect, bufW, bufH)
             cb(RenderNative.readPixel(handle, bx.toInt(), by.toInt()))
         }
-        val checks = afterFrameChecks.toList(); afterFrameChecks.clear()
-        checks.forEach { (id, callback) -> callback(layerSize(id)) }
+        if (afterFrameChecks.isNotEmpty()) {   // спринт 55: без нового списка на каждом кадре
+            val checks = afterFrameChecks.toList(); afterFrameChecks.clear()
+            checks.forEach { (id, callback) -> callback(layerSize(id)) }
+        }
         if (more) requestRender() // в очереди остались загрузки
     }
 
@@ -143,11 +152,13 @@ class VtRenderer(
     /** Снимок кадра: при [scene] != null временно подставляет её, потом возвращает прежнюю. Только из GL-потока. */
     fun capture(scene: SceneData?, width: Int, height: Int, transparent: Boolean, background: Int, flags: Int = 0): ByteArray? {
         if (handle == 0L || exportJob != null) return null   // посреди экспорта MP4 сцена и вид заняты им
-        if (scene != null) { applyScene(scene); scene.beforeDraw?.invoke() }
+        if (scene != null) { applyScene(scene); scene.beforeDraw?.invoke() } else ensureEditorScene()
         RenderNative.setBackground(handle, scene?.backgroundOverride ?: background)
         val r = RenderNative.captureFrame(handle, width, height, transparent, flags)
         pollTextureEvents()
-        if (scene != null) lastScene?.let { applyScene(it) }
+        // спринт 55: сцена редактора возвращается лениво - перед следующим кадром или hit-test. Снимки форм во время
+        // Play идут подряд: раньше после каждого вся сцена редактора заново уходила через JNI
+        if (scene != null) editorSceneStale = true
         return r
     }
 
@@ -158,18 +169,19 @@ class VtRenderer(
         RenderNative.setBackground(handle, scene.backgroundOverride ?: background)
         val r = RenderNative.captureToTexture(handle, id, width, height, transparent, flags)
         pollTextureEvents()
-        lastScene?.let { applyScene(it) }
+        editorSceneStale = true   // спринт 55: см. capture
         return r
     }
 
     /** Только из GL-потока. */
     fun hitTest(x: Float, y: Float): Int {
         if (handle == 0L) return -1
+        ensureEditorScene()   // спринт 55: hit-test - по сцене редактора, а не по последнему снимку формы
         val (bx, by) = com.vibetoon.domain.render.ViewRectFit.toBuffer(x, y, frameParams().viewRect, bufW, bufH)
         return RenderNative.hitTest(handle, bx, by)
     }
 
-    fun layerThumb(layerId: Int, size: Int): ByteArray? = if (handle == 0L) null else RenderNative.layerThumb(handle, layerId, size)
+    fun layerThumb(layerId: Int, size: Int): ByteArray? = if (handle == 0L) null else { ensureEditorScene(); RenderNative.layerThumb(handle, layerId, size) }
 
     fun layerPixels(layerId: Int): ByteArray? = if (handle == 0L) null else RenderNative.layerPixels(handle, layerId)
 
@@ -198,17 +210,35 @@ class VtRenderer(
     fun replaceTextureChecked(layerId: Int, expectedW: Int, expectedH: Int, width: Int, height: Int, data: ByteArray): Int =
         if (handle == 0L) -2 else RenderNative.replaceTextureChecked(handle, layerId, expectedW, expectedH, width, height, data)
 
+    /** Спринт 55: вернуть в native сцену редактора, если её подменял снимок. Только GL-поток. */
+    private fun ensureEditorScene() {
+        if (!editorSceneStale) return
+        editorSceneStale = false
+        lastScene?.let { applyScene(it) }
+    }
+
     private fun applyScene(s: SceneData) {
-        RenderNative.setCanvas(handle, s.canvasWidth, s.canvasHeight)
-        RenderNative.setScene(handle, s.ops, s.params)
-        RenderNative.setWarps(handle, s.warpIds, s.warpData)
-        RenderNative.setMeshes(handle, s.meshIds, s.meshCounts, s.meshVerts, s.meshTris)
-        RenderNative.setPerspectives(handle, s.perspIds, s.perspData)
-        RenderNative.setTurbulence(handle, s.turbIds, s.turbData)
-        RenderNative.setEffects(handle, s.fxIds, s.fxCounts, s.fxData)
+        // спринт 55: разделы с теми же массивами (или пустые, как в прошлый раз) не отправляются заново
+        val t = sections
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.CANVAS, s.canvasWidth, s.canvasHeight))
+            RenderNative.setCanvas(handle, s.canvasWidth, s.canvasHeight)
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.SCENE, s.ops, s.params))
+            RenderNative.setScene(handle, s.ops, s.params)
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.WARPS, s.warpIds, s.warpData))
+            RenderNative.setWarps(handle, s.warpIds, s.warpData)
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.MESHES, s.meshIds, s.meshCounts, s.meshVerts, s.meshTris))
+            RenderNative.setMeshes(handle, s.meshIds, s.meshCounts, s.meshVerts, s.meshTris)
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.PERSP, s.perspIds, s.perspData))
+            RenderNative.setPerspectives(handle, s.perspIds, s.perspData)
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.TURB, s.turbIds, s.turbData))
+            RenderNative.setTurbulence(handle, s.turbIds, s.turbData)
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.FX, s.fxIds, s.fxCounts, s.fxData))
+            RenderNative.setEffects(handle, s.fxIds, s.fxCounts, s.fxData)
         val a = s.aliases   // неизменяемый набор: формы и сцена применяются одним кадром
-        RenderNative.setTextureAliases(handle, a.ids, a.primary, a.fallback, a.rects)
-        RenderNative.setCrops(handle, s.cropIds, s.cropRects)   // спринт 45: обрезка слоёв - вместе со сценой
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.ALIASES, a.ids, a.primary, a.fallback, a.rects))
+            RenderNative.setTextureAliases(handle, a.ids, a.primary, a.fallback, a.rects)
+        if (t.changed(com.vibetoon.domain.render.SceneSectionTracker.CROPS, s.cropIds, s.cropRects))
+            RenderNative.setCrops(handle, s.cropIds, s.cropRects)   // спринт 45: обрезка слоёв - вместе со сценой
     }
 
     /** Только из GL-потока. */
@@ -275,6 +305,7 @@ class VtRenderer(
         override fun end() {
             RenderNative.endExport(handle)
             lastScene?.let { applyScene(it) }
+            editorSceneStale = false
         }
     }
 

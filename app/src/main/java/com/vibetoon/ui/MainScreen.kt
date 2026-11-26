@@ -963,11 +963,13 @@ private fun PinOverlayLayer(vm: MainViewModel) {
             val c = Offset(p[i * 2], p[i * 2 + 1])
             val sel = i == ov.selected
             if (sel) {
-                drawCircle(green.copy(alpha = 0.10f), ov.radius[i], c)
-                drawCircle(green.copy(alpha = 0.7f), ov.radius[i], c, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+                // спринт 55: массивы оверлея читаются с проверкой границ (пины удаляются/добавляются между кадрами)
+                val rad = ov.radius.getOrElse(i) { 0f }
+                drawCircle(green.copy(alpha = 0.10f), rad, c)
+                drawCircle(green.copy(alpha = 0.7f), rad, c, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
             }
             val r = (if (sel) 11f else 8f).dp.toPx()
-            if (ov.stiff[i]) {
+            if (ov.stiff.getOrElse(i) { false }) {
                 drawRect(Color.White, Offset(c.x - r, c.y - r), androidx.compose.ui.geometry.Size(r * 2, r * 2))
                 drawRect(green, Offset(c.x - r * 0.72f, c.y - r * 0.72f), androidx.compose.ui.geometry.Size(r * 1.44f, r * 1.44f))
             } else {
@@ -1110,11 +1112,12 @@ private fun PivotOverlay(vm: MainViewModel) {
     val rasterTool by vm.rasterTool.collectAsStateWithLifecycle()
     val boneMode by vm.boneMode.collectAsStateWithLifecycle()
     val warpTool by vm.warpTool.collectAsStateWithLifecycle()
+    // спринт 55: во время Play - выход ДО чтения кадра: иначе оверлей подписан на кадр и перекомпонуется 24-60 раз в секунду впустую
+    if (playing) return
     val sel = id ?: return
     if (paintTool != null || rasterTool != null || boneMode || warpTool) return
     val info = inspector ?: return
     if (view.width <= 0f || frame < 0) return
-    if (playing) return
     val p = vm.pivotScreen(sel) ?: return
     Canvas(Modifier.fillMaxSize().clipToBounds()) {
         val c = Offset(p.first, p.second)

@@ -2267,13 +2267,15 @@ private fun AssetLibraryDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                 else if (folders.names.isNotEmpty()) item { Text("Долгое нажатие на файл - положить в папку", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 if (assets.isEmpty()) item { Text(if (uf != null) "Папка пуста: долгое нажатие на файл в другой папке кладёт его сюда" else "Пока пусто: импортированные картинки, видео, аудио и рисунки слоёв появятся здесь") }
                 if (inProject.isNotEmpty()) item { Text("В проекте", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
-                items(inProject.chunked(3).size) { i -> val row = inProject.chunked(3)[i]; AssetRow(vm, row, folders, pick, move) }
+                // спринт 55: строки по 3 считаются один раз, а не заново для каждой строки (было O(n²) на прокрутке)
+                val projectRows = inProject.chunked(3)
+                items(projectRows.size) { i -> AssetRow(vm, projectRows[i], folders, pick, move) }
                 if (unused.isNotEmpty()) item {
                     androidx.compose.material3.TextButton(onClick = { showUnused = !showUnused }) {
                         Text(if (showUnused) "Скрыть файлы удалённых слоёв (${unused.size})" else "Файлы удалённых слоёв (${unused.size})", fontSize = 12.sp)
                     }
                 }
-                if (showUnused) items(unused.chunked(3).size) { i -> val row = unused.chunked(3)[i]; AssetRow(vm, row, folders, pick, move) }
+                if (showUnused) { val unusedRows = unused.chunked(3); items(unusedRows.size) { i -> AssetRow(vm, unusedRows[i], folders, pick, move) } }
                 if (hidden > 0) item { Text("Скрыто служебных файлов (кэш миниатюр, Liquify, кадры анимации): $hidden", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         },

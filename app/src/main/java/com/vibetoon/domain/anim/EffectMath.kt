@@ -200,9 +200,21 @@ object EffectMath {
             FloatArray(RECORD).also { r ->
                 r[0] = e.type.toFloat()
                 for (i in 0 until 8) r[1 + i] = e.p.getOrElse(i) { 0f }
-                r[9] = if (e.type == LINE_BOIL) boilTime(timeSec, e.p.getOrElse(2) { 8f }, e.p.getOrElse(4) { 0f }) else timeSec
+                r[9] = when {
+                    e.type == LINE_BOIL -> boilTime(timeSec, e.p.getOrElse(2) { 8f }, e.p.getOrElse(4) { 0f })
+                    usesTime(e.type) -> timeSec
+                    else -> 0f   // спринт 55: статичный эффект не зависит от времени - кэш эффекта/группы живёт весь Play
+                }
             }
         }
+
+    /**
+     * Спринт 55: эффекты, чей шейдер читает время (uView.w): Wave, Noise, Shake, RGB Split, Pulse, Displacement,
+     * Line Boil. У остальных (Blur, Glow, Shadow, Stroke, Color...) время в записи - 0: раньше оно менялось каждый кадр
+     * Play, и кэш результата эффекта и кэш групп пересчитывались на каждом кадре даже у неподвижных слоёв.
+     */
+    fun usesTime(type: Int): Boolean = type == WAVE || type == NOISE || type == SHAKE || type == RGB_SPLIT ||
+        type == PULSE || type == DISPLACE || type == LINE_BOIL
 
     /**
      * Спринт 35: время записи Line Boil, приведённое к началу шага дрожания (и к кругу вариантов). Внутри шага запись

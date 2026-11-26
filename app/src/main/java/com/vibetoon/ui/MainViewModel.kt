@@ -649,6 +649,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         importJob?.cancel(); importJob = null
         waveDrawWait?.drawn?.cancel(); waveDrawWait = null
         _audioReadiness.value = com.vibetoon.domain.project.AudioReadiness.Idle
+        staleAfterPlay.clear()   // спринт 55: до pause() - иначе пауза пересчитала бы миниатюры слоёв уходящего проекта
         pause()
         arapMemo.clear()
         clearSelection(); penCancel(); _rasterTool.value = null
@@ -658,6 +659,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         resetForms(dropTextures = true)
         psdPending = false
         thumbGen++; thumbs.clear(); thumbPending.clear()   // миниатюры прошлого проекта не должны всплывать у новых слоёв
+        playScenes.clear()   // спринт 55: сцены Play прошлого проекта
         stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null
         paintSizes.clear(); paintDirty.clear(); versionedRasterIds.clear(); mediaIds.reset()
         deformCache.clear()   // спринт 43: готовые сетки прошлого проекта не держат память
@@ -4752,7 +4754,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             for (d in media) if (d.kind == MediaKind.GROUP && d.symDur > 0) inside += symbolMembers(d.id)
             media.filter { it.kind == MediaKind.SYMBOL && it.id !in inside }
         }
-        return pool.mapNotNull { inst -> media.firstOrNull { it.id == inst.symRef && it.symDur > 0 }?.let { inst to it } }
+        if (pool.isEmpty()) return emptyList()
+        // спринт 55: определения - словарём за один проход (раньше поиск по всем медиа на каждый экземпляр, несколько раз за кадр)
+        val defs = HashMap<Int, MediaItem>()
+        for (d in media) if (d.symDur > 0 && d.id !in defs) defs[d.id] = d
+        return pool.mapNotNull { inst -> defs[inst.symRef]?.let { inst to it } }
     }
 
     /** Форму можно хранить обрезанной, только если экземпляр не деформирован (сетка/варп/перспектива берут весь квадрат). */
@@ -5956,6 +5962,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Спринт 31: система просит освободить память (фон, нехватка) - кэш рисунков уменьшается или очищается. */
     fun onTrimMemory(level: Int) {
         cellCache.trim(level)
+        // спринт 55: кэш сцен Play, сетки деформаций и память пинов удалённых слоёв тоже отдают память
+        val trim = com.vibetoon.domain.perf.EditorTrimPolicy
+        if (trim.dropPlayScenes(level)) playScenes.clear()
+        if (trim.dropDeformCaches(level)) { deformCache.clear(); arapMemo.clear() }
+        else for (id in trim.stale(arapMemo, layers.mapTo(HashSet()) { it.id })) arapMemo.remove(id)
         // спринт 52: формы символов (текстуры) тоже отдают память; на экране формы остаются
         val limit = com.vibetoon.domain.perf.CellCachePolicy.trimmedBudget(formCache.usedBytes(), level)
         if (limit < formCache.usedBytes()) {
@@ -7086,10 +7097,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val current = com.vibetoon.domain.anim.ClipSpeed.clamp(clip.keySpeed * clip.speed)
         if (kotlin.math.abs(current - target) < 0.005f && clip.speed == 1f) return
         val anchor = clip.start
-        // прежняя скорость (до спринта 54) влияла только на дорожку трансформации через animFrame - сначала переносим её в ключи
-        val legacy = if (clip.speed != 1f) 1f / clip.speed else 1f
-        val factor = com.vibetoon.domain.anim.ClipSpeed.stretch(current, target)
-        val newLen = com.vibetoon.domain.anim.ClipSpeed.length(clip.length, factor)
+        // спринт 55: старая скорость клипа (до спринта 54) влияла через animFrame только на трансформацию; все дорожки
+        // пересчитываются множителем keySpeed / target, длина плашки - (keySpeed * speed) / target (ClipSpeed.factors)
+        val fs = com.vibetoon.domain.anim.ClipSpeed.factors(clip.keySpeed, clip.speed, target)
+        val factor = fs.keys
+        val newLen = com.vibetoon.domain.anim.ClipSpeed.length(clip.length, fs.length)
         val (dur, fits) = com.vibetoon.domain.anim.ClipSpeed.durationFor(anchor, newLen, st.durationFrames, maxDur)
         val last = dur - 1
         val parentOf = layers.filter { it.parentId >= 0 }.associate { it.id to it.parentId }
@@ -7105,7 +7117,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val nf = com.vibetoon.domain.anim.ClipSpeed.retimeAll(tr.keys.map { it.frame }, anchor, f, last)
             anim = anim.copy(tracks = anim.tracks + (tid to AnimationTrack(tid, tr.keys.mapIndexed { i, k -> k.copy(frame = nf[i]) })))
         }
-        if (legacy != 1f) retimeTrack(id, legacy)
         for (node in subtree + boneIds) for (tid in TrackGroups.ids(node, anim.tracks)) if (done.add(tid)) retimeTrack(tid, factor)
         _animation.value = anim
         fun rt(f: Int) = com.vibetoon.domain.anim.ClipSpeed.retime(f, anchor, factor).coerceIn(0, last)
@@ -11308,6 +11319,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun ensureBox(id: Int): FloatArray {
         contentBox[id]?.let { return it }
         val view = RenderHost.view ?: return NO_BOX
+        // спринт 55: проект закрыли, пока шло чтение альфы - рамка прошлого проекта не попадает к слою нового с тем же id
+        val gen = thumbGen
         media.firstOrNull { it.id == id && it.kind == MediaKind.SYMBOL }?.let { inst ->
             // спринт 54: у экземпляра нет своей текстуры - рамка по альфе готовых форм (рот, а не весь холст)
             val forms = formCache.entriesOf(inst.symRef).take(16)
@@ -11324,7 +11337,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (parts.isEmpty()) return NO_BOX   // форм ещё нет: рамка экземпляра целиком, без кэша (повтор позже)
             val box = com.vibetoon.domain.project.SymbolBoneLink.union(parts).let { if (it.isEmpty()) FloatArray(0) else it }
-            contentBox[id] = box
+            if (gen == thumbGen) contentBox[id] = box
             return box
         }
         val bytes = kotlinx.coroutines.withTimeoutOrNull(3000) {
@@ -11335,7 +11348,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val w = i32(0); val h = i32(4)
             if (w <= 0 || h <= 0 || bytes.size < 8 + w * h) NO_BOX else com.vibetoon.domain.raster.RasterMath.alphaBox(bytes, 8, w, h)
         }
-        contentBox[id] = box
+        if (gen == thumbGen) contentBox[id] = box
         return box
     }
 

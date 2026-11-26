@@ -11,6 +11,8 @@
 #include "common/Log.h"
 #include "render/GlUtil.h"
 #include "render/GlState.h"
+#include "render/FxKeyPolicy.h"
+#include "render/GlErrorPolicy.h"
 #include "render/CanvasClipPolicy.h"
 #include "render/FxCachePolicy.h"
 #include "render/GroupCachePolicy.h"
@@ -1172,6 +1174,10 @@ void Renderer::clearTextures() {
     ++texSalt_;
     clearShadows();
     dropFxCache();
+    // спринт 55: FBO кэша групп (экранного размера), версии и надгробия прошлого проекта тоже отдают память
+    dropGroupCache();
+    texGen_.clear();
+    droppedTex_.clear();
     bumpEpoch();
 }
 
@@ -1443,13 +1449,14 @@ bool Renderer::uploadViaPbo(const PendingUpload& up) {
 }
 
 void Renderer::uploadPending() {
-    size_t uploaded = 0;
+    size_t uploaded = 0, processed = 0;
     PendingUpload up;
     while (uploaded < kUploadBytesPerFrame) {
         if (up.rgba.capacity()) recycleUpload(up);
         if (!uploadQueue::pop(up)) break;
+        ++processed;
         const size_t bytes = texbudget::textureBytes(up.width, up.height);  // с mip
-        if (!droppedTex_.empty() && droppedTex_.count(up.layerId)) continue;   // форма уже удалена - загрузка опоздала
+        if (droppedTex_.contains(up.layerId)) continue;   // форма уже удалена - загрузка опоздала
         if (up.width <= 0 || up.height <= 0 || up.rgba.size() < static_cast<size_t>(up.width) * up.height * 4) continue;
         if (maxTexSize_ > 0 && (up.width > maxTexSize_ || up.height > maxTexSize_)) {
             LOGW("texture dimensions exceed GL limit, layer %d unchanged", up.layerId);
@@ -1503,16 +1510,18 @@ void Renderer::uploadPending() {
         recycleUpload(up);  // CPU-буфер сразу в пул (или системе, если пул полон)
     }
     if (up.rgba.capacity()) recycleUpload(up);
-    checkGl("uploadPending");
+    if (glerr::afterQueue(processed)) checkGl("uploadPending");   // спринт 55: пустая очередь - без glGetError
 }
 
 // Теневые текстуры снимка символа: кадр символа рисуется своими рисунками участников, а текстуры слоёв
 // редактора (кадр сцены) не трогаются - нет гонки «снимок символа подменил рот на холсте».
 void Renderer::uploadShadows() {
     PendingUpload up;
+    size_t processed = 0;
     while (true) {
         if (up.rgba.capacity()) recycleUpload(up);
         if (!uploadQueue::popShadow(up)) break;
+        ++processed;
         const size_t bytes = texbudget::textureBytes(up.width, up.height);
         if (up.width <= 0 || up.height <= 0) continue;
         if (maxTexSize_ > 0 && (up.width > maxTexSize_ || up.height > maxTexSize_)) continue;
@@ -1533,7 +1542,7 @@ void Renderer::uploadShadows() {
         recycleUpload(up);
     }
     if (up.rgba.capacity()) recycleUpload(up);
-    checkGl("uploadShadows");
+    if (glerr::afterQueue(processed)) checkGl("uploadShadows");
 }
 
 // ---------------------------------------------------------------- цели рендера
@@ -1813,14 +1822,15 @@ void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode
     float va[6];
     viewAffine(va);
     const float sc = std::sqrt(va[0] * va[0] + va[1] * va[1]);
-    std::vector<const float*> chain;
-    chain.reserve(fx->second.size());
+    std::vector<const float*>& chain = fxChain_;   // спринт 55: без нового вектора на каждый слой каждого кадра
+    chain.clear();
     for (const auto& e : fx->second) chain.push_back(e.data());
     const float reach = chainReach(chain.data(), static_cast<int>(chain.size()));
     const bool deformed = meshes_.count(it.layerId) || warps_.count(it.layerId) || persps_.count(it.layerId) || turbs_.count(it.layerId);
     // Кэш результата: та же сцена и вид - без проходов эффектов; во время жеста камеры - с преобразованием вида.
     const bool cacheable = fxCacheEnabled() && !deformed && reach >= 0.f;
-    if (cacheable && drawFxFromCache(it, va, reach, opacity, blend)) return;
+    const uint64_t fxKey = cacheable ? fxContentKey(it, fx->second) : 0;
+    if (cacheable && drawFxFromCache(it, va, reach, opacity, blend, fxKey)) return;
     const float W = static_cast<float>(width_), H = static_cast<float>(height_);
     ScreenRect work{0.f, 0.f, W, H}, clearArea = work;
     if (reach >= 0.f && !deformed) {
@@ -1854,7 +1864,7 @@ void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode
         a = b;
         ++stats_.fxPasses;
     }
-    if (cacheable) storeFxCache(it, a.fbo, box, va);
+    if (cacheable) storeFxCache(it, a.fbo, box, va, fxKey);
     bindTarget(parent);
     // Наложение: рамка слоя, пересечённая с обрезкой кадра (экспорт).
     if (limited || canvasScissorOn_) {
@@ -1883,10 +1893,32 @@ bool Renderer::fxCacheEnabled() const {
     return !exportMode_ && !useShadows_ && !paintActive_ && screenFbo_ == 0;
 }
 
-bool Renderer::drawFxFromCache(const Item& it, const float va[6], float reach, float opacity, int blend) {
+// Спринт 55: ключ содержимого слоя для кэша эффектов - трансформация, записи эффектов, текстура (и форма символа),
+// обрезка. Смена кадра или чужого слоя ключ не меняет: неподвижный слой с Blur/Glow/Shadow не пересчитывается в Play.
+uint64_t Renderer::fxContentKey(const Item& it, const std::vector<std::array<float, 10>>& fx) const {
+    uint64_t tex = texHash(groupcache::kFnvBasis, it.layerId);
+    if (!aliases_.empty()) {
+        const auto a = aliases_.find(it.layerId);
+        if (a != aliases_.end()) {
+            tex = groupcache::mixInt(tex, a->second.primary); tex = groupcache::mixInt(tex, a->second.fallback);
+            tex = groupcache::mixFloats(tex, a->second.pr, 4); tex = groupcache::mixFloats(tex, a->second.fr, 4);
+            if (a->second.primary >= 0) tex = texHash(tex, a->second.primary);
+            if (a->second.fallback >= 0) tex = texHash(tex, a->second.fallback);
+        }
+    }
+    const auto cr = crops_.find(it.layerId);
+    const float* crop = cr != crops_.end() ? cr->second.data() : nullptr;
+    uint64_t fxh = groupcache::mix(groupcache::kFnvBasis, static_cast<uint64_t>(fx.size()));
+    for (const auto& e : fx) fxh = fxkey::effectsHash(fxh, e.data(), e.size());
+    // размер холста входит в проходы эффектов (uCanvas) - часть «соли» записи
+    const uint64_t salt = groupcache::mixInt(groupcache::mixInt(groupcache::mix(groupcache::kFnvBasis, texSalt_), canvasW_), canvasH_);
+    return fxkey::layerKey(it.layerId, it.m, fxh, tex, crop, crop ? 4u : 0u, salt);
+}
+
+bool Renderer::drawFxFromCache(const Item& it, const float va[6], float reach, float opacity, int blend, uint64_t key) {
     auto e = fxCache_.find(it.layerId);
     if (e == fxCache_.end() || !e->second.tex) return false;
-    if (!frametarget::cacheEntryValid(e->second.epoch, epoch_, e->second.vw, e->second.vh, width_, height_)) return false;
+    if (!fxkey::entryValid(e->second.key, key, e->second.vw, e->second.vh, width_, height_)) return false;
     FxEntry& c = e->second;
     float d[6];
     if (!fxcache::screenDelta(va, c.va, d)) return false;
@@ -1917,7 +1949,7 @@ bool Renderer::drawFxFromCache(const Item& it, const float va[6], float reach, f
     return true;
 }
 
-void Renderer::storeFxCache(const Item& it, GLuint srcFbo, const int box[4], const float va[6]) {
+void Renderer::storeFxCache(const Item& it, GLuint srcFbo, const int box[4], const float va[6], uint64_t key) {
     const int bw = box[2], bh = box[3];
     if (!fxcache::entryAllowed(bw, bh, width_, height_)) { dropFxEntry(it.layerId); return; }
     const size_t bytes = static_cast<size_t>(bw) * static_cast<size_t>(bh) * 4u;
@@ -1960,7 +1992,7 @@ void Renderer::storeFxCache(const Item& it, GLuint srcFbo, const int box[4], con
     glBindFramebuffer(GL_FRAMEBUFFER, curFbo_);
     c.bx = box[0]; c.by = box[1];
     for (int i = 0; i < 6; ++i) c.va[i] = va[i];
-    c.epoch = epoch_;
+    c.key = key;
     c.vw = width_; c.vh = height_;
     c.used = true;
 }
@@ -2274,8 +2306,10 @@ bool Renderer::drawFrame() {
     const bool groupCacheOn = groupCacheEnabled();
 
     // Обход потока операций снизу вверх.
-    std::vector<Frame> stack;
-    std::vector<Fbo> masks;   // готовые маски «Маски по слою» (пакет 26)
+    std::vector<Frame>& stack = frameStack_;   // спринт 55: буферы переиспользуются между кадрами
+    std::vector<Fbo>& masks = frameMasks_;     // готовые маски «Маски по слою» (пакет 26)
+    stack.clear();
+    masks.clear();
     const size_t n = scene_.size();
     for (size_t i = 0; i < n; ++i) {
         const Item& it = scene_[i];
@@ -2429,7 +2463,7 @@ bool Renderer::drawFrame() {
     if (groupCacheOn) gcGroupCache();
     if (!exportMode_) drawSelection();
     glBindVertexArray(0);
-    checkGl("drawFrame");
+    if (glerr::frameCheckDue(++frameNo_, exportMode_)) checkGl("drawFrame");   // спринт 55: не каждый кадр (синхронизация драйвера)
     return !uploadQueue::empty();
 }
 

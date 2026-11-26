@@ -53,6 +53,19 @@ object ClipSpeed {
     /** Множитель времени ключей при смене скорости [old] -> [new]: 0.5x вдвое растягивает, 2x - вдвое сжимает. */
     fun stretch(old: Float, new: Float): Float = clamp(old) / clamp(new)
 
+    /**
+     * Спринт 55: множители смены скорости анимированного слоя на [target].
+     * [keySpeed] - скорость, уже применённая к ключам; [legacySpeed] - старая скорость клипа (до спринта 54 она через
+     * animFrame влияла только на дорожку трансформации самого слоя, остальные дорожки шли в 1x).
+     * keys - для ВСЕХ ключей, рисунков и ключей времени (k / t): у трансформации старая скорость уже «съедена» тем, что
+     * её ключи показывались в s раз быстрее, а остальные дорожки показывались в темпе k. length - для длины плашки
+     * ((k * s) / t): плашка показывала содержимое со скоростью k * s.
+     */
+    data class Factors(val keys: Float, val length: Float)
+
+    fun factors(keySpeed: Float, legacySpeed: Float, target: Float): Factors =
+        Factors(stretch(keySpeed, target), stretch(keySpeed * legacySpeed, target))
+
     /** Кадр после растяжения от [anchor]; кадры до якоря не двигаются. */
     fun retime(frame: Int, anchor: Int, factor: Float): Int =
         if (frame <= anchor) frame else anchor + ((frame - anchor) * factor).roundToInt()
