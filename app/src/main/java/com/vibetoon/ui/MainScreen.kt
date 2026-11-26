@@ -419,6 +419,7 @@ private fun penTakeover(vm: MainViewModel, ev: PointerEvent, gestureByTouch: Boo
  * обратный конец и кнопка, нажим с историей, наклон, отмена системой, фантом на отпускании), касания пальцем
  * поглощаются. Пока ладонь лежит, каждое новое касание пера - новый штрих. Возвращается, когда отпущены все указатели.
  */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)   // PointerInputChange.historical
 private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.penStrokesAfterTakeover(
     vm: MainViewModel, first: PointerInputChange, tracker: StylusTracker, density: Float
 ) {
