@@ -169,9 +169,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteMany(ids: Collection<String>) {
         if (ids.isEmpty()) return
         viewModelScope.launch {
-            diskLock.withLock { withContext(Dispatchers.IO) { ids.forEach { repo.delete(it) } } }
+            val failed = diskLock.withLock { withContext(Dispatchers.IO) { ids.count { runCatching { repo.delete(it) }.isFailure } } }
             refresh()
-            _note.tryEmit("Удалено проектов: ${ids.size}")
+            _note.tryEmit("Удалено проектов: ${ids.size - failed}")
+            if (failed > 0) _note.tryEmit("Не удалось удалить проектов: $failed")
         }
     }
 
@@ -338,23 +339,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // спринт 61: ошибки диска (нет места, файл занят, повреждённый project.json) - сообщение, а не вылет приложения;
+    // операции идут под тем же замком диска, что и перенос в папку (без гонки записи заголовка)
     fun rename(id: String, name: String) {
+        val clean = com.vibetoon.domain.project.ProjectListMath.cleanProjectName(name)
+        if (clean.isEmpty()) { _note.tryEmit("Имя проекта не может быть пустым"); return }
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { repo.rename(id, name) }
+            val ok = diskLock.withLock { withContext(Dispatchers.IO) { runCatching { repo.rename(id, clean) }.isSuccess } }
+            if (!ok) _note.tryEmit("Не удалось переименовать проект")
             refresh()
         }
     }
 
     fun duplicate(id: String) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { repo.duplicate(id) }
+            val copy = diskLock.withLock { withContext(Dispatchers.IO) { runCatching { repo.duplicate(id) }.getOrNull() } }
+            if (copy == null) _note.tryEmit("Не удалось создать копию проекта")
             refresh()
         }
     }
 
     fun delete(id: String) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { repo.delete(id) }
+            val ok = diskLock.withLock { withContext(Dispatchers.IO) { runCatching { repo.delete(id) }.isSuccess } }
+            if (!ok) _note.tryEmit("Не удалось удалить проект")
             refresh()
         }
     }

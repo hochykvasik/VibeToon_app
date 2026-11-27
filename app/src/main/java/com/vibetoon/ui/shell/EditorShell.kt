@@ -695,7 +695,15 @@ private fun TopBar(
     }
     var more by remember { mutableStateOf(false) }
 
+    val refocus = com.vibetoon.ui.theme.LocalAppSettings.current?.refocusButton == true
+    val barFade = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // спринт 61: правая группа кнопок - полоса с прокруткой (ActionBarLayout): на узком телефоне кнопки не сжимаются,
+        // имя проекта получает не меньше 96 dp и сокращается «…»
+        val leftButtons = if (compact) 2 else 3
+        val rightButtons = (if (refocus) 1 else 0) + 3 + (if (compact) 1 else 2) + (if (wide) 3 else 1)   // кнопка Export с подписью - как две
+        val plan = com.vibetoon.domain.ui.ActionBarLayout.plan(maxWidth.value - 8f - leftButtons * 42f, rightButtons, hasTitle = true, leftHanded = false, buttonDp = 42f)
         Row(
             Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -741,35 +749,41 @@ private fun TopBar(
                 name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
             )
-            if (com.vibetoon.ui.theme.LocalAppSettings.current?.refocusButton == true) {
-                Box(Modifier.size(40.dp).combinedClickable(onClick = {}, onDoubleClick = vm::resetCamera), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.CropFree, com.vibetoon.ui.i18n.L("Дважды нажмите, чтобы сбросить вид холста"), modifier = Modifier.size(22.dp))
+            val acts = buildList<@Composable () -> Unit> {
+                if (refocus) add {
+                    Box(Modifier.size(40.dp).combinedClickable(onClick = {}, onDoubleClick = vm::resetCamera), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.CropFree, com.vibetoon.ui.i18n.L("Дважды нажмите, чтобы сбросить вид холста"), modifier = Modifier.size(22.dp))
+                    }
                 }
-            }
-            BarIcon(Icons.Default.AutoAwesome, "FX: вкл — правки пишутся в ключи, выкл — в базовую форму", active = fxOn) { vm.toggleFx() }
-            BarIcon(Icons.Default.Undo, "Отменить", enabled = canUndo && !playing) { vm.undo() }
-            BarIcon(Icons.Default.Redo, "Повторить", enabled = canRedo && !playing) { vm.redo() }
-            if (compact) IconButton(onClick = onExport, modifier = Modifier.size(40.dp).coachTarget("Export")) {
-                Icon(Icons.Default.IosShare, com.vibetoon.ui.i18n.L("Экспорт…"), modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
-            } else Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(34.dp).coachTarget("Export")) {
-                Text("Export", fontSize = 13.sp, maxLines = 1)
-            }
-            if (wide) {
-                BarIcon(Icons.Default.Settings, "Настройки", onClick = onSettings)
-                BarIcon(Icons.Default.Fullscreen, "Полный экран", onClick = onFullscreen)
-                BarIcon(Icons.Default.ViewSidebar, "Правая панель", active = rightOpen, onClick = onToggleRight)
-            } else {
-                // телефон: второстепенное прячется в меню "Ещё"
-                Box {
-                    BarIcon(Icons.Default.MoreVert, "Ещё") { more = true }
-                    DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
-                        if (compact) DropdownMenuItem(text = { Text("Библиотека") }, onClick = { more = false; showLibrary = true })
-                        DropdownMenuItem(text = { Text("Настройки") }, onClick = { more = false; onSettings() })
-                        DropdownMenuItem(text = { Text("Полный экран") }, onClick = { more = false; onFullscreen() })
-                        DropdownMenuItem(text = { Text(if (rightOpen) "Скрыть правую панель" else "Показать правую панель") }, onClick = { more = false; onToggleRight() })
+                add { BarIcon(Icons.Default.AutoAwesome, "FX: вкл — правки пишутся в ключи, выкл — в базовую форму", active = fxOn) { vm.toggleFx() } }
+                add { BarIcon(Icons.Default.Undo, "Отменить", enabled = canUndo && !playing) { vm.undo() } }
+                add { BarIcon(Icons.Default.Redo, "Повторить", enabled = canRedo && !playing) { vm.redo() } }
+                add {
+                    if (compact) IconButton(onClick = onExport, modifier = Modifier.size(40.dp).coachTarget("Export")) {
+                        Icon(Icons.Default.IosShare, com.vibetoon.ui.i18n.L("Экспорт…"), modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                    } else Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(34.dp).coachTarget("Export")) {
+                        Text("Export", fontSize = 13.sp, maxLines = 1)
+                    }
+                }
+                if (wide) {
+                    add { BarIcon(Icons.Default.Settings, "Настройки", onClick = onSettings) }
+                    add { BarIcon(Icons.Default.Fullscreen, "Полный экран", onClick = onFullscreen) }
+                    add { BarIcon(Icons.Default.ViewSidebar, "Правая панель", active = rightOpen, onClick = onToggleRight) }
+                } else add {
+                    // телефон: второстепенное прячется в меню "Ещё"
+                    Box {
+                        BarIcon(Icons.Default.MoreVert, "Ещё") { more = true }
+                        DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                            if (compact) DropdownMenuItem(text = { Text("Библиотека") }, onClick = { more = false; showLibrary = true })
+                            DropdownMenuItem(text = { Text("Настройки") }, onClick = { more = false; onSettings() })
+                            DropdownMenuItem(text = { Text("Полный экран") }, onClick = { more = false; onFullscreen() })
+                            DropdownMenuItem(text = { Text(if (rightOpen) "Скрыть правую панель" else "Показать правую панель") }, onClick = { more = false; onToggleRight() })
+                        }
                     }
                 }
             }
+            ActionStrip(plan.stripDp.dp, mirrored = false, items = acts, fade = barFade)
+        }
         }
     }
 }

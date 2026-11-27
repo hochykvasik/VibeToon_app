@@ -374,6 +374,8 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Некорректное число точек Warp" to R.string.ui_invalid_number_of_warp_points,
     "Некорректная точка Warp" to R.string.ui_invalid_warp_point,
     "Неожиданный конец" to R.string.ui_unexpected_end,
+    "Слишком глубокая вложенность" to R.string.ui_nesting_is_too_deep,
+    "Повреждённый файл проекта: Неверные данные" to R.string.ui_damaged_project_file_invalid_data,
     "Неверное число" to R.string.ui_invalid_number,
     "Строка не закрыта" to R.string.ui_unterminated_string,
     "Обрыв экранирования" to R.string.ui_incomplete_escape,
@@ -2077,6 +2079,10 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Свернуть подсказку" to R.string.ui_collapse_the_hint,
     "Развернуть подсказку" to R.string.ui_expand_the_hint,
     "Закрыть урок" to R.string.ui_close_the_lesson,
+    "Имя проекта не может быть пустым" to R.string.ui_the_project_name_cannot_be_empty,
+    "Не удалось переименовать проект" to R.string.ui_could_not_rename_the_project,
+    "Не удалось создать копию проекта" to R.string.ui_could_not_duplicate_the_project,
+    "Не удалось удалить проект" to R.string.ui_could_not_delete_the_project,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -2183,6 +2189,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Фигура\\ «(.+?)»\\ добавлена\\ в\\ векторный\\ слой\$" to R.string.ui_shape_added_to_the_vector_layer,
     "^Кадры\\ разного\\ размера\\ растянуты\\ до\\ (.+?)×(.+?)\$" to R.string.ui_frames_of_different_sizes_stretched_,
     "^Нет\\ совместимого\\ кодека\\ H\\.264\\ для\\ (.+?)×(.+?)\$" to R.string.ui_no_compatible_h_264_codec_for,
+    "^Максимальная\\ длина\\ рисунка:\\ (.+?)\\ кадров\$" to R.string.ui_maximum_drawing_length_frames,
     "^Не\\ найдена\\ вложенная\\ композиция\\ «(.+?)»\$" to R.string.ui_nested_composition_not_found,
     "^Завершение\\ до\\ последнего\\ кадра\\ \\((.+?)/(.+?)\\)\$" to R.string.ui_finished_before_the_last_frame,
     "^Нет\\ совместимого\\ кодека\\ HEVC\\ для\\ (.+?)×(.+?)\$" to R.string.ui_no_compatible_hevc_codec_for,
@@ -2211,6 +2218,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Новый\\ слой\\ «(.+?)»:\\ рисуйте\\ кистью\$" to R.string.ui_new_layer_draw_with_the_brush,
     "^Перенесено\\ замков\\ слоёв\\ PSD:\\ (.+?)\$" to R.string.ui_psd_layer_locks_imported,
     "^Частота\\ кадров\\ (.+?)\\ округлена\\ до\\ (.+?)\$" to R.string.ui_frame_rate_rounded_to,
+    "^Не\\ удалось\\ удалить\\ проектов:\\ (.+?)\$" to R.string.ui_projects_that_could_not_be_deleted,
     "^(.+?):\\ текстур\\ (.+?)\\ \\((.+?)\\ МБ\\)\\.\\ Выделено:\\ (.+?)\$" to R.string.ui_textures_mb_selected,
     "^Переход\\ к\\ следующему\\ ключу:\\ (.+?)\$" to R.string.ui_transition_to_the_next_key,
     "^Добавлен\\ слой\\ «(.+?)»\\ \\(выбрано:\\ (.+?)\\)\$" to R.string.ui_added_layer_selected,

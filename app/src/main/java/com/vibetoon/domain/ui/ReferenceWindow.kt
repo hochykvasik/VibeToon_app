@@ -36,10 +36,14 @@ object ReferenceWindow {
 
     /** Окно целиком внутри области (если область меньше окна - прижато к левому верхнему углу). */
     fun clamp(f: Frame, aspect: Float, areaW: Float, areaH: Float): Frame {
-        val w = f.w.coerceIn(MIN_W, maxW(areaW))
-        val (_, h) = size(f.copy(w = w), aspect, areaW, areaH)
-        val x = f.x.coerceIn(0f, max(0f, areaW - w))
-        val y = f.y.coerceIn(0f, max(0f, areaH - h))
+        // спринт 61: нечисловые координаты (область ещё не измерена при повороте, испорченная рамка) раньше проходили
+        // coerceIn как NaN - окно исчезало с экрана, и вернуть его было нельзя; теперь - угол области и ширина по умолчанию
+        val aw = if (areaW.isFinite()) max(0f, areaW) else 0f
+        val ah = if (areaH.isFinite()) max(0f, areaH) else 0f
+        val w = (if (f.w.isFinite()) f.w else DEFAULT_W).coerceIn(MIN_W, maxW(aw))
+        val (_, h) = size(f.copy(w = w), aspect, aw, ah)
+        val x = (if (f.x.isFinite()) f.x else 0f).coerceIn(0f, max(0f, aw - w))
+        val y = (if (f.y.isFinite()) f.y else 0f).coerceIn(0f, max(0f, ah - h))
         return f.copy(x = x, y = y, w = w)
     }
 

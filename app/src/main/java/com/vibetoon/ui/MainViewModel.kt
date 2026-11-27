@@ -6263,7 +6263,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val cur = FrameMath.active(m.cells, _frame.value) ?: return
         val len0 = FrameMath.lengthOf(m.cells, cur, duration())
-        val next = (len0 + delta).coerceAtLeast(1)
+        // спринт 61: «+» - не длиннее 48 кадров (шкала 1–48), «−» - не короче 1
+        val next = FrameMath.nudgedLength(len0, delta, MAX_FRAME_HOLD)
+        if (next == null) {
+            if (delta > 0 && len0 >= MAX_FRAME_HOLD) _state.value = UiState.Message("Максимальная длина рисунка: $MAX_FRAME_HOLD кадров")
+            return
+        }
         val list = FrameMath.withLength(m.cells, _frame.value, next)
         val now = list.firstOrNull { it.start == cur.start } ?: return
         if (FrameMath.lengthOf(list, now, duration()) == len0) return   // спринт 52: упёрлись в соседний рисунок или в 1

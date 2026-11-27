@@ -198,13 +198,14 @@ class AppSettings(context: Context) {
         val cur = p.all
         val e = p.edit()
         for ((k, v) in values) {
-            when (cur[k]) {
-                is Float -> (v as? Number)?.let { e.putFloat(k, it.toFloat()) }
-                is Long -> (v as? Number)?.let { e.putLong(k, it.toLong()) }
-                is Int -> (v as? Number)?.let { e.putInt(k, it.toInt()) }
-                is Boolean -> (v as? Boolean)?.let { e.putBoolean(k, it) }
-                is String -> (v as? String)?.let { e.putString(k, it) }
-                else -> when (v) { is Boolean -> e.putBoolean(k, v); is Int -> e.putInt(k, v); is Float -> e.putFloat(k, v); is String -> e.putString(k, v) }
+            // спринт 61: тип - по текущему значению ключа (SettingsBackup.restorable), неподходящее пропускается
+            when (val r = com.vibetoon.domain.settings.SettingsBackup.restorable(cur[k], v)) {
+                is Float -> e.putFloat(k, r)
+                is Long -> e.putLong(k, r)
+                is Int -> e.putInt(k, r)
+                is Boolean -> e.putBoolean(k, r)
+                is String -> e.putString(k, r)
+                else -> Unit
             }
         }
         e.commit()
