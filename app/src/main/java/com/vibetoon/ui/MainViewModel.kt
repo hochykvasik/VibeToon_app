@@ -671,7 +671,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         meshTrackCache.clear(); meshEdgeCache.clear(); liqPsdCache = null
         // спринт 49: кэши по id слоя - у слоёв нового проекта те же маленькие id: границы содержимого (рамка выделения,
         // лассо костей), «уже показанные» кадры ячеек, призраки и текст с эффектами прошлого проекта не должны к ним прилипать
-        contentBox.clear(); ghostShown.clear(); cellShown.clear(); textFxKeys.clear(); pauseCapture.clear()
+        contentBox.clear(); boxGate.clear(); ghostShown.clear(); cellShown.clear(); textFxKeys.clear(); pauseCapture.clear()
         _lassoLayers.value = emptySet(); lassoPts = ArrayList(); pointDownAt = 0L
         brushLive = null; brushDirty.clear(); cutRemoved.clear(); meshLast = null; _brushCircle.value = null; meshActive = -1
         residency.clear(); everEdited.clear(); lastEvictable = null   // пакет 29: учёт памяти текстур - заново
@@ -2947,7 +2947,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val byId = layers.associateBy { it.id }
         val chain = ArrayList<Int>()
         var cur = byId[leaf]
-        while (cur != null) {
+        val seen = HashSet<Int>()   // спринт 60: цикл в данных родителей не вешает тап по холсту
+        while (cur != null && seen.add(cur.id)) {
             chain += cur.id
             cur = byId[cur.parentId]
         }
@@ -4042,6 +4043,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refreshFxState()
         _turb.value = turbTarget()?.let { turbEffective(it) }
         textJob?.cancel()
+        // спринт 60: границы содержимого изменённых, удалённых и вернувшихся слоёв и всех экземпляров символов считаются
+        // заново (после Undo «Создать символ» новый экземпляр мог получить тот же id и чужую рамку)
+        val oldById = oldMedia.associateBy { it.id }
+        val newById = media.associateBy { it.id }
+        for (id in oldById.keys + newById.keys) if (oldById[id] != newById[id] || newById[id]?.kind == MediaKind.SYMBOL) dropBox(id)
         rebuildLayers()
         val known = layers.mapTo(HashSet()) { it.id } + media.filter { !it.isVisual }.map { it.id } + _bones.value.map { it.id }
         val keep = _selection.value.filter { it in known }.toSet()
@@ -5041,7 +5047,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (!uploaded) { formFails[key] = 3; formFailAt[key] = SystemClock.uptimeMillis(); continue }
                 formCache.budgetBytes = FORM_BUDGET_BYTES
                 val drop = formCache.put(key, SymbolFormCache.Entry(id, prepared.second, bytes, gen), pinnedForms())
-                for (inst in media) if (inst.kind == MediaKind.SYMBOL && inst.symRef == key.def) contentBox.remove(inst.id)   // спринт 54: рамка по формам
+                for (inst in media) if (inst.kind == MediaKind.SYMBOL && inst.symRef == key.def) dropBox(inst.id)   // спринт 54: рамка по формам
                 dropFormTexturesLater(drop)
                 verifyFormTexture(key, id, 0)
                 refreshFormAliases()
@@ -5445,11 +5451,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * можно вкладывать друг в друга (до [MAX_SYMBOL_DEPTH] уровней).
      */
     fun createSymbol(fromId: Int? = null, asFrames: Boolean = false) {
+        // Спринт 60: любая непредвиденная ошибка не роняет приложение и не оставляет полусозданный символ -
+        // состояние откатывается к записи Undo, сделанной перед созданием
+        val undoBefore = undoStack.size
+        try {
+            createSymbolChecked(fromId, asFrames)
+        } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+        catch (t: Throwable) {
+            Log.e("VT/Symbols", "create symbol failed", t)
+            if (undoStack.size > undoBefore) runCatching { undo(); redoStack.clear(); updateHistoryFlags() }
+            _state.value = UiState.Error("Не удалось создать символ: ${t.message ?: t.javaClass.simpleName}")
+        }
+    }
+
+    private fun createSymbolChecked(fromId: Int?, asFrames: Boolean) {
         if (_playing.value) return
         if (_editingSymbol.value != null) { _state.value = UiState.Message("Создавайте символ на главной сцене: выйдите из редактирования символа"); return }
-        if (fromId != null && fromId !in _selection.value) selectLayer(fromId)
-        val sel = _selection.value.filter { it < BONE_ID_BASE }.toSet()
+        if (fromId != null && fromId !in _selection.value && layers.any { it.id == fromId }) selectLayer(fromId)
+        // спринт 60: только существующие слои (выделение могло пережить удаление/Undo), без костей
+        val known = layers.mapTo(HashSet()) { it.id }
+        val sel = _selection.value.filter { it < BONE_ID_BASE && it in known }.toSet()
         if (sel.isEmpty()) { _state.value = UiState.Message("Выберите слои для символа"); return }
+        if (sel.any { isLockedId(it) }) { lockedNotice(); return }
         val all = HashSet<Int>(sel)
         for (s in sel) all += symbolMembers(s)
         if (media.any { it.id in all && it.kind == MediaKind.GROUP && it.symDur > 0 }) { _state.value = UiState.Message("Определение символа нельзя класть в символ: берите его экземпляр"); return }
@@ -5457,8 +5480,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (deepest + 1 > MAX_SYMBOL_DEPTH) { _state.value = UiState.Message("Слишком глубокая вложенность символов (максимум $MAX_SYMBOL_DEPTH)"); return }
         val single = sel.singleOrNull()?.let { s -> media.firstOrNull { it.id == s && it.kind == MediaKind.GROUP } }
         // «Слои как кадры»: выбранные слои по порядку снизу вверх (только обычные слои, не группы)
-        val frameLeaves = if (asFrames && single == null) sel.filter { id -> layers.any { it.id == id && it.kind == LayerKind.LAYER } }.sortedBy { id -> layers.indexOfFirst { it.id == id } } else emptyList()
-        val plan = if (frameLeaves.size >= 2) SymbolMath.framesPlan(frameLeaves, frameLeaves.map { id -> layers.first { it.id == id }.name }, frameName = { "${dn(SymbolMath.DEFAULT_FRAME)} $it" }) else null
+        val byId = layers.associateBy { it.id }
+        val frameLeaves = if (asFrames && single == null) SymbolMath.frameLeaves(sel, layers.map { it.id }) { id -> byId[id]?.kind == LayerKind.LAYER } else emptyList()
+        val plan = if (frameLeaves.size >= 2) SymbolMath.framesPlan(frameLeaves, frameLeaves.map { id -> byId[id]?.name.orEmpty() }, frameName = { "${dn(SymbolMath.DEFAULT_FRAME)} $it" }) else null
+        val stackNote = asFrames && plan == null   // «Слои как кадры» без двух обычных слоёв - символ стопкой, с пояснением
         val gid: Int
         if (single != null) gid = single.id
         else {
@@ -5490,6 +5515,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (plan != null) regenMarkerThumbs(gid, force = false)
         _state.value = UiState.Message(
             if (plan != null) "Символ «Символ $n»: слои стали кадрами (${plan.duration}), маркеры по именам слоёв. Двойной тап открывает его"
+            else if (stackNote) "Для «Слоёв как кадров» нужны минимум два обычных слоя: символ «Символ $n» создан стопкой"
             else "Символ «Символ $n» создан: двойной тап по нему открывает редактирование"
         )
     }
@@ -5526,8 +5552,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun addFrameMarker(name: String) {
         val gid = _editingSymbol.value ?: return
         val i = media.indexOfFirst { it.id == gid }
-        val clean = SymbolForms.uniqueName(media.getOrNull(i)?.markers.orEmpty(), name.trim().take(24), _frame.value)
-        if (clean.isBlank() || i < 0) return
+        val raw = name.trim().take(24)
+        if (raw.isBlank() || i < 0) return   // спринт 60: пустое имя не превращается в « 2»
+        val clean = SymbolForms.uniqueName(media[i].markers, raw, _frame.value)
         checkpoint("fmarker", force = true)
         media[i] = media[i].copy(markers = SymbolMath.withMarker(media[i].markers, FrameMarker(_frame.value, clean)))
         refreshSymbolState(); markDirty()
@@ -6236,7 +6263,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val cur = FrameMath.active(m.cells, _frame.value) ?: return
         val len0 = FrameMath.lengthOf(m.cells, cur, duration())
-        val next = (len0 + delta).coerceAtLeast(1)
+        // спринт 61: «+» - не длиннее 48 кадров (шкала 1–48), «−» - не короче 1
+        val next = FrameMath.nudgedLength(len0, delta, MAX_FRAME_HOLD)
+        if (next == null) {
+            if (delta > 0 && len0 >= MAX_FRAME_HOLD) _state.value = UiState.Message("Максимальная длина рисунка: $MAX_FRAME_HOLD кадров")
+            return
+        }
         val list = FrameMath.withLength(m.cells, _frame.value, next)
         val now = list.firstOrNull { it.start == cur.start } ?: return
         if (FrameMath.lengthOf(list, now, duration()) == len0) return   // спринт 52: упёрлись в соседний рисунок или в 1
@@ -6434,7 +6466,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val lowest = com.vibetoon.domain.model.StackOrder.visual(layers).firstOrNull { it in leaf }
             val parentOf = layers.associate { it.id to it.parentId }
             var anchor = lowest
-            while (anchor != null && (parentOf[anchor] ?: -1) >= 0) anchor = parentOf[anchor]
+            val anchorSeen = HashSet<Int>()   // спринт 60: защита от цикла родителей
+            while (anchor != null && (parentOf[anchor] ?: -1) >= 0 && anchorSeen.add(anchor)) anchor = parentOf[anchor]
             val rootBefore = com.vibetoon.domain.model.StackOrder.children(layers, -1)
             applySelection(leaf, leaf.last())
             deleteSelected(cp = false)
@@ -11312,8 +11345,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun invalidateThumb(id: Int) {
         // спринт 54: во время Play (смена рисунков покадровки каждый кадр) миниатюра и рамка не пересчитываются -
         // это GL-чтения посреди проигрывания (микрофризы); всё отложенное обновится на паузе
-        if (_playing.value) { contentBox.remove(id); staleAfterPlay += id; return }
-        thumbs.remove(id); contentBox.remove(id); contentBoxScheduled(id)
+        if (_playing.value) { dropBox(id); staleAfterPlay += id; return }
+        thumbs.remove(id); dropBox(id); contentBoxScheduled(id)
     }
 
     /** Спринт 54: слои, чьи миниатюры устарели во время Play. */
@@ -11331,9 +11364,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val contentBox = java.util.concurrent.ConcurrentHashMap<Int, FloatArray>()   // пустой массив - слой пуст, [-1] - данных нет (не текстура)
     private val NO_BOX = floatArrayOf(-1f)
 
+    /** Спринт 60: не больше одного расчёта границ на слой, без расчёта «по кругу» (см. ContentBoxGate - причина ANR). */
+    private val boxGate = com.vibetoon.domain.project.ContentBoxGate()
+
+    /** Границы слоя устарели: убрать из кэша и разрешить новый расчёт. */
+    private fun dropBox(id: Int) { contentBox.remove(id); boxGate.forget(id) }
+
     private fun contentBoxScheduled(id: Int) {
         if (id >= BONE_ID_BASE && id < MEDIA_ID_BASE) return
-        viewModelScope.launch { ensureBox(id); updateSelectionFrame() }
+        if (!boxGate.begin(id)) return
+        // Dispatchers.Main (не immediate): расчёт идёт отдельной задачей главного потока, а не внутри вызвавшей его
+        // перерисовки рамки - даже при ошибке в правилах кадр и ввод успевают обработаться между попытками
+        viewModelScope.launch(Dispatchers.Main) {
+            var cached = false
+            try {
+                ensureBox(id)
+                cached = contentBox[id] != null
+            } catch (t: kotlinx.coroutines.CancellationException) { throw t }
+            catch (t: Throwable) { Log.w("VT/Edit", "content box $id failed", t) }
+            finally {
+                // слой правили, пока шёл расчёт: старые границы не кэшируются, расчёт повторится по новым данным
+                val stale = boxGate.takeStale(id)
+                if (stale) contentBox.remove(id)
+                if (boxGate.end(id, cached || stale) && projectId != null) runCatching { updateSelectionFrame() }
+            }
+        }
     }
 
     /** Считает границы содержимого слоя в фоне (карта альфы уже лежит в C++, читается без текстуры); результат кэшируется до следующей правки слоя. */

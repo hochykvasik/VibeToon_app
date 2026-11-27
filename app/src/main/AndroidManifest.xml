@@ -18,12 +18,13 @@
         <!-- Спринт 59: сборка не debuggable (быстрее), но профилируется: Android Studio Profiler и Perfetto видят процесс -->
         <profileable android:shell="true" tools:targetApi="29" />
         <!-- Спринт 56: singleTask - уведомление и значок возвращают то же окно (а не второй экземпляр с экраном
-             проектов); configChanges - смена размера окна, темы, клавиатуры не пересоздаёт экран и не обрывает экспорт -->
+             проектов); configChanges - смена размера окна, темы, клавиатуры не пересоздаёт экран и не обрывает экспорт;
+             спринт 60: fullUser - портрет и ландшафт (с учётом блокировки поворота), поворот не пересоздаёт экран -->
         <activity
             android:name=".MainActivity"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullUser"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>

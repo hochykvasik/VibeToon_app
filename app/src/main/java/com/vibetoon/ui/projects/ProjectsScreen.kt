@@ -82,6 +82,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vibetoon.domain.project.ProjectMath
@@ -303,56 +304,93 @@ fun ProjectsScreen(app: AppViewModel) {
         containerColor = MaterialTheme.colorScheme.background
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+            // спринт 61: строка действий не сжимает кнопки - они полного размера в полосе с прокруткой (ActionBarLayout)
+            val leftHanded = com.vibetoon.ui.theme.LocalAppSettings.current?.leftHanded == true
+            val barFade = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val inlineSearch = com.vibetoon.domain.ui.ActionBarLayout.inlineSearch(maxWidth.value)
+            val barW = (maxWidth - 24.dp).coerceAtLeast(0.dp)
+            Column {
             Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
                 Row(
                     Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (selected.isNotEmpty()) {
                         // спринт 46: режим выделения (долгое нажатие): перенос в папку и удаление нескольких проектов
-                        IconButton(onClick = { selected = emptySet() }) { Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Снять выделение")) }
-                        Text(com.vibetoon.ui.i18n.L("Выбрано: ${selected.size}"), fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1)
-                        TextButton({ selected = selected + shown.map { it.id } }) { Text("Выбрать все", maxLines = 1) }
-                        TextButton({ moving = selected.toList() }) {
-                            Icon(Icons.Default.Folder, null, Modifier.size(18.dp)); Text("В папку", Modifier.padding(start = 4.dp), maxLines = 1)
+                        val acts = buildList<@Composable () -> Unit> {
+                            add { TextButton({ selected = selected + shown.map { it.id } }) { Text("Выбрать все", maxLines = 1, softWrap = false) } }
+                            add { TextButton({ moving = selected.toList() }) {
+                                Icon(Icons.Default.Folder, null, Modifier.size(18.dp)); Text("В папку", Modifier.padding(start = 4.dp), maxLines = 1, softWrap = false)
+                            } }
+                            // спринт 47: внутри папки - сразу вынести выбранные проекты в «Мои работы»
+                            if (folder.isNotEmpty()) add { TextButton({ app.moveToFolder(selected.toList(), ""); selected = emptySet() }) { Text("Убрать из папки", maxLines = 1, softWrap = false) } }
+                            add { TextButton({ deletingMany = selected.toList() }) {
+                                Icon(Icons.Default.Delete, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
+                                Text("Удалить", Modifier.padding(start = 4.dp), maxLines = 1, softWrap = false, color = MaterialTheme.colorScheme.error)
+                            } }
                         }
-                        // спринт 47: внутри папки - сразу вынести выбранные проекты в «Мои работы»
-                        if (folder.isNotEmpty()) TextButton({ app.moveToFolder(selected.toList(), ""); selected = emptySet() }) { Text("Убрать из папки", maxLines = 1) }
-                        TextButton({ deletingMany = selected.toList() }) {
-                            Icon(Icons.Default.Delete, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
-                            Text("Удалить", Modifier.padding(start = 4.dp), maxLines = 1, color = MaterialTheme.colorScheme.error)
+                        // подписи кнопок шире значков: считаем по ~110 dp на кнопку, заголовок «Выбрано: N» - со «…»
+                        val plan = com.vibetoon.domain.ui.ActionBarLayout.plan(barW.value - 48f, acts.size, hasTitle = true, leftHanded = leftHanded, buttonDp = 110f)
+                        val close: @Composable () -> Unit = { IconButton(onClick = { selected = emptySet() }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Снять выделение")) } }
+                        val title: @Composable () -> Unit = {
+                            Text(com.vibetoon.ui.i18n.L("Выбрано: ${selected.size}"), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.width(plan.titleDp.dp))
                         }
+                        val strip: @Composable () -> Unit = { com.vibetoon.ui.shell.ActionStrip(plan.stripDp.dp, plan.mirrored, acts, fade = barFade) }
+                        if (plan.mirrored) { strip(); title(); close() } else { close(); title(); strip() }
                     } else {
-                    Text("Ваши проекты", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { showNew = true }) { Icon(Icons.Default.Add, com.vibetoon.ui.i18n.L("Создать проект")) }
-                    if (searchOn) androidx.compose.material3.OutlinedTextField(
-                        query, { query = it }, singleLine = true, placeholder = { Text("Поиск") },
-                        modifier = Modifier.width(220.dp).height(52.dp)
-                    )
-                    IconButton(onClick = { searchOn = !searchOn; if (!searchOn) query = "" }) { Icon(Icons.Default.Search, com.vibetoon.ui.i18n.L("Поиск")) }
-                    Box {
-                        IconButton(onClick = { sortMenu = true }) { Icon(Icons.Default.SwapVert, com.vibetoon.ui.i18n.L("Сортировка")) }
-                        DropdownMenu(sortMenu, { sortMenu = false }) {
-                            // спринт 46: дата и размер в обе стороны, имя, свой порядок (перетаскивание карточек)
-                            for (s in com.vibetoon.domain.project.ProjectSort.values())
-                                DropdownMenuItem(text = { Text((if (sortBy == s) "✓ " else "") + com.vibetoon.ui.i18n.L(com.vibetoon.domain.project.ProjectListMath.sortLabel(s))) }, onClick = { app.setSort(s); sortMenu = false })
+                        val acts = buildList<@Composable () -> Unit> {
+                            add { IconButton(onClick = { showNew = true }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Add, com.vibetoon.ui.i18n.L("Создать проект")) } }
+                            if (searchOn && inlineSearch) add {
+                                androidx.compose.material3.OutlinedTextField(
+                                    query, { query = it }, singleLine = true, placeholder = { Text("Поиск") },
+                                    modifier = Modifier.width(220.dp).height(52.dp)
+                                )
+                            }
+                            add { IconButton(onClick = { searchOn = !searchOn; if (!searchOn) query = "" }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Search, com.vibetoon.ui.i18n.L("Поиск")) } }
+                            add { Box {
+                                IconButton(onClick = { sortMenu = true }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.SwapVert, com.vibetoon.ui.i18n.L("Сортировка")) }
+                                DropdownMenu(sortMenu, { sortMenu = false }) {
+                                    // спринт 46: дата и размер в обе стороны, имя, свой порядок (перетаскивание карточек)
+                                    for (s in com.vibetoon.domain.project.ProjectSort.values())
+                                        DropdownMenuItem(text = { Text((if (sortBy == s) "✓ " else "") + com.vibetoon.ui.i18n.L(com.vibetoon.domain.project.ProjectListMath.sortLabel(s))) }, onClick = { app.setSort(s); sortMenu = false })
+                                }
+                            } }
+                            add { IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Download, com.vibetoon.ui.i18n.L("Импорт")) } }
+                            add { Box {
+                                IconButton(onClick = { exportMenu = true }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Upload, com.vibetoon.ui.i18n.L("Экспорт")) }
+                                DropdownMenu(exportMenu, { exportMenu = false }) {
+                                    if (allProjects.isEmpty()) DropdownMenuItem(text = { Text("Проектов пока нет") }, onClick = { exportMenu = false })
+                                    for (p in allProjects) DropdownMenuItem(text = { Text("Копия .tsproj: ${p.name}", maxLines = 1) }, onClick = { exportMenu = false; backupFor = p.id; exportLauncher.launch("${p.name}.tsproj") })
+                                    DropdownMenuItem(text = { Text("Очистить кэш и лишние файлы") }, onClick = { exportMenu = false; app.cleanUp() })
+                                }
+                            } }
+                            add { IconButton(onClick = { newFolder = true }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.CreateNewFolder, com.vibetoon.ui.i18n.L("Создать папку")) } }
+                            add { IconButton(onClick = { article = TUTORIALS.firstOrNull() }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.HelpOutline, com.vibetoon.ui.i18n.L("Справка")) } }
+                            add { IconButton(onClick = { showSettings = true }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Settings, com.vibetoon.ui.i18n.L("Настройки")) } }
                         }
-                    }
-                    IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Download, com.vibetoon.ui.i18n.L("Импорт")) }
-                    Box {
-                        IconButton(onClick = { exportMenu = true }) { Icon(Icons.Default.Upload, com.vibetoon.ui.i18n.L("Экспорт")) }
-                        DropdownMenu(exportMenu, { exportMenu = false }) {
-                            if (allProjects.isEmpty()) DropdownMenuItem(text = { Text("Проектов пока нет") }, onClick = { exportMenu = false })
-                            for (p in allProjects) DropdownMenuItem(text = { Text("Копия .tsproj: ${p.name}", maxLines = 1) }, onClick = { exportMenu = false; backupFor = p.id; exportLauncher.launch("${p.name}.tsproj") })
-                            DropdownMenuItem(text = { Text("Очистить кэш и лишние файлы") }, onClick = { exportMenu = false; app.cleanUp() })
+                        val searchInBar = searchOn && inlineSearch
+                        val plan = com.vibetoon.domain.ui.ActionBarLayout.plan(barW.value, acts.size - (if (searchInBar) 1 else 0), hasTitle = true, leftHanded = leftHanded,
+                            extraDp = if (searchInBar) 220f else 0f)
+                        val title: @Composable () -> Unit = {
+                            Text("Ваши проекты", fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.width(plan.titleDp.dp),
+                                textAlign = if (plan.mirrored) androidx.compose.ui.text.style.TextAlign.End else androidx.compose.ui.text.style.TextAlign.Start)
                         }
-                    }
-                    IconButton(onClick = { newFolder = true }) { Icon(Icons.Default.CreateNewFolder, com.vibetoon.ui.i18n.L("Создать папку")) }
-                    IconButton(onClick = { article = TUTORIALS.firstOrNull() }) { Icon(Icons.Default.HelpOutline, com.vibetoon.ui.i18n.L("Справка")) }
-                    IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, com.vibetoon.ui.i18n.L("Настройки")) }
+                        val strip: @Composable () -> Unit = { com.vibetoon.ui.shell.ActionStrip(plan.stripDp.dp, plan.mirrored, acts, fade = barFade) }
+                        if (plan.mirrored) { strip(); title() } else { title(); strip() }
                     }
                 }
+            }
+            // телефон: поиск - отдельной строкой во всю ширину под строкой действий
+            if (searchOn && !inlineSearch && selected.isEmpty()) Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+                androidx.compose.material3.OutlinedTextField(
+                    query, { query = it }, singleLine = true, placeholder = { Text("Поиск") },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
+            }
             }
             LazyVerticalGrid(
                 state = grid,

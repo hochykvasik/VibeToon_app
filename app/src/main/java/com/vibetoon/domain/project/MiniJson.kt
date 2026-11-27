@@ -8,6 +8,13 @@ class JsonException(message: String) : Exception(message)
  * числа как Double, остальное: String, Boolean, null.
  */
 object MiniJson {
+    /**
+     * Спринт 61: предел вложенности объектов и массивов. Повреждённый файл вида «[[[[…» (десятки тысяч скобок)
+     * раньше переполнял стек разбора (StackOverflowError - не JsonException), и приложение падало при открытии
+     * проекта или резервной копии. Настоящие проекты не глубже нескольких десятков уровней.
+     */
+    const val MAX_DEPTH = 200
+
     fun parse(text: String): Any? {
         val p = Parser(text)
         p.skipWs()
@@ -106,6 +113,12 @@ object MiniJson {
 
     private class Parser(private val s: String) {
         var pos = 0
+        private var depth = 0
+
+        private inline fun <T> nested(block: () -> T): T {
+            if (++depth > MAX_DEPTH) { depth--; fail("Слишком глубокая вложенность") }
+            try { return block() } finally { depth-- }
+        }
 
         fun atEnd() = pos >= s.length
 
@@ -118,8 +131,8 @@ object MiniJson {
         fun value(): Any? {
             if (atEnd()) fail("Неожиданный конец")
             return when (val c = s[pos]) {
-                '{' -> obj()
-                '[' -> arr()
+                '{' -> nested { obj() }
+                '[' -> nested { arr() }
                 '"' -> str()
                 't' -> lit("true", true)
                 'f' -> lit("false", false)
@@ -159,7 +172,7 @@ object MiniJson {
         fun skipValue() {
             if (atEnd()) fail("Неожиданный конец")
             when (val c = s[pos]) {
-                '{' -> {
+                '{' -> nested {
                     pos++; skipWs()
                     if (!atEnd() && s[pos] == '}') { pos++; return }
                     while (true) {
@@ -172,7 +185,7 @@ object MiniJson {
                         when (s[pos++]) { ',' -> continue; '}' -> return; else -> fail("Ожидалась запятая или }") }
                     }
                 }
-                '[' -> {
+                '[' -> nested {
                     pos++; skipWs()
                     if (!atEnd() && s[pos] == ']') { pos++; return }
                     while (true) {

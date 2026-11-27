@@ -384,6 +384,8 @@
     <string name="ui_extra_data_at_position">Лишние данные в позиции {}</string>
     <string name="ui_position">{} (позиция {})</string>
     <string name="ui_unexpected_end">Неожиданный конец</string>
+    <string name="ui_nesting_is_too_deep">Слишком глубокая вложенность</string>
+    <string name="ui_damaged_project_file_invalid_data">Повреждённый файл проекта: Неверные данные</string>
     <string name="ui_unexpected_character">Неожиданный символ \'{}\'</string>
     <string name="ui_expected">Ожидалось {}</string>
     <string name="ui_invalid_number">Неверное число</string>
@@ -2384,4 +2386,12 @@
     <string name="ui_expand_the_hint">Развернуть подсказку</string>
     <string name="ui_close_the_lesson">Закрыть урок</string>
     <string name="ui_step_of_2">Шаг {} из {}: {}</string>
+    <string name="ui_could_not_create_the_symbol">Не удалось создать символ: {}</string>
+    <string name="ui_layers_as_frames_needs_at_least_two_">Для «Слоёв как кадров» нужны минимум два обычных слоя: символ «Символ {}» создан стопкой</string>
+    <string name="ui_the_project_name_cannot_be_empty">Имя проекта не может быть пустым</string>
+    <string name="ui_could_not_rename_the_project">Не удалось переименовать проект</string>
+    <string name="ui_could_not_duplicate_the_project">Не удалось создать копию проекта</string>
+    <string name="ui_could_not_delete_the_project">Не удалось удалить проект</string>
+    <string name="ui_projects_that_could_not_be_deleted">Не удалось удалить проектов: {}</string>
+    <string name="ui_maximum_drawing_length_frames">Максимальная длина рисунка: {} кадров</string>
 </resources>

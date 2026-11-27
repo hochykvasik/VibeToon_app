@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - arena/e0fe5b26-vibetoon-app
+      - arena/037c8549-vibetoon-app
       - main
     # спринт 58: тег vX.Y.Z[-суффикс] на коммите main - сборка, тесты и GitHub Release с APK
     tags:

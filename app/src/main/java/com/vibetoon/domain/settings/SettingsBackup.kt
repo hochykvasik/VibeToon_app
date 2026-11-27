@@ -61,4 +61,22 @@ object SettingsBackup {
         }
         return out
     }
+
+    /**
+     * Спринт 61: значение из копии для записи в настройки рядом с текущим значением [current] того же ключа (его тип
+     * главный); null - не записывать. Ключа ещё нет (свежая установка): только флажок, целое или строка - дробных
+     * настроек в приложении нет, и дробное число из повреждённой копии, записанное как Float, роняло бы чтение
+     * getInt при следующем запуске. Целые настройки не принимают дробные, бесконечные и вне диапазона Int.
+     */
+    fun restorable(current: Any?, value: Any): Any? {
+        fun intOf(v: Any): Int? = (v as? Number)?.toDouble()?.takeIf { it.isFinite() && it == Math.floor(it) && it >= Int.MIN_VALUE && it <= Int.MAX_VALUE }?.toInt()
+        return when (current) {
+            is Float -> (value as? Number)?.toFloat()?.takeIf { it.isFinite() }
+            is Long -> (value as? Number)?.toDouble()?.takeIf { it.isFinite() && it == Math.floor(it) }?.toLong()
+            is Int -> intOf(value)
+            is Boolean -> value as? Boolean
+            is String -> value as? String
+            else -> when (value) { is Boolean, is String -> value; is Number -> intOf(value); else -> null }
+        }
+    }
 }

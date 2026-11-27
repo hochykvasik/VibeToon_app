@@ -143,8 +143,9 @@ class ProjectRepository(context: Context) {
     }
 
     fun rename(id: String, name: String) {
-        if (name.isBlank()) return
-        patchMeta(id, mapOf("name" to name, "updatedAt" to System.currentTimeMillis())) { it.copy(name = name) }
+        val clean = com.vibetoon.domain.project.ProjectListMath.cleanProjectName(name)
+        if (clean.isEmpty()) return
+        patchMeta(id, mapOf("name" to clean, "updatedAt" to System.currentTimeMillis())) { it.copy(name = clean) }
     }
 
     /**
@@ -181,9 +182,15 @@ class ProjectRepository(context: Context) {
         val data = load(id).getOrNull() ?: return null
         val newId = UUID.randomUUID().toString().take(8)
         val now = System.currentTimeMillis()
-        src.copyRecursively(dir(newId), overwrite = true)
-        File(dir(newId), "project.json.tmp").delete()
-        save(data.copy(meta = data.meta.copy(id = newId, name = com.vibetoon.ui.i18n.defaultName(appContext, "${data.meta.name} (копия)"), createdAt = now, updatedAt = now)))
+        try {
+            src.copyRecursively(dir(newId), overwrite = true)
+            File(dir(newId), "project.json.tmp").delete()
+            save(data.copy(meta = data.meta.copy(id = newId, name = com.vibetoon.ui.i18n.defaultName(appContext, "${data.meta.name} (копия)"), createdAt = now, updatedAt = now)))
+        } catch (e: Exception) {
+            // спринт 61: нет места или файл не читается - недоделанная копия не остаётся в списке проектов
+            runCatching { dir(newId).deleteRecursively() }
+            throw e
+        }
         return newId
     }
 

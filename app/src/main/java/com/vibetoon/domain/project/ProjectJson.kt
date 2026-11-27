@@ -152,6 +152,9 @@ object ProjectJson {
         else Result.success(metaOf(head))
     } catch (e: JsonException) {
         Result.failure(IllegalStateException("Повреждённый файл проекта: ${e.message}"))
+    } catch (e: RuntimeException) {
+        // спринт 61: синтаксически верный, но несогласованный файл (не те типы, числа вне диапазона) - ошибка открытия, а не вылет
+        Result.failure(IllegalStateException("Повреждённый файл проекта: Неверные данные"))
     }
 
     /**
@@ -406,6 +409,9 @@ object ProjectJson {
         }
     } catch (e: JsonException) {
         Result.failure(IllegalStateException("Повреждённый файл проекта: ${e.message}"))
+    } catch (e: RuntimeException) {
+        // спринт 61: синтаксически верный, но несогласованный файл (не те типы, числа вне диапазона) - ошибка открытия, а не вылет
+        Result.failure(IllegalStateException("Повреждённый файл проекта: Неверные данные"))
     }
 
     fun colorToString(argb: Long) = "#%08X".format(argb and 0xFFFFFFFFL)

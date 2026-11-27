@@ -60,6 +60,8 @@ Transform Layer «Transform {}»: привяжите к нему слои чер
 Лишние данные в позиции {}|Extra data at position {}
 {} (позиция {})|{} (position {})
 Неожиданный конец|Unexpected end
+Слишком глубокая вложенность|Nesting is too deep
+Повреждённый файл проекта: Неверные данные|Damaged project file: Invalid data
 Неожиданный символ '{}'|Unexpected character '{}'
 Ожидалось {}|Expected {}
 Неверное число|Invalid number
@@ -2060,4 +2062,12 @@ VibeToon: экспорт ждёт|VibeToon: export waiting
 Развернуть подсказку|Expand the hint
 Закрыть урок|Close the lesson
 Шаг {} из {}: {}|Step {} of {}: {}
+Не удалось создать символ: {}|Could not create the symbol: {}
+Для «Слоёв как кадров» нужны минимум два обычных слоя: символ «Символ {}» создан стопкой|“Layers as frames” needs at least two plain layers: symbol “Symbol {}” was created as a stack
+Имя проекта не может быть пустым|The project name cannot be empty
+Не удалось переименовать проект|Could not rename the project
+Не удалось создать копию проекта|Could not duplicate the project
+Не удалось удалить проект|Could not delete the project
+Не удалось удалить проектов: {}|Projects that could not be deleted: {}
+Максимальная длина рисунка: {} кадров|Maximum drawing length: {} frames
 """

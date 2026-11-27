@@ -121,6 +121,22 @@ object FrameMath {
         return cells.map { if (it == a) it.copy(hold = l) else it }
     }
 
+    /** Спринт 61: наибольшая длина рисунка, которую дают кнопки «+» строки рисунков (как ползунок «Новый кадр»). */
+    const val MAX_NUDGE_LENGTH = 48
+
+    /**
+     * Спринт 61: новая длина рисунка после «−» / «+» ([delta]) от текущей [length]. «+» больше не растягивает рисунок
+     * за [max] кадров (раньше длина росла без предела и выходила за шкалу 1–48 ползунка); уже более длинная
+     * экспозиция (последний рисунок до конца сцены) «+» не укорачивается - кнопка просто не действует, а «−»
+     * убавляет по кадру до 1. null - длина не меняется.
+     */
+    fun nudgedLength(length: Int, delta: Int, max: Int = MAX_NUDGE_LENGTH): Int? {
+        if (delta == 0 || length < 1) return null
+        val next = if (delta > 0) { if (length >= max) return null; minOf(length.toLong() + delta, max.toLong()).toInt() }
+                   else maxOf(length.toLong() + delta, 1L).toInt()
+        return next.takeIf { it != length }
+    }
+
     /** Начало соседнего рисунка: [forward] - ближайшее после [frame], иначе ближайшее до него (из середины экспозиции - её начало). */
     fun neighborStart(cells: List<FrameCell>, frame: Int, forward: Boolean): Int? {
         val starts = cells.map { it.start }.distinct().sorted()

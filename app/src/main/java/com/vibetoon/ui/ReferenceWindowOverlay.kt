@@ -55,7 +55,7 @@ fun ReferenceWindowOverlay(vm: MainViewModel, onReplace: () -> Unit) {
         val areaW = maxWidth.value
         val areaH = maxHeight.value
         val aspect = r.aspect
-        val frame = ReferenceWindow.clamp(stored ?: ReferenceWindow.initial(aspect, areaW, areaH), aspect, areaW, areaH)
+        val frame = ReferenceWindow.clamp(stored ?: ReferenceWindow.initial(aspect, areaW, areaH, com.vibetoon.ui.theme.LocalAppSettings.current?.leftHanded == true), aspect, areaW, areaH)
         val current by rememberUpdatedState(frame)
         val (w, h) = ReferenceWindow.size(frame, aspect, areaW, areaH)
         val density = LocalDensity.current.density

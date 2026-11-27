@@ -144,6 +144,16 @@ object ProjectListMath {
 
     fun cleanFolderName(s: String): String = s.trim().replace(Regex("\\s+"), " ").take(24)
 
+    /** Спринт 61: предел длины имени проекта (карточка, заголовок редактора, имя файла копии .tsproj). */
+    const val MAX_PROJECT_NAME = 80
+
+    /**
+     * Спринт 61: имя проекта при переименовании: без управляющих символов и переводов строк (ломали карточку и имя
+     * файла копии), пробелы схлопнуты, не длиннее [MAX_PROJECT_NAME]; пустое - переименование не выполняется.
+     */
+    fun cleanProjectName(s: String): String =
+        s.replace(Regex("[\\p{Cntrl}\\u2028\\u2029]"), " ").trim().replace(Regex("\\s+"), " ").take(MAX_PROJECT_NAME).trim()
+
     fun sizeLabel(bytes: Long): String = when {
         bytes >= 1L shl 30 -> "%.1f ГБ".format(bytes / (1024.0 * 1024 * 1024))
         bytes >= 1L shl 20 -> "%.1f МБ".format(bytes / (1024.0 * 1024))

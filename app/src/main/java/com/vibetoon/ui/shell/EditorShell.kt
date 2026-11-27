@@ -131,13 +131,7 @@ import kotlin.math.roundToInt
 /** Заглушка кнопки, у которой ещё нет логики: показывает Snackbar "<что> — в разработке". */
 val LocalStub = staticCompositionLocalOf<(String) -> Unit> { {} }
 
-/** Ширина, с которой панели становятся шире и все кнопки верхней строки видны без меню "Ещё". */
-private val WIDE = 840.dp
-
-/** Ширина меньше этой - телефон: правая панель выезжает поверх холста, ряд инструментов таймлайна прячется под «Ещё». */
-private val PHONE_MAX = 800.dp
-
-/** true на узком экране (телефон). */
+/** true на телефоне: короткая сторона окна < 600 dp (спринт 60, EditorLayout; раньше - ширина < 800 dp). */
 val LocalPhone = androidx.compose.runtime.compositionLocalOf { false }
 
 /**
@@ -162,7 +156,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
     var userTimelineDp by rememberSaveable { mutableStateOf(0f) }   // 0 - высота по умолчанию, иначе заданная хватом
     var tool by rememberSaveable { mutableStateOf(ToolId.TRANSFORM.name) }
     var mesh by rememberSaveable { mutableStateOf(false) }
-    var full by remember { mutableStateOf(false) }
+    var full by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }   // спринт 60: переживает поворот и пересоздание
     var showExportChooser by remember { mutableStateOf(false) }
     var color by remember { mutableStateOf(0xFFE53935L) }
     var showColor by remember { mutableStateOf(false) }
@@ -182,7 +176,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
     androidx.compose.runtime.LaunchedEffect(tool, boneMode, mesh) { vm.setPerspTool(tool == ToolId.PERSPECTIVE.name && !boneMode && !mesh) }
     val paintOn by vm.paintTool.collectAsStateWithLifecycle()
     // Пакет 12: повторный тап по активному инструменту прячет/показывает его панель настроек (у кисти и ластика - открывает набор кистей)
-    var toolRowHidden by remember { mutableStateOf(false) }
+    var toolRowHidden by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(tool, boneMode, mesh) {
         vm.setPaintTool(
             if (boneMode || mesh) null else when (tool) {
@@ -233,13 +227,16 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
             // Edge-to-Edge: холст тянется на весь экран; от выреза камеры и системных панелей отступают только панели с кнопками
             // спринт 49: без клавиатуры (safeDrawing включал её - холст и панели схлопывались при каждом вводе числа)
             BoxWithConstraints(Modifier.padding(pad).fillMaxSize().windowInsetsPadding(WindowInsets.editorSafe.only(WindowInsetsSides.Vertical))) {
-                CompositionLocalProvider(LocalPhone provides (maxWidth < PHONE_MAX)) {
-                val wide = maxWidth >= WIDE
-                val phone = maxWidth < PHONE_MAX
+                // Спринт 60: класс окна - по короткой стороне и ориентации (EditorLayout), а не по ширине: телефон в ландшафте
+                // больше не получает планшетную раскладку, в портрете инструменты - строкой под холстом
+                val leftHanded = com.vibetoon.ui.theme.LocalAppSettings.current?.leftHanded == true
+                val spec = remember(maxWidth, maxHeight, leftHanded) { com.vibetoon.domain.ui.EditorLayout.of(maxWidth.value, maxHeight.value, leftHanded) }
+                CompositionLocalProvider(LocalPhone provides spec.phone) {
+                val wide = spec.wide
+                val phone = spec.phone
                 // на телефоне правая панель по умолчанию закрыта: холст получает всю ширину
                 androidx.compose.runtime.LaunchedEffect(phone) { if (phone) rightOpen = false }
                 // Режим левши: Row ниже раскладывается справа налево, правая панель оказывается у левого края
-                val leftHanded = com.vibetoon.ui.theme.LocalAppSettings.current?.leftHanded == true
                 // Спринт 57: правая панель планшета - выезжающий слой поверх края (SidePanelSlide): место в строке занято
                 // только у полностью открытой панели, холст отодвигается по тому же ходу - без серого поля и скачка таймлайна
                 val sideOpen = rightOpen && !full && !phone
@@ -322,12 +319,33 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                         EdgeHandle(open = false, leftHanded = leftHanded, phone = phone) { rightOpen = true }
                     }
                 }
-                val tallScreen = maxHeight >= 480.dp
+                val tallScreen = !spec.modesInTopBar
                 val maxHdp = maxHeight.value
-                // при открытой клавиатуре высота может стать меньше нижней границы: пределы подгоняются, чтобы coerceIn не падал
-                val tlMin = minOf(if (phone) 120.dp else 150.dp, maxHeight * 0.75f)
-                val timelineH = if (userTimelineDp > 0f) userTimelineDp.dp.coerceIn(minOf(96.dp, maxHeight * 0.75f), maxOf(96.dp, maxHeight * 0.75f))
-                    else (maxHeight * (if (phone) 0.34f else 0.4f)).coerceIn(tlMin, maxOf(tlMin, 340.dp))
+                // спринт 60: высота таймлайна по классу окна; холсту всегда остаётся не меньше 30 % высоты (EditorLayout)
+                val timelineH = com.vibetoon.domain.ui.EditorLayout.timelineHeight(spec, maxHdp, userTimelineDp).dp
+                val tlRange = com.vibetoon.domain.ui.EditorLayout.timelineDragRange(spec)
+                // выбор инструмента - один для колонки у края и для строки под холстом (телефон в портрете)
+                val pickTool: (ToolId) -> Unit = pick@{ t ->
+                    val again = tool == t.name && !boneMode && !mesh
+                    if (again && t != ToolId.TEXT) {
+                        if (t == ToolId.BRUSH || t == ToolId.ERASER) { toolRowHidden = false; vm.toggleBrushMenu() }
+                        else if (t in TOOLS_WITH_ROW) {
+                            toolRowHidden = !toolRowHidden
+                            vm.showMessage(if (toolRowHidden) "Панель инструмента скрыта: тап по нему ещё раз вернёт её" else "Панель инструмента показана")
+                        }
+                        return@pick
+                    }
+                    toolRowHidden = false
+                    when (t) {
+                        ToolId.TEXT -> add.text()
+                        ToolId.TRANSFORM, ToolId.WARP, ToolId.PERSPECTIVE, ToolId.LIQUIFY, ToolId.BRUSH, ToolId.ERASER,
+                        ToolId.FILL, ToolId.PIPETTE, ToolId.SELECTION, ToolId.SMUDGE, ToolId.PATH -> tool = t.name
+                        else -> {
+                            tool = t.name
+                            if (again && t in BRUSH_LIKE) stub("Настройки инструмента «${t.title}»") else stub("Инструмент «${t.title}»")
+                        }
+                    }
+                }
                 Column(Modifier.fillMaxSize()) {
                     // Спринт 31: при входе/выходе из полного экрана панели уезжают и возвращаются плавно (только сдвиг и прозрачность)
                     androidx.compose.animation.AnimatedVisibility(
@@ -337,7 +355,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                     ) {
                         Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).opaqueToCanvas()) {   // спринт 42: непрозрачно поверх GL-поверхности
                             TopBar(
-                                vm, wide, onBack, add, onExport,
+                                vm, wide, spec.compactHeader, onBack, add, onExport,
                                 rightOpen = rightOpen, onToggleRight = { rightOpen = !rightOpen },
                                 onSettings = { showSettings = true }, onFullscreen = ::toggleFullscreen,
                                 modes = !tallScreen,   // на низком экране режимы живут в верхней строке
@@ -350,33 +368,13 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                     Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { c -> rowBounds.value = androidx.compose.ui.geometry.Rect(c.positionInRoot(), c.size.toSize()) }) {
                     CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides (if (leftHanded) androidx.compose.ui.unit.LayoutDirection.Rtl else androidx.compose.ui.unit.LayoutDirection.Ltr)) {
                     Row(Modifier.fillMaxSize()) {
-                        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) { androidx.compose.animation.AnimatedVisibility(
+                        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) { if (!spec.toolbarBottom) androidx.compose.animation.AnimatedVisibility(
                             visible = !full,
                             enter = com.vibetoon.ui.motion.Motions.panelEnter(fromEnd = leftHanded),
                             exit = com.vibetoon.ui.motion.Motions.panelExit(toEnd = leftHanded)
                         ) { Box(Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)).opaqueToCanvas().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start))) { LeftToolbar(
-                            tool, wide, boneMode, mesh, boneToolNow, meshToolNow, vm,
-                            onPick = pick@{ t ->
-                                val again = tool == t.name && !boneMode && !mesh
-                                if (again && t != ToolId.TEXT) {
-                                    if (t == ToolId.BRUSH || t == ToolId.ERASER) { toolRowHidden = false; vm.toggleBrushMenu() }
-                                    else if (t in TOOLS_WITH_ROW) {
-                                        toolRowHidden = !toolRowHidden
-                                        vm.showMessage(if (toolRowHidden) "Панель инструмента скрыта: тап по нему ещё раз вернёт её" else "Панель инструмента показана")
-                                    }
-                                    return@pick
-                                }
-                                toolRowHidden = false
-                                when (t) {
-                                    ToolId.TEXT -> add.text()
-                                    ToolId.TRANSFORM, ToolId.WARP, ToolId.PERSPECTIVE, ToolId.LIQUIFY, ToolId.BRUSH, ToolId.ERASER,
-                                    ToolId.FILL, ToolId.PIPETTE, ToolId.SELECTION, ToolId.SMUDGE, ToolId.PATH -> tool = t.name
-                                    else -> {
-                                        tool = t.name
-                                        if (again && t in BRUSH_LIKE) stub("Настройки инструмента «${t.title}»") else stub("Инструмент «${t.title}»")
-                                    }
-                                }
-                            }
+                            tool, spec.railDp, boneMode, mesh, boneToolNow, meshToolNow, vm,
+                            onPick = pickTool
                         ) } } }
                         CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
                         Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -403,11 +401,12 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                     if (markerPanel != null) last.value = markerPanel
                                     last.value?.let { mid -> com.vibetoon.ui.MarkerPanel(vm, mid) { vm.closeMarkerPanel() } }
                                 }
-                                // индикатор текущего инструмента
+                                // индикатор текущего инструмента; спринт 60: подпись сокращается по классу окна, в портрете телефона -
+                                // внизу у строки инструментов (сверху живут панели инструментов), никогда не по центру холста
                                 if (!full) Surface(
                                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), shape = RoundedCornerShape(16.dp),
-                                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
-                                ) { Text(toolTitle, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)) }
+                                    modifier = Modifier.align(if (spec.toolbarBottom) Alignment.BottomEnd else Alignment.TopEnd).padding(6.dp)
+                                ) { Text(com.vibetoon.domain.ui.EditorLayout.shortLabel(com.vibetoon.ui.i18n.L(toolTitle), spec.labelMaxChars), fontSize = if (phone) 11.sp else 12.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(horizontal = if (phone) 8.dp else 10.dp, vertical = 2.dp)) }
                                 if (full) IconButton(
                                     onClick = ::toggleFullscreen,
                                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(40.dp)
@@ -492,14 +491,27 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                         modifier = Modifier.align(Alignment.TopCenter).padding(6.dp)
                                     ) {
                                         Row(Modifier.padding(horizontal = 10.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            androidx.compose.material3.TextButton(onClick = { vm.exitSymbol() }) { Text("◀ На главную сцену") }
-                                            Text("Символ: ${vm.symbolName(sid)}", fontSize = 13.sp)
-                                            androidx.compose.material3.TextButton(onClick = { markerEdit = true }) { Text("Маркеры") }
+                                            // спринт 60: на телефоне - короткие подписи, длинное имя символа сокращается
+                                            androidx.compose.material3.TextButton(onClick = { vm.exitSymbol() }) { Text(if (phone) "◀" else "◀ На главную сцену", maxLines = 1, softWrap = false) }
+                                            Text("Символ: ${com.vibetoon.domain.ui.EditorLayout.shortLabel(vm.symbolName(sid), spec.labelMaxChars)}", fontSize = 13.sp, maxLines = 1, softWrap = false)
+                                            androidx.compose.material3.TextButton(onClick = { markerEdit = true }) { Text("Маркеры", maxLines = 1, softWrap = false) }
                                         }
                                     }
                                 }
                                 Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) {
                                     StatusLine(vm)
+                                }
+                            }
+                            // спринт 60: телефон в портрете - инструменты строкой под холстом (холст получает всю ширину)
+                            if (spec.toolbarBottom) androidx.compose.animation.AnimatedVisibility(
+                                visible = !full,
+                                enter = com.vibetoon.ui.motion.Motions.barEnter(fromTop = false),
+                                exit = com.vibetoon.ui.motion.Motions.barExit(toTop = false)
+                            ) {
+                                Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).opaqueToCanvas()) {
+                                    // первой - кнопка панели «Слои / свойства / референс» (на телефоне панель выезжает поверх холста и сворачивается)
+                                    BottomToolStrip(listOf(RailItem(Icons.Default.Layers, "Слои", rightOpen, dividerAfter = true) { rightOpen = !rightOpen }) +
+                                        railItems(tool, boneMode, mesh, boneToolNow, meshToolNow, vm, pickTool), spec)
                                 }
                             }
                             // хват на верхней границе таймлайна: тянуть вверх/вниз - меняет высоту панели
@@ -522,7 +534,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                                                 ) { change, dy ->
                                                     change.consume()
                                                     val cur = if (userTimelineDp > 0f) userTimelineDp else timelineH.value
-                                                    userTimelineDp = (cur - dy / density.density).coerceIn(minOf(96f, maxHdp * 0.75f), maxOf(96f, maxHdp * 0.75f))
+                                                    userTimelineDp = (cur - dy / density.density).coerceIn(tlRange.start, tlRange.endInclusive)
                                                 }
                                             },
                                         contentAlignment = Alignment.Center
@@ -576,7 +588,7 @@ fun EditorShell(vm: MainViewModel, onBack: () -> Unit, add: AddActions, onExport
                         shape = if (leftHanded) RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp) else RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)) {
                         RightPanel(
                             vm, add, color, { showColor = true }, { rightOpen = false },
-                            Modifier.width(minOf(maxWidth * 0.62f, 300.dp)).fillMaxHeight()
+                            Modifier.width(spec.sidePanelDp.dp).fillMaxHeight()   // спринт 60: ширина по классу окна (в ландшафте телефона - не больше 42 %)
                         )
                     }
                 }
@@ -660,7 +672,7 @@ private fun CoachMenuItem(label: String, highlight: Boolean, onClick: () -> Unit
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TopBar(
-    vm: MainViewModel, wide: Boolean, onBack: () -> Unit, add: AddActions, onExport: () -> Unit,
+    vm: MainViewModel, wide: Boolean, compact: Boolean, onBack: () -> Unit, add: AddActions, onExport: () -> Unit,
     rightOpen: Boolean, onToggleRight: () -> Unit, onSettings: () -> Unit, onFullscreen: () -> Unit, modes: Boolean,
     mesh: Boolean, onMesh: (Boolean) -> Unit
 ) {
@@ -683,7 +695,15 @@ private fun TopBar(
     }
     var more by remember { mutableStateOf(false) }
 
+    val refocus = com.vibetoon.ui.theme.LocalAppSettings.current?.refocusButton == true
+    val barFade = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // спринт 61: правая группа кнопок - полоса с прокруткой (ActionBarLayout): на узком телефоне кнопки не сжимаются,
+        // имя проекта получает не меньше 96 dp и сокращается «…»
+        val leftButtons = if (compact) 2 else 3
+        val rightButtons = (if (refocus) 1 else 0) + 3 + (if (compact) 1 else 2) + (if (wide) 3 else 1)   // кнопка Export с подписью - как две
+        val plan = com.vibetoon.domain.ui.ActionBarLayout.plan(maxWidth.value - 8f - leftButtons * 42f, rightButtons, hasTitle = true, leftHanded = false, buttonDp = 42f)
         Row(
             Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -691,7 +711,8 @@ private fun TopBar(
         ) {
             BarIcon(Icons.Default.ArrowBack, "Проекты", onClick = onBack)
             var showLibrary by remember { mutableStateOf(false) }
-            BarIcon(Icons.Default.PhotoLibrary, "Библиотека") { showLibrary = true }
+            // спринт 60: компактная шапка (телефон) - библиотека в меню «Ещё», чтобы кнопки не наезжали друг на друга
+            if (!compact) BarIcon(Icons.Default.PhotoLibrary, "Библиотека") { showLibrary = true }
             if (showLibrary) AssetLibraryDialog(vm) { showLibrary = false }
             Box {
                 BarIcon(Icons.Default.Menu, "Действия") { actions = true }
@@ -728,32 +749,41 @@ private fun TopBar(
                 name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
             )
-            if (com.vibetoon.ui.theme.LocalAppSettings.current?.refocusButton == true) {
-                Box(Modifier.size(40.dp).combinedClickable(onClick = {}, onDoubleClick = vm::resetCamera), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.CropFree, com.vibetoon.ui.i18n.L("Дважды нажмите, чтобы сбросить вид холста"), modifier = Modifier.size(22.dp))
+            val acts = buildList<@Composable () -> Unit> {
+                if (refocus) add {
+                    Box(Modifier.size(40.dp).combinedClickable(onClick = {}, onDoubleClick = vm::resetCamera), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.CropFree, com.vibetoon.ui.i18n.L("Дважды нажмите, чтобы сбросить вид холста"), modifier = Modifier.size(22.dp))
+                    }
                 }
-            }
-            BarIcon(Icons.Default.AutoAwesome, "FX: вкл — правки пишутся в ключи, выкл — в базовую форму", active = fxOn) { vm.toggleFx() }
-            BarIcon(Icons.Default.Undo, "Отменить", enabled = canUndo && !playing) { vm.undo() }
-            BarIcon(Icons.Default.Redo, "Повторить", enabled = canRedo && !playing) { vm.redo() }
-            Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(34.dp).coachTarget("Export")) {
-                Text("Export", fontSize = 13.sp, maxLines = 1)
-            }
-            if (wide) {
-                BarIcon(Icons.Default.Settings, "Настройки", onClick = onSettings)
-                BarIcon(Icons.Default.Fullscreen, "Полный экран", onClick = onFullscreen)
-                BarIcon(Icons.Default.ViewSidebar, "Правая панель", active = rightOpen, onClick = onToggleRight)
-            } else {
-                // телефон: второстепенное прячется в меню "Ещё"
-                Box {
-                    BarIcon(Icons.Default.MoreVert, "Ещё") { more = true }
-                    DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
-                        DropdownMenuItem(text = { Text("Настройки") }, onClick = { more = false; onSettings() })
-                        DropdownMenuItem(text = { Text("Полный экран") }, onClick = { more = false; onFullscreen() })
-                        DropdownMenuItem(text = { Text(if (rightOpen) "Скрыть правую панель" else "Показать правую панель") }, onClick = { more = false; onToggleRight() })
+                add { BarIcon(Icons.Default.AutoAwesome, "FX: вкл — правки пишутся в ключи, выкл — в базовую форму", active = fxOn) { vm.toggleFx() } }
+                add { BarIcon(Icons.Default.Undo, "Отменить", enabled = canUndo && !playing) { vm.undo() } }
+                add { BarIcon(Icons.Default.Redo, "Повторить", enabled = canRedo && !playing) { vm.redo() } }
+                add {
+                    if (compact) IconButton(onClick = onExport, modifier = Modifier.size(40.dp).coachTarget("Export")) {
+                        Icon(Icons.Default.IosShare, com.vibetoon.ui.i18n.L("Экспорт…"), modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                    } else Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(34.dp).coachTarget("Export")) {
+                        Text("Export", fontSize = 13.sp, maxLines = 1)
+                    }
+                }
+                if (wide) {
+                    add { BarIcon(Icons.Default.Settings, "Настройки", onClick = onSettings) }
+                    add { BarIcon(Icons.Default.Fullscreen, "Полный экран", onClick = onFullscreen) }
+                    add { BarIcon(Icons.Default.ViewSidebar, "Правая панель", active = rightOpen, onClick = onToggleRight) }
+                } else add {
+                    // телефон: второстепенное прячется в меню "Ещё"
+                    Box {
+                        BarIcon(Icons.Default.MoreVert, "Ещё") { more = true }
+                        DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                            if (compact) DropdownMenuItem(text = { Text("Библиотека") }, onClick = { more = false; showLibrary = true })
+                            DropdownMenuItem(text = { Text("Настройки") }, onClick = { more = false; onSettings() })
+                            DropdownMenuItem(text = { Text("Полный экран") }, onClick = { more = false; onFullscreen() })
+                            DropdownMenuItem(text = { Text(if (rightOpen) "Скрыть правую панель" else "Показать правую панель") }, onClick = { more = false; onToggleRight() })
+                        }
                     }
                 }
             }
+            ActionStrip(plan.stripDp.dp, mirrored = false, items = acts, fade = barFade)
+        }
         }
     }
 }
@@ -1451,32 +1481,69 @@ private fun RailButton(icon: ImageVector, title: String, on: Boolean, onClick: (
     }
 }
 
+/** Спринт 60: кнопка панели инструментов - одна для колонки у края и для строки под холстом. */
+private class RailItem(val icon: ImageVector, val title: String, val on: Boolean, val dividerAfter: Boolean = false, val onClick: () -> Unit)
+
+/** Инструменты текущего режима: контекстные (Кости / Сетка), затем общие. */
+private fun railItems(
+    selected: String, boneMode: Boolean, mesh: Boolean, boneTool: BoneTool, meshTool: MeshTool, vm: MainViewModel,
+    onPick: (ToolId) -> Unit
+): List<RailItem> {
+    val out = ArrayList<RailItem>()
+    // контекстные инструменты режима
+    if (boneMode) {
+        out += RailItem(Icons.Default.AddCircleOutline, "+Кость", boneTool == BoneTool.ADD) { vm.setBoneTool(BoneTool.ADD) }
+        out += RailItem(Icons.Default.OpenWith, "Кости", boneTool == BoneTool.SELECT) { vm.setBoneTool(BoneTool.SELECT) }
+        out += RailItem(Icons.Default.Polyline, "Лассо", boneTool == BoneTool.LASSO, dividerAfter = true) { vm.setBoneTool(BoneTool.LASSO) }
+    } else if (mesh) {
+        out += RailItem(Icons.Default.PinDrop, "+Пин", meshTool == MeshTool.PIN_ADD) { vm.setMeshTool(MeshTool.PIN_ADD) }
+        out += RailItem(Icons.Default.OpenWith, "Пин", meshTool == MeshTool.PIN_MOVE, dividerAfter = true) { vm.setMeshTool(MeshTool.PIN_MOVE) }
+        out += RailItem(Icons.Default.ContentCut, "Разрез", meshTool == MeshTool.CUT) { vm.setMeshTool(MeshTool.CUT) }
+        out += RailItem(Icons.Default.Gesture, "Кисть", meshTool == MeshTool.SMUDGE, dividerAfter = true) { vm.setMeshTool(MeshTool.SMUDGE) }
+    }
+    for (t in ToolId.values()) out += RailItem(t.icon, t.title, t.name == selected && !boneMode && !mesh) { onPick(t) }
+    return out
+}
+
 @Composable
 private fun LeftToolbar(
-    selected: String, wide: Boolean, boneMode: Boolean, mesh: Boolean, boneTool: BoneTool, meshTool: MeshTool, vm: MainViewModel,
+    selected: String, railDp: Float, boneMode: Boolean, mesh: Boolean, boneTool: BoneTool, meshTool: MeshTool, vm: MainViewModel,
     onPick: (ToolId) -> Unit
 ) {
-    val stub = LocalStub.current
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
         Column(
-            Modifier.width(if (wide) 60.dp else 52.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(vertical = 2.dp),
+            Modifier.width(railDp.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(vertical = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            // контекстные инструменты режима
-            if (boneMode) {
-                RailButton(Icons.Default.AddCircleOutline, "+Кость", boneTool == BoneTool.ADD) { vm.setBoneTool(BoneTool.ADD) }
-                RailButton(Icons.Default.OpenWith, "Кости", boneTool == BoneTool.SELECT) { vm.setBoneTool(BoneTool.SELECT) }
-                RailButton(Icons.Default.Polyline, "Лассо", boneTool == BoneTool.LASSO) { vm.setBoneTool(BoneTool.LASSO) }
-                HorizontalDivider(Modifier.padding(vertical = 2.dp))
-            } else if (mesh) {
-                RailButton(Icons.Default.PinDrop, "+Пин", meshTool == MeshTool.PIN_ADD) { vm.setMeshTool(MeshTool.PIN_ADD) }
-                RailButton(Icons.Default.OpenWith, "Пин", meshTool == MeshTool.PIN_MOVE) { vm.setMeshTool(MeshTool.PIN_MOVE) }
-                HorizontalDivider(Modifier.padding(vertical = 2.dp))
-                RailButton(Icons.Default.ContentCut, "Разрез", meshTool == MeshTool.CUT) { vm.setMeshTool(MeshTool.CUT) }
-                RailButton(Icons.Default.Gesture, "Кисть", meshTool == MeshTool.SMUDGE) { vm.setMeshTool(MeshTool.SMUDGE) }
-                HorizontalDivider(Modifier.padding(vertical = 2.dp))
+            for (it in railItems(selected, boneMode, mesh, boneTool, meshTool, vm, onPick)) {
+                RailButton(it.icon, it.title, it.on, it.onClick)
+                if (it.dividerAfter) HorizontalDivider(Modifier.padding(vertical = 2.dp))
             }
-            for (t in ToolId.values()) RailButton(t.icon, t.title, t.name == selected && !boneMode && !mesh) { onPick(t) }
+        }
+    }
+}
+
+/**
+ * Спринт 60: строка инструментов под холстом (телефон в портрете). Прокручивается по горизонтали, кнопки не
+ * наезжают друг на друга. Режим левши: порядок зеркальный, строка начинается у правого края.
+ */
+@Composable
+private fun BottomToolStrip(items: List<RailItem>, spec: com.vibetoon.domain.ui.EditorLayout.Spec) {
+    val ordered = com.vibetoon.domain.ui.EditorLayout.stripOrder(items, spec)
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().height(com.vibetoon.domain.ui.EditorLayout.TOOL_STRIP_DP.dp), contentAlignment = if (spec.toolsAtEnd) Alignment.CenterEnd else Alignment.CenterStart) {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState(), reverseScrolling = spec.toolsAtEnd).padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for ((i, it) in ordered.withIndex()) {
+                    // разделитель групп остаётся между теми же кнопками и в зеркальном порядке
+                    val divBefore = spec.toolsAtEnd && it.dividerAfter && i > 0
+                    if (divBefore) androidx.compose.material3.VerticalDivider(Modifier.height(32.dp).padding(horizontal = 2.dp))
+                    Box(Modifier.width(56.dp)) { RailButton(it.icon, it.title, it.on, it.onClick) }
+                    if (!spec.toolsAtEnd && it.dividerAfter) androidx.compose.material3.VerticalDivider(Modifier.height(32.dp).padding(horizontal = 2.dp))
+                }
+            }
         }
     }
 }
