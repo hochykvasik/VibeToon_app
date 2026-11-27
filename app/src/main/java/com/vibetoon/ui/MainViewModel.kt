@@ -11378,7 +11378,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (t: kotlinx.coroutines.CancellationException) { throw t }
             catch (t: Throwable) { Log.w("VT/Edit", "content box $id failed", t) }
             finally {
-                if (boxGate.end(id, cached) && projectId != null) runCatching { updateSelectionFrame() }
+                // слой правили, пока шёл расчёт: старые границы не кэшируются, расчёт повторится по новым данным
+                val stale = boxGate.takeStale(id)
+                if (stale) contentBox.remove(id)
+                if (boxGate.end(id, cached || stale) && projectId != null) runCatching { updateSelectionFrame() }
             }
         }
     }

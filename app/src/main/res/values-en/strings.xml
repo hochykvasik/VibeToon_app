@@ -2384,4 +2384,6 @@
     <string name="ui_expand_the_hint">Expand the hint</string>
     <string name="ui_close_the_lesson">Close the lesson</string>
     <string name="ui_step_of_2">Step {} of {}: {}</string>
+    <string name="ui_could_not_create_the_symbol">Could not create the symbol: {}</string>
+    <string name="ui_layers_as_frames_needs_at_least_two_">“Layers as frames” needs at least two plain layers: symbol “Symbol {}” was created as a stack</string>
 </resources>

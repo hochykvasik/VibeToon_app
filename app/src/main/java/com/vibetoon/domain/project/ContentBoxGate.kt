@@ -22,6 +22,8 @@ package com.vibetoon.domain.project
 class ContentBoxGate {
     private val inFlight = HashSet<Int>()
     private val parked = HashSet<Int>()
+    /** Слой изменился, пока шёл расчёт: результат этого расчёта устарел и в кэш не годится. */
+    private val stale = HashSet<Int>()
 
     /** Можно ли запустить расчёт границ слоя [id]: не идёт уже и не ждёт новых данных. true - расчёт помечен как идущий. */
     fun begin(id: Int): Boolean {
@@ -40,11 +42,20 @@ class ContentBoxGate {
         return cached
     }
 
-    /** Содержимое слоя или формы его символа изменились: расчёт снова разрешён. */
-    fun forget(id: Int) { parked -= id }
+    /** Содержимое слоя или формы его символа изменились: расчёт снова разрешён (идущий расчёт помечается устаревшим). */
+    fun forget(id: Int) {
+        parked -= id
+        if (id in inFlight) stale += id
+    }
+
+    /**
+     * Перед [end]: устарел ли закончившийся расчёт (слой менялся, пока он шёл). true - его результат надо убрать из кэша
+     * и вызвать [end] с cached = true: слой не паркуется, рамка перерисуется и запросит расчёт по новым данным.
+     */
+    fun takeStale(id: Int): Boolean = stale.remove(id)
 
     /** Другой проект: всё заново. */
-    fun clear() { inFlight.clear(); parked.clear() }
+    fun clear() { inFlight.clear(); parked.clear(); stale.clear() }
 
     fun isBusy(id: Int): Boolean = id in inFlight
     fun isParked(id: Int): Boolean = id in parked

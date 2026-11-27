@@ -2384,4 +2384,6 @@
     <string name="ui_expand_the_hint">Развернуть подсказку</string>
     <string name="ui_close_the_lesson">Закрыть урок</string>
     <string name="ui_step_of_2">Шаг {} из {}: {}</string>
+    <string name="ui_could_not_create_the_symbol">Не удалось создать символ: {}</string>
+    <string name="ui_layers_as_frames_needs_at_least_two_">Для «Слоёв как кадров» нужны минимум два обычных слоя: символ «Символ {}» создан стопкой</string>
 </resources>

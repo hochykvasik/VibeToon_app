@@ -56,7 +56,7 @@ class Sprint53WiringTest {
         val ids = HashSet<String>()
         val all = sources.joinToString("\n") { it.readText() }
         Regex("""coachTarget\("([^"]+)"\)""").findAll(all).forEach { ids += it.groupValues[1] }
-        Regex("""(?:TlIcon|RepeatIcon|BarIcon|RailButton)\(Icons\.Default\.\w+, "([^"]+)"""").findAll(all).forEach { ids += it.groupValues[1] }
+        Regex("""(?:TlIcon|RepeatIcon|BarIcon|RailButton|RailItem)\(Icons\.Default\.\w+, "([^"]+)"""").findAll(all).forEach { ids += it.groupValues[1] }
         // подпись меняется с состоянием: «Свернуть таймлайн» / «Развернуть таймлайн»
         Regex("""TlIcon\(Icons\.Default\.\w+, if \([^)]*\) "([^"]+)" else "([^"]+)"""").findAll(all).forEach { ids += it.groupValues[1]; ids += it.groupValues[2] }
         val toolEnum = kt("ui/shell/EditorShell.kt").let { s -> s.substring(s.indexOf("enum class ToolId")).let { it.substring(0, it.indexOf("\n}")) } }

@@ -53,7 +53,7 @@ class Sprint54WiringTest {
 
     @Test fun symbolsFollowBones() {
         assertTrue(vm.contains("migrateSymbolLinks(regen = false)"))
-        val create = body(vm, "fun createSymbol(")
+        val create = body(vm, "private fun createSymbolChecked(")   // спринт 60: создание - в проверенной части, createSymbol её оборачивает
         assertTrue(create.contains("migrateSymbolLinks()"))
         assertTrue(vm.contains("SymbolBoneLink.migrate(_links.value, defs, insts)"))
         assertTrue(vm.contains("SymbolBoneLink.snapshotLinks"))

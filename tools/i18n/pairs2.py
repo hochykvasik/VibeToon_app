@@ -2060,4 +2060,6 @@ VibeToon: экспорт ждёт|VibeToon: export waiting
 Развернуть подсказку|Expand the hint
 Закрыть урок|Close the lesson
 Шаг {} из {}: {}|Step {} of {}: {}
+Не удалось создать символ: {}|Could not create the symbol: {}
+Для «Слоёв как кадров» нужны минимум два обычных слоя: символ «Символ {}» создан стопкой|“Layers as frames” needs at least two plain layers: symbol “Symbol {}” was created as a stack
 """

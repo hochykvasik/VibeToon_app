@@ -61,7 +61,9 @@ object SceneDomain {
 object SceneTree {
     fun build(layers: List<LayerInfo>, pivots: Map<Int, Pair<Float, Float>> = emptyMap()): List<Node> {
         val byParent = layers.groupBy { it.parentId }
-        fun make(parent: Int): List<Node> = byParent[parent].orEmpty().mapNotNull { l ->
+        // спринт 60: каждая группа раскрывается один раз - повтор id не даёт бесконечной рекурсии
+        val seen = HashSet<Int>()
+        fun make(parent: Int): List<Node> = if (!seen.add(parent)) emptyList() else byParent[parent].orEmpty().mapNotNull { l ->
             when (l.kind) {
                 LayerKind.GROUP_END -> null          // divider в дереве не нужен
                 LayerKind.LAYER -> LeafNode(

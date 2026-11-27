@@ -35,7 +35,11 @@ object LayerTree {
     fun flatten(layers: List<LayerInfo>, collapsed: Set<Int>): List<TreeRow> {
         val children = layers.groupBy { it.parentId }
         val out = ArrayList<TreeRow>()
+        // спринт 60: группа обходится один раз - повтор id (повреждённый файл, сбой при создании символа) не зацикливает
+        // главный поток бесконечной рекурсией
+        val seen = HashSet<Int>()
         fun walk(parent: Int, depth: Int) {
+            if (!seen.add(parent)) return
             // записи снизу вверх -> показываем сверху вниз
             for (l in children[parent].orEmpty().asReversed()) {
                 when (l.kind) {
