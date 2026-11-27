@@ -205,6 +205,19 @@ object SymbolMath {
         return FramesPlan(clips, markers, maxOf(1, ids.size * s))
     }
 
+    /**
+     * Спринт 60: слои режима «Слои как кадры» - выбранные обычные слои ([isLeaf]) в порядке стопки [order] (снизу вверх),
+     * каждый один раз. Выделенные группы, кости, удалённые и отсутствующие в стопке id пропускаются. Линейно по размеру
+     * стопки (раньше - поиск индекса по всему списку на каждое сравнение сортировки).
+     */
+    fun frameLeaves(selected: Set<Int>, order: List<Int>, isLeaf: (Int) -> Boolean): List<Int> {
+        if (selected.isEmpty()) return emptyList()
+        val seen = HashSet<Int>()
+        val out = ArrayList<Int>()
+        for (id in order) if (id in selected && seen.add(id) && isLeaf(id)) out += id
+        return out
+    }
+
     fun withMarker(list: List<FrameMarker>, m: FrameMarker): List<FrameMarker> = (list.filter { it.frame != m.frame } + m).sortedBy { it.frame }
     fun withoutMarker(list: List<FrameMarker>, frame: Int): List<FrameMarker> = list.filter { it.frame != frame }
 }
