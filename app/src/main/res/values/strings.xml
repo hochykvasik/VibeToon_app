@@ -2379,4 +2379,9 @@
     <string name="ui_the_reference_is_just_an_interface_w">Референс - только окно интерфейса: его нет в слоях, на холсте, в «Отменить», в файле проекта и в экспорте. При переходе к другому проекту окно остаётся, пока вы не закроете его крестиком.</string>
     <string name="ui_the_picture_is_scaled_down_to_1024_p">Картинка уменьшается до 1024 px по длинной стороне - окно почти не занимает память.</string>
     <string name="ui_need_the_sample_inside_the_frame_add">Нужен образец прямо в кадре? Добавьте его слоем: «Действия» → «Изображение (PNG, JPG)».</string>
+    <string name="ui_drag_to_move_the_hint">Перетащите, чтобы передвинуть подсказку</string>
+    <string name="ui_collapse_the_hint">Свернуть подсказку</string>
+    <string name="ui_expand_the_hint">Развернуть подсказку</string>
+    <string name="ui_close_the_lesson">Закрыть урок</string>
+    <string name="ui_step_of_2">Шаг {} из {}: {}</string>
 </resources>

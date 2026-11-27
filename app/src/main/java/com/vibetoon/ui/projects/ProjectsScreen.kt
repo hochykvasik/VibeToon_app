@@ -364,7 +364,7 @@ fun ProjectsScreen(app: AppViewModel) {
             ) {
                 // Явная рекомендация не зависит от поиска; спринт 46: пока список читается, баннер не прячется
                 val starterShown = starterId != null && (!loaded || allProjects.any { it.id == starterId })
-                if (folder.isEmpty() && starterShown) item(span = { GridItemSpan(maxLineSpan) }, key = "starter") {
+                if (folder.isEmpty() && starterShown) item(span = { GridItemSpan(maxLineSpan) }, key = "starter", contentType = "starter") {
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Column(Modifier.weight(1f)) {
@@ -376,8 +376,8 @@ fun ProjectsScreen(app: AppViewModel) {
                     }
                 }
                 // раздел «Обучение»: карточки статей (открываются на весь экран)
-                if (folder.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }, key = "tutorials") { TutorialRow(onOpen = { article = it }) }
-                item(span = { GridItemSpan(maxLineSpan) }, key = HEADER_KEY) {
+                if (folder.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }, key = "tutorials", contentType = "tutorials") { TutorialRow(onOpen = { article = it }) }
+                item(span = { GridItemSpan(maxLineSpan) }, key = HEADER_KEY, contentType = HEADER_KEY) {
                     if (folder.isEmpty()) Text("Мои работы", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     else Box {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -408,7 +408,7 @@ fun ProjectsScreen(app: AppViewModel) {
                     }
                 }
                 // спринт 46: папки - карточки с превью проектов (как папки iOS); на карточку можно перетащить проект
-                if (folder.isEmpty() && !searching) items(folderNames, key = { FOLDER_KEY + it }) { f ->
+                if (folder.isEmpty() && !searching) items(folderNames, key = { FOLDER_KEY + it }, contentType = { FOLDER_KEY }) { f ->
                     FolderCard(
                         f, folderCounts[f] ?: 0,
                         folderPreviews[f].orEmpty(),
@@ -419,11 +419,11 @@ fun ProjectsScreen(app: AppViewModel) {
                     )
                 }
                 if (!loaded) {
-                    item(span = { GridItemSpan(maxLineSpan) }, key = "loading") {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "loading", contentType = "loading") {
                         androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
                     }
                 } else if (shown.isEmpty() && (folder.isNotEmpty() || searching || folderNames.isEmpty())) {
-                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty", contentType = "empty") {
                         Text(
                             when {
                                 searching -> "Ничего не найдено"
@@ -434,7 +434,9 @@ fun ProjectsScreen(app: AppViewModel) {
                         )
                     }
                 }
-                items(shown, key = { it.id }) { p ->
+                // спринт 59: свой тип у карточек проектов - при прокрутке ушедшая карточка переиспользуется для новой,
+                // а не собирается заново (раньше все элементы сетки были одного типа: шапка, папки, обучение, карточки)
+                items(shown, key = { it.id }, contentType = { PROJECT_TYPE }) { p ->
                     val dragging = dragId == p.id
                     val itemMod = if (dragging) Modifier.zIndex(1f).graphicsLayer {
                         translationX = dragOffset.x; translationY = dragOffset.y; scaleX = 1.04f; scaleY = 1.04f; alpha = 0.92f
@@ -556,6 +558,10 @@ private fun ProjectCard(
     var menu by remember { mutableStateOf(false) }
     // Декодирование и обращение к диску не должны задерживать открытие списка на UI-потоке.
     val thumb = rememberThumb(app, p)
+    // спринт 59: подпись (String.format, подписи пропорций и размера) - один раз на карточку, а не в каждой перерисовке при прокрутке
+    val subtitle = remember(p.width, p.height, p.fps, p.durationFrames, sizeText, showFolder, p.folder) {
+        "${ProjectMath.ratioLabel(p.width, p.height)} · ${p.fps} fps · %.1f c".format(ProjectMath.durationSeconds(p.durationFrames, p.fps)) + (sizeText?.let { " · $it" } ?: "") + (if (showFolder && p.folder.isNotEmpty()) " · ${p.folder}" else "")
+    }
     // Свайп влево открывает меню действий, карточка возвращается на место
     val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
         if (v == SwipeToDismissBoxValue.EndToStart) menu = true
@@ -567,7 +573,9 @@ private fun ProjectCard(
         enableDismissFromStartToEnd = false,
         enableDismissFromEndToStart = !selectionMode,
         backgroundContent = {
-            Row(
+            // спринт 59: подложка свайпа (три значка на цветном фоне) строится только во время свайпа - при прокрутке
+            // под каждой карточкой больше не рисуется скрытый слой
+            if (swipe.dismissDirection != SwipeToDismissBoxValue.Settled) Row(
                 Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.secondaryContainer).padding(end = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically
             ) {
@@ -604,7 +612,7 @@ private fun ProjectCard(
                     Column(Modifier.weight(1f)) {
                         Text(p.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "${ProjectMath.ratioLabel(p.width, p.height)} · ${p.fps} fps · %.1f c".format(ProjectMath.durationSeconds(p.durationFrames, p.fps)) + (sizeText?.let { " · $it" } ?: "") + (if (showFolder && p.folder.isNotEmpty()) " · ${p.folder}" else ""),
+                            subtitle,
                             fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                         )
                     }
@@ -628,6 +636,7 @@ private fun ProjectCard(
 /** Спринт 46: ключ карточки папки в сетке (id проектов - 8 символов, с префиксом не совпадают). */
 private const val FOLDER_KEY = "folder:"
 private const val HEADER_KEY = "header"
+private const val PROJECT_TYPE = "project"
 
 /** Превью проекта: декодируется на IO, не задерживает список. [sample] - уменьшение (2 - для мини-превью в папке). */
 @Composable
@@ -635,12 +644,15 @@ private fun rememberThumb(app: AppViewModel, p: ProjectMeta, sample: Int = 1): a
     // спринт 52: превью из памяти приложения - карточка, переехавшая в папку или обратно, показывается сразу, без
     // повторного декодирования PNG; с диска - только первый раз (на IO)
     val key = "${p.id}:${p.updatedAt}:$sample"
-    return androidx.compose.runtime.produceState(app.cachedThumb(key), key, app) {
+    // спринт 59: мини-превью папки берёт уже декодированное полное превью карточки, если оно есть (без второго чтения PNG)
+    val ready = app.cachedThumb(key) ?: if (sample > 1) app.cachedThumb("${p.id}:${p.updatedAt}:1") else null
+    return androidx.compose.runtime.produceState(ready, key, app) {
         if (value != null) return@produceState
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 val f = app.thumbnailFile(p.id)
-                if (f.exists()) BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap() else null
+                // спринт 59: prepareToDraw - текстура загружается в GPU заранее, а не в кадре прокрутки, где карточка появилась
+                if (f.exists()) BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })?.also { it.prepareToDraw() }?.asImageBitmap() else null
             }.getOrNull()
         }?.also { app.putThumb(key, it) }
     }.value

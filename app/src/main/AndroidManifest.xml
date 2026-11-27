@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Спринт 41: импорт и экспорт видео продолжаются, когда приложение свёрнуто (служба с уведомлением) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -14,6 +15,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="VibeToon"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <!-- Спринт 59: сборка не debuggable (быстрее), но профилируется: Android Studio Profiler и Perfetto видят процесс -->
+        <profileable android:shell="true" tools:targetApi="29" />
         <!-- Спринт 56: singleTask - уведомление и значок возвращают то же окно (а не второй экземпляр с экраном
              проектов); configChanges - смена размера окна, темы, клавиатуры не пересоздаёт экран и не обрывает экспорт -->
         <activity

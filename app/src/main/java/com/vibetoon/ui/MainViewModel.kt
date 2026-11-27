@@ -2957,6 +2957,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun resolveSelection(hitLeaf: Int, current: Int?, quick: Boolean = false): Int? =
         if (hitLeaf < 0) null else com.vibetoon.domain.input.EditorInputPolicy.tapTarget(chainTo(hitLeaf), current, quick)
 
+    /**
+     * Спринт 59: тап по свободному месту верхней панели правее «Объект / Кости / Сетка» - как тап в пустоту холста:
+     * снимает выделение слоя (и мультивыделение) или кости. Выделение пикселей (рамка, лассо) не трогается. Пока на
+     * холсте идёт жест (штрих, перенос кости или направляющей, рамка, перо у экрана), тап ничего не делает.
+     * true - выделение было и снято.
+     */
+    fun deselectFromBar(): Boolean {
+        val has = _selection.value.isNotEmpty() || _selected.value != null
+        val busy = stylusDown || grab != 0 || stroker != null || vecLayer >= 0 || guideDrag != null || _toolDrag.value != null
+        if (!com.vibetoon.domain.input.TopBarDeselect.shouldDeselect(has, busy)) return false
+        selectLayer(null)
+        if (_boneMode.value) refreshBoneOverlay()
+        return true
+    }
+
     /** Обычное выделение одного узла (или снятие выделения при null); выходит из мультивыделения. */
     fun selectLayer(id: Int?) {
         multiMode = false

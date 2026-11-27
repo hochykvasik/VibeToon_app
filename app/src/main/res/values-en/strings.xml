@@ -2379,4 +2379,9 @@
     <string name="ui_the_reference_is_just_an_interface_w">The reference is just an interface window: it is not in the layers, on the canvas, in “Undo”, in the project file or in the export. When you switch to another project the window stays until you close it with the ✕.</string>
     <string name="ui_the_picture_is_scaled_down_to_1024_p">The picture is scaled down to 1024 px on the long side, so the window uses almost no memory.</string>
     <string name="ui_need_the_sample_inside_the_frame_add">Need the sample inside the frame? Add it as a layer: “Actions” → “Image (PNG, JPG)”.</string>
+    <string name="ui_drag_to_move_the_hint">Drag to move the hint</string>
+    <string name="ui_collapse_the_hint">Collapse the hint</string>
+    <string name="ui_expand_the_hint">Expand the hint</string>
+    <string name="ui_close_the_lesson">Close the lesson</string>
+    <string name="ui_step_of_2">Step {} of {}: {}</string>
 </resources>

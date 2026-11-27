@@ -128,7 +128,8 @@ class Sprint53WiringTest {
     @Test fun coachCardAvoidsLowTargetsAndExplainsHiddenButtons() {
         val coach = kt("ui/shell/Coach.kt")
         assertTrue(coach.contains("com.vibetoon.domain.tutorial.CoachPlacement.cardOnTop(rect.center.y, viewport.height)"))
-        assertTrue(coach.contains("Modifier.align(if (cardOnTop) Alignment.TopCenter else Alignment.BottomCenter)"))
+        // спринт 59: окно перетаскивается; пока его не двигали - авторазмещение сверху или снизу по cardOnTop
+        assertTrue(coach.contains("CoachWindow.place(Coach.customPos, w.toFloat(), card.height.toFloat(), areaW, areaH, margin, cardOnTop)"))
         assertTrue(coach.contains("Кнопка сейчас не видна: выберите слой"))
     }
 }

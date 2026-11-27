@@ -33,6 +33,7 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.layout.onSizeChanged
 import com.vibetoon.ui.dragEdgeAutoScroll
@@ -721,11 +722,12 @@ private fun TopBar(
                     CoachMenuItem("Тестовый PSD", highlight = coachTarget == "Тестовый PSD") { actions = false; vm.parseTestPsd() }
                 }
             }
-            Text(
+            // спринт 59: на низком экране режимы в этой строке; свободное место правее них снимает выделение по тапу
+            if (modes) TitleModesRow(vm, name, mesh, onMesh, Modifier.weight(1f))
+            else Text(
                 name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
             )
-            if (modes) ModeChips(vm, mesh, onMesh)
             if (com.vibetoon.ui.theme.LocalAppSettings.current?.refocusButton == true) {
                 Box(Modifier.size(40.dp).combinedClickable(onClick = {}, onDoubleClick = vm::resetCamera), contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.CropFree, com.vibetoon.ui.i18n.L("Дважды нажмите, чтобы сбросить вид холста"), modifier = Modifier.size(22.dp))
@@ -780,8 +782,78 @@ private fun ModeChips(vm: MainViewModel, mesh: Boolean, onMesh: (Boolean) -> Uni
 @Composable
 private fun ModeBar(vm: MainViewModel, mesh: Boolean, onMesh: (Boolean) -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.height(38.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) { ModeChips(vm, mesh, onMesh) }
+        // спринт 59: вся строка правее режимов - зона «тап снимает выделение» (до правого края)
+        Row(Modifier.fillMaxWidth().height(38.dp).padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            ModeChips(vm, mesh, onMesh)
+            DeselectZone(vm, Modifier.weight(1f).fillMaxHeight())
+        }
     }
+}
+
+/**
+ * Спринт 59: строка низкого экрана «имя проекта - Объект / Кости / Сетка - свободное место». Режимы не сжимаются,
+ * имя сокращается многоточием, а свободному месту (зоне снятия выделения) остаётся не меньше 48 dp.
+ */
+@Composable
+private fun TitleModesRow(vm: MainViewModel, name: String, mesh: Boolean, onMesh: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    val minZone = with(androidx.compose.ui.platform.LocalDensity.current) { com.vibetoon.domain.input.TopBarDeselect.MIN_ZONE_DP.dp.roundToPx() }
+    androidx.compose.ui.layout.Layout(
+        content = {
+            Text(name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 4.dp))
+            ModeChips(vm, mesh, onMesh)
+            DeselectZone(vm)
+        },
+        modifier = modifier.fillMaxHeight()
+    ) { ms, c ->
+        val h = c.maxHeight
+        val chips = ms[1].measure(androidx.compose.ui.unit.Constraints(maxWidth = c.maxWidth, maxHeight = h))
+        val titleMax = com.vibetoon.domain.input.TopBarDeselect.titleMax(c.maxWidth, chips.width, minZone)
+        val title = ms[0].measure(androidx.compose.ui.unit.Constraints(maxWidth = titleMax, maxHeight = h))
+        val zoneW = (c.maxWidth - chips.width - title.width).coerceAtLeast(0)
+        val zone = ms[2].measure(androidx.compose.ui.unit.Constraints.fixed(zoneW, h))
+        layout(c.maxWidth, h) {
+            title.placeRelative(0, (h - title.height) / 2)
+            chips.placeRelative(title.width, (h - chips.height) / 2)
+            zone.placeRelative(title.width + chips.width, 0)
+        }
+    }
+}
+
+/**
+ * Спринт 59: свободное место верхней панели правее режимов. Осознанный тап (один палец, без протяжки и долгого
+ * удержания) снимает выделение слоя или кости - как тап в пустоту холста; протяжка, второй палец и долгое нажатие
+ * ничего не делают. Кнопки режимов и правые кнопки панели в зону не входят.
+ */
+@Composable
+private fun DeselectZone(vm: MainViewModel, modifier: Modifier = Modifier) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val label = L("Снять выделение")
+    Box(
+        modifier
+            .semantics { onClick(label) { vm.deselectFromBar() } }
+            .pointerInput(vm) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = true)
+                    var pointers = 1
+                    var consumed = false
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        pointers = maxOf(pointers, ev.changes.count { it.pressed })
+                        val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (c.isConsumed) consumed = true
+                        if (!c.pressed) {
+                            val d = c.position - down.position
+                            val tap = com.vibetoon.domain.input.TopBarDeselect.isTap(
+                                d.x, d.y, c.uptimeMillis - down.uptimeMillis, viewConfiguration.touchSlop,
+                                viewConfiguration.longPressTimeoutMillis, pointers, consumed
+                            )
+                            if (tap && vm.deselectFromBar()) haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            break
+                        }
+                    }
+                }
+            }
+    )
 }
 
 /** Выезжающая панель кистей: список пресетов с превью S-образного мазка; тап выбирает кисть. */

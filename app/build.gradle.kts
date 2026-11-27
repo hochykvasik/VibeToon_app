@@ -53,6 +53,14 @@ android {
     }
 
     buildTypes {
+        // Спринт 59: тестовая сборка, которую ставят на телефон и планшет, - не debuggable. В debuggable-сборке ART
+        // не оптимизирует код, а Compose собирает отладочные данные для каждого модификатора - отсюда рывки при
+        // прокрутке списков. Ключ подписи и имя файла (vibetoon-debug.apk) прежние, установка поверх старой версии
+        // работает. Профилировать можно и так (<profileable> в манифесте); для пошаговой отладки в Android Studio
+        // временно верните isDebuggable = true.
+        debug {
+            isDebuggable = false
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

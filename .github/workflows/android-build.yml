@@ -85,6 +85,8 @@ jobs:
           APK=app/build/outputs/apk/debug/app-debug.apk
           TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           "$TOOLS/aapt" dump badging "$APK" | grep -F "package: name='com.vibetoon'"
+          # спринт 59: тестовая сборка не debuggable (иначе ART не оптимизирует код и прокрутка дёргается)
+          if "$TOOLS/aapt" dump badging "$APK" | grep -q 'application-debuggable'; then echo 'APK must not be debuggable'; exit 1; fi
           "$TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/vibetoon-signature.txt
           grep -Fi 'Signer #1 certificate SHA-256 digest: 02e8a1d469bb32a6cd30e43659e927068a5daa752bd7055b16a81a36f3b88003' /tmp/vibetoon-signature.txt
           if grep -q 'Signer #2 certificate' /tmp/vibetoon-signature.txt; then echo 'Unexpected second signer'; exit 1; fi

@@ -2073,6 +2073,10 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Референс - только окно интерфейса: его нет в слоях, на холсте, в «Отменить», в файле проекта и в экспорте. При переходе к другому проекту окно остаётся, пока вы не закроете его крестиком." to R.string.ui_the_reference_is_just_an_interface_w,
     "Картинка уменьшается до 1024 px по длинной стороне - окно почти не занимает память." to R.string.ui_the_picture_is_scaled_down_to_1024_p,
     "Нужен образец прямо в кадре? Добавьте его слоем: «Действия» → «Изображение (PNG, JPG)»." to R.string.ui_need_the_sample_inside_the_frame_add,
+    "Перетащите, чтобы передвинуть подсказку" to R.string.ui_drag_to_move_the_hint,
+    "Свернуть подсказку" to R.string.ui_collapse_the_hint,
+    "Развернуть подсказку" to R.string.ui_expand_the_hint,
+    "Закрыть урок" to R.string.ui_close_the_lesson,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -2353,6 +2357,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^(.+?)\\ кадров\\ ·\\ (.+?)\$" to R.string.ui_frames_3,
     "^На\\ пути\\ «(.+?)»\$" to R.string.ui_on_path_2,
     "^Проектов:\\ (.+?)\$" to R.string.ui_projects_2,
+    "^Шаг\\ (.+?)\\ из\\ (.+?):\\ (.+?)\$" to R.string.ui_step_of_2,
     "^Кадр\\ (.+?)\\ из\\ (.+?)\$" to R.string.ui_frame_of,
     "^Удалено:\\ (.+?)\$" to R.string.ui_deleted,
     "^Выбрано:\\ (.+?)\$" to R.string.ui_selected,

@@ -2055,4 +2055,9 @@ VibeToon: экспорт ждёт|VibeToon: export waiting
 Референс - только окно интерфейса: его нет в слоях, на холсте, в «Отменить», в файле проекта и в экспорте. При переходе к другому проекту окно остаётся, пока вы не закроете его крестиком.|The reference is just an interface window: it is not in the layers, on the canvas, in “Undo”, in the project file or in the export. When you switch to another project the window stays until you close it with the ✕.
 Картинка уменьшается до 1024 px по длинной стороне - окно почти не занимает память.|The picture is scaled down to 1024 px on the long side, so the window uses almost no memory.
 Нужен образец прямо в кадре? Добавьте его слоем: «Действия» → «Изображение (PNG, JPG)».|Need the sample inside the frame? Add it as a layer: “Actions” → “Image (PNG, JPG)”.
+Перетащите, чтобы передвинуть подсказку|Drag to move the hint
+Свернуть подсказку|Collapse the hint
+Развернуть подсказку|Expand the hint
+Закрыть урок|Close the lesson
+Шаг {} из {}: {}|Step {} of {}: {}
 """
