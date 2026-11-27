@@ -56,7 +56,10 @@ class Sprint58WiringTest {
         val notes = src("docs/RELEASE_NOTES_RU.md")
         assertTrue(notes.contains(".tsproj") && notes.contains("Резервная копия вручную") && notes.contains("vibetoon-debug.apk"))
         assertTrue(notes.contains("Known limitations") || notes.contains("Известные ограничения"))
-        val readme = src("README.md")
-        assertTrue(readme.contains(".tsproj") && readme.contains("RELEASE_NOTES_RU.md"))
+        // README.md - из main (текст автора, тоже напоминает о .tsproj); сборка и выпуск - в docs/BUILD_AND_RELEASE_RU.md
+        assertTrue(src("README.md").contains(".tsproj"))
+        val build = src("docs/BUILD_AND_RELEASE_RU.md")
+        assertTrue(build.contains(".tsproj") && build.contains("RELEASE_NOTES_RU.md") && build.contains("Резервная копия вручную"))
+        assertTrue(build.contains("git tag v0.1.0-beta") && build.contains("tools/ci/publish-release.sh"))
     }
 }

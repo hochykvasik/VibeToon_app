@@ -6,6 +6,8 @@
 VibeToon/
   README_RU.md          <- это оглавление
   CHANGELOG_RU.md       <- что сделано и в каком коммите, читать первым
+  BUILD_AND_RELEASE_RU.md <- сборка, CI и выпуск GitHub Release (перенесено из README ветки)
+  RELEASE_NOTES_RU.md   <- текст GitHub Release
   architecture/         <- как всё устроено внутри
       DEFORMERS_ARCHITECTURE.md   сетка, пины, Path, ARAP, кисть по вершинам, эффекты, кривые
       BONES_ARCHITECTURE.md       кости и скининг
