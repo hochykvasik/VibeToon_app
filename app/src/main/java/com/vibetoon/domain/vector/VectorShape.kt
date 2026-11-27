@@ -4,8 +4,8 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 /** Вид векторного примитива: линия от руки (сглаженный путь), прямая, прямоугольник, эллипс или пресет фигуры (звезда, сердце...). */
-/** POLY - ломаная пера (разомкнутый контур), POLYGON - замкнутый контур пера. */
-enum class VecKind { PATH, LINE, RECT, ELLIPSE, PRESET, POLY, POLYGON }
+/** POLY - ломаная пера (разомкнутый контур), POLYGON - замкнутый контур пера, BOOL - булева операция двух фигур (пакет 18). */
+enum class VecKind { PATH, LINE, RECT, ELLIPSE, PRESET, POLY, POLYGON, BOOL }
 
 /**
  * Векторный примитив слоя. Точки [pts] - плоский список x0,y0,x1,y1,... в пикселях холста проекта (слой занимает весь холст):
@@ -18,7 +18,21 @@ data class VectorShape(
     val stroke: Long = 0xFF000000L,
     val fill: Long = 0L,
     val width: Float = 8f,
-    val preset: String = ""
+    val preset: String = "",
+    /** BOOL: операция ([VectorBool.OPS]) и две фигуры (нижняя, верхняя); их точки - части [pts] по порядку. */
+    val op: String = "",
+    val parts: List<VectorShape> = emptyList(),
+    /**
+     * Пакет 19: ручки Безье контуров пера (POLY/POLYGON) - по 4 числа на узел: вход dx,dy и выход dx,dy относительно узла
+     * (ручки двигаются вместе с узлом). Пусто - контур из прямых, как раньше.
+     */
+    val handles: List<Float> = emptyList(),
+    /** Пакет 21: независимые ручки узла (по флагу на узел; пусто - все ручки связаны, вторая напротив первой). */
+    val freeHandles: List<Boolean> = emptyList(),
+    /** Спринт 40: векторная кисть - множитель толщины на каждый узел пути (пусто - ровная линия), см. [VectorBrush]. */
+    val widths: List<Float> = emptyList(),
+    /** Спринт 40: стиль векторной кисти (VectorBrush.Style.id; пусто - ровная). */
+    val brush: String = ""
 )
 
 /** Чистая математика векторного слоя (без Android): отбор точек жеста, сборка примитива, границы. */
@@ -64,7 +78,7 @@ object VectorMath {
             VecKind.LINE -> if (hypot(ex - sx, ey - sy) < MIN_EXTENT) null else VectorShape(VecKind.LINE, twoPoint, stroke, 0L, width)
             VecKind.RECT, VecKind.ELLIPSE ->
                 if (abs(ex - sx) < MIN_EXTENT || abs(ey - sy) < MIN_EXTENT) null else VectorShape(kind, twoPoint, stroke, fill, width)
-            VecKind.PRESET, VecKind.POLY, VecKind.POLYGON -> null
+            VecKind.PRESET, VecKind.POLY, VecKind.POLYGON, VecKind.BOOL -> null
         }
     }
 
@@ -97,4 +111,238 @@ object VectorMath {
 
     const val MIN_POINT_DIST = 2f
     const val MIN_EXTENT = 3f
+}
+
+/**
+ * Пакет 18: булевы операции векторных фигур (без разрушения): выбранная фигура и фигура под ней в списке слоя
+ * становятся одной фигурой BOOL - объединение, вычитание верхней из нижней, пересечение или исключение (XOR).
+ * Узлы фигуры BOOL - узлы её частей подряд, поэтому правка узлов работает как раньше; «Разобрать» возвращает части
+ * с их текущими узлами. Стиль (обводка, заливка, толщина) берётся у нижней фигуры. Линии и ломаные - не площади,
+ * в операциях не участвуют.
+ */
+object VectorBool {
+    const val UNION = "union"
+    const val SUBTRACT = "subtract"
+    const val INTERSECT = "intersect"
+    const val EXCLUDE = "exclude"
+    val OPS = listOf(UNION, SUBTRACT, INTERSECT, EXCLUDE)
+
+    enum class Error { NO_SHAPE, NO_SHAPE_BELOW, NOT_AREA, BAD_OP, NOT_COMPOUND }
+
+    /** Результат: новый список и индекс получившейся фигуры, либо ошибка. */
+    data class Result(val shapes: List<VectorShape>, val index: Int, val error: Error? = null)
+
+    /** Замкнутая площадь: участвует в операциях. */
+    fun isArea(s: VectorShape): Boolean = when (s.kind) {
+        VecKind.LINE, VecKind.POLY -> false
+        VecKind.BOOL -> s.op in OPS && s.parts.size == 2
+        else -> s.pts.size >= 4
+    }
+
+    fun combine(shapes: List<VectorShape>, index: Int, op: String): Result {
+        if (op !in OPS) return Result(shapes, index, Error.BAD_OP)
+        val upper = shapes.getOrNull(index) ?: return Result(shapes, index, Error.NO_SHAPE)
+        val lower = shapes.getOrNull(index - 1) ?: return Result(shapes, index, Error.NO_SHAPE_BELOW)
+        if (!isArea(upper) || !isArea(lower)) return Result(shapes, index, Error.NOT_AREA)
+        val fill = if (lower.fill != 0L) lower.fill else upper.fill
+        val c = VectorShape(VecKind.BOOL, lower.pts + upper.pts, lower.stroke, fill, lower.width, "", op, listOf(lower, upper))
+        val out = shapes.toMutableList()
+        out[index - 1] = c
+        out.removeAt(index)
+        return Result(out, index - 1)
+    }
+
+    /** Части фигуры BOOL с их текущими узлами (срезы [VectorShape.pts]); при несовпадении размеров - как сохранены. */
+    fun parts(c: VectorShape): List<VectorShape> {
+        if (c.kind != VecKind.BOOL) return emptyList()
+        if (c.parts.sumOf { it.pts.size } != c.pts.size) return c.parts
+        var at = 0
+        return c.parts.map { part -> part.copy(pts = c.pts.subList(at, at + part.pts.size).toList()).also { at += part.pts.size } }
+    }
+
+    /** «Разобрать»: фигура BOOL заменяется своими частями (нижняя, верхняя). */
+    fun release(shapes: List<VectorShape>, index: Int): Result {
+        val c = shapes.getOrNull(index) ?: return Result(shapes, index, Error.NO_SHAPE)
+        if (c.kind != VecKind.BOOL) return Result(shapes, index, Error.NOT_COMPOUND)
+        val out = shapes.toMutableList()
+        out.removeAt(index)
+        out.addAll(index, parts(c))
+        return Result(out, index + 1)
+    }
+}
+
+/**
+ * Пакет 19: узлы Безье контуров пера. «Сгладить узел» ставит ручки по направлению соседей (треть расстояния до каждого),
+ * «Угол» убирает ручки узла, перетаскивание ручки зеркалит направление второй ручки (её длина сохраняется).
+ * Ручки хранятся относительно узла, поэтому перемещение узла, части булевых операций и удаление узла их не ломают.
+ */
+object VectorBezier {
+    const val IN = 0
+    const val OUT = 1
+
+    fun supports(s: VectorShape): Boolean = s.kind == VecKind.POLY || s.kind == VecKind.POLYGON
+
+    fun hasHandles(s: VectorShape): Boolean = supports(s) && s.handles.size == s.pts.size * 2 && s.handles.any { it != 0f }
+
+    private fun nodes(s: VectorShape) = s.pts.size / 2
+
+    private fun full(s: VectorShape): MutableList<Float> =
+        if (s.handles.size == s.pts.size * 2) s.handles.toMutableList() else MutableList(s.pts.size * 2) { 0f }
+
+    /** Все ручки нулевые - поле пустое (контур снова из прямых, файл как раньше); флаги независимых ручек - только при ручках. */
+    private fun pack(s: VectorShape, h: List<Float>, free: List<Boolean> = s.freeHandles): VectorShape {
+        val hs = if (h.all { it == 0f }) emptyList() else h.toList()
+        val fs = if (hs.isEmpty() || free.size != s.pts.size / 2 || free.none { it }) emptyList() else free.toList()
+        return s.copy(handles = hs, freeHandles = fs)
+    }
+
+    /** Пакет 21: ручки узла [k] независимы (перетаскивание одной не поворачивает другую). */
+    fun isFree(s: VectorShape, k: Int): Boolean = s.freeHandles.size == s.pts.size / 2 && s.freeHandles.getOrNull(k) == true
+
+    private fun withFree(s: VectorShape, k: Int, free: Boolean): List<Boolean> =
+        (if (s.freeHandles.size == s.pts.size / 2) s.freeHandles.toMutableList() else MutableList(s.pts.size / 2) { false }).also { it[k] = free }
+
+    /**
+     * Пакет 21: «Независимые ручки» / «Связать ручки». Связывание поворачивает ручку входа напротив ручки выхода
+     * (длина входа сохраняется). null - у узла нет ручек или контур не перо.
+     */
+    fun setFree(s: VectorShape, k: Int, free: Boolean): VectorShape? {
+        if (!supports(s) || k !in 0 until nodes(s) || !nodeHasHandles(s, k)) return null
+        val h = full(s)
+        if (!free) {
+            val ox = h[k * 4 + 2]; val oy = h[k * 4 + 3]; val ol = kotlin.math.hypot(ox, oy)
+            val il = kotlin.math.hypot(h[k * 4], h[k * 4 + 1])
+            if (ol > 1e-3f && il > 1e-3f) { h[k * 4] = -ox / ol * il; h[k * 4 + 1] = -oy / ol * il }
+        }
+        return pack(s, h, withFree(s, k, free))
+    }
+
+    /** Соседи узла [k] по контуру (у замкнутого - по кругу); null - соседа нет. */
+    private fun neighbor(s: VectorShape, k: Int, d: Int): Int? {
+        val n = nodes(s)
+        val j = k + d
+        return when {
+            j in 0 until n -> j
+            s.kind == VecKind.POLYGON && n >= 3 -> (j + n) % n
+            else -> null
+        }
+    }
+
+    /** Абсолютные координаты ручки [which] узла [k] (x, y). */
+    fun handleAt(s: VectorShape, k: Int, which: Int): Pair<Float, Float>? {
+        if (!supports(s) || k !in 0 until nodes(s)) return null
+        val h = if (s.handles.size == s.pts.size * 2) s.handles else return s.pts[k * 2] to s.pts[k * 2 + 1]
+        return (s.pts[k * 2] + h[k * 4 + which * 2]) to (s.pts[k * 2 + 1] + h[k * 4 + which * 2 + 1])
+    }
+
+    fun smoothNode(s: VectorShape, k: Int): VectorShape? {
+        if (!supports(s) || k !in 0 until nodes(s)) return null
+        val x = s.pts[k * 2]; val y = s.pts[k * 2 + 1]
+        val prev = neighbor(s, k, -1); val next = neighbor(s, k, 1)
+        if (prev == null && next == null) return null
+        val px = prev?.let { s.pts[it * 2] } ?: x; val py = prev?.let { s.pts[it * 2 + 1] } ?: y
+        val nx = next?.let { s.pts[it * 2] } ?: x; val ny = next?.let { s.pts[it * 2 + 1] } ?: y
+        var tx = nx - px; var ty = ny - py
+        val tl = kotlin.math.hypot(tx, ty)
+        if (tl < 1e-3f) return null
+        tx /= tl; ty /= tl
+        val dIn = kotlin.math.hypot(x - px, y - py) / 3f
+        val dOut = kotlin.math.hypot(nx - x, ny - y) / 3f
+        val h = full(s)
+        h[k * 4] = -tx * dIn; h[k * 4 + 1] = -ty * dIn; h[k * 4 + 2] = tx * dOut; h[k * 4 + 3] = ty * dOut
+        return pack(s, h, if (isFree(s, k)) withFree(s, k, false) else s.freeHandles)   // сглаженный узел - ручки связаны
+    }
+
+    fun smoothAll(s: VectorShape): VectorShape? {
+        if (!supports(s)) return null
+        var r = s
+        for (k in 0 until nodes(s)) smoothNode(r, k)?.let { r = it }
+        return if (r == s) null else r
+    }
+
+    fun cornerNode(s: VectorShape, k: Int): VectorShape? {
+        if (!supports(s) || k !in 0 until nodes(s)) return null
+        val h = full(s)
+        for (i in 0 until 4) h[k * 4 + i] = 0f
+        return pack(s, h, if (isFree(s, k)) withFree(s, k, false) else s.freeHandles)
+    }
+
+    fun nodeHasHandles(s: VectorShape, k: Int): Boolean =
+        hasHandles(s) && k in 0 until nodes(s) && (0 until 4).any { s.handles[k * 4 + it] != 0f }
+
+    /** Ручка [which] узла [k] в точку x,y; вторая ручка узла поворачивается напротив (длина сохраняется). Новый список. */
+    fun moveHandle(shapes: List<VectorShape>, si: Int, k: Int, which: Int, x: Float, y: Float): List<VectorShape>? {
+        if (!x.isFinite() || !y.isFinite() || which !in 0..1) return null
+        val s = shapes.getOrNull(si) ?: return null
+        if (!supports(s) || k !in 0 until nodes(s)) return null
+        val h = full(s)
+        val dx = x - s.pts[k * 2]; val dy = y - s.pts[k * 2 + 1]
+        h[k * 4 + which * 2] = dx; h[k * 4 + which * 2 + 1] = dy
+        val o = (1 - which) * 2
+        val ol = kotlin.math.hypot(h[k * 4 + o], h[k * 4 + o + 1])
+        val l = kotlin.math.hypot(dx, dy)
+        if (!isFree(s, k) && ol > 0f && l > 1e-3f) { h[k * 4 + o] = -dx / l * ol; h[k * 4 + o + 1] = -dy / l * ol }
+        return shapes.toMutableList().also { it[si] = pack(s, h) }
+    }
+
+    /** Удаление узла вместе с его ручками. */
+    fun withoutNode(s: VectorShape, k: Int): VectorShape {
+        val pts = s.pts.toMutableList(); pts.removeAt(k * 2 + 1); pts.removeAt(k * 2)
+        val h = if (s.handles.size == s.pts.size * 2) s.handles.toMutableList().also { l -> repeat(4) { l.removeAt(k * 4) } } else emptyList()
+        val f = if (s.freeHandles.size == s.pts.size / 2) s.freeHandles.toMutableList().also { it.removeAt(k) } else emptyList()
+        val w = VectorBrush.withoutNode(s.widths, s.pts.size / 2, k)   // спринт 40: толщина узла уходит вместе с ним
+        return pack(s.copy(pts = pts, freeHandles = f, widths = w), h, f)
+    }
+
+    /**
+     * Пакет 20: ручки при постановке точки пером. [handles] - ручки контура в работе (по 4 на точку), у точки [k]
+     * выход ставится в dx,dy (вектор протяжки пальцем), вход - зеркально. Длина меньше [minLen] - ручек нет (простой тап).
+     */
+    fun penPull(handles: List<Float>, k: Int, dx: Float, dy: Float, minLen: Float): List<Float> {
+        if (k < 0 || handles.size < (k + 1) * 4 || !dx.isFinite() || !dy.isFinite()) return handles
+        val h = handles.toMutableList()
+        val on = kotlin.math.hypot(dx, dy) >= minLen
+        h[k * 4] = if (on) -dx else 0f; h[k * 4 + 1] = if (on) -dy else 0f
+        h[k * 4 + 2] = if (on) dx else 0f; h[k * 4 + 3] = if (on) dy else 0f
+        return h
+    }
+
+    /** Контур пера из точек и ручек в работе: ручки неверной длины или все нулевые - прямые отрезки, как раньше. */
+    fun fromPen(closed: Boolean, pts: List<Float>, handles: List<Float>, stroke: Long, fill: Long, width: Float): VectorShape {
+        val s = VectorShape(if (closed && pts.size >= 6) VecKind.POLYGON else VecKind.POLY, pts.toList(), stroke, fill, width)
+        return if (handles.size == pts.size * 2) pack(s, handles) else s
+    }
+
+    /** Точки кривой контура для предпросмотра (по [steps] на сегмент): x0,y0,x1,y1,... в координатах контура. */
+    fun flatten(s: VectorShape, steps: Int): List<Float> {
+        val segs = cubics(s)
+        if (segs.isEmpty()) return s.pts.toList()
+        val n = steps.coerceIn(1, 64)
+        val out = ArrayList<Float>(segs.size * n * 2 + 2)
+        out += segs[0][0]; out += segs[0][1]
+        for (c in segs) {
+            val straight = c[2] == c[0] && c[3] == c[1] && c[4] == c[6] && c[5] == c[7]
+            val m = if (straight) 1 else n
+            for (i in 1..m) {
+                val t = i.toFloat() / m; val u = 1f - t
+                val a = u * u * u; val b = 3f * u * u * t; val cc = 3f * u * t * t; val d = t * t * t
+                out += a * c[0] + b * c[2] + cc * c[4] + d * c[6]
+                out += a * c[1] + b * c[3] + cc * c[5] + d * c[7]
+            }
+        }
+        return out
+    }
+
+    /** Сегменты кубических кривых: x0,y0, c1x,c1y, c2x,c2y, x1,y1 (замкнутый контур - с последним к первому). */
+    fun cubics(s: VectorShape): List<FloatArray> {
+        val n = nodes(s)
+        if (n < 2) return emptyList()
+        val h = if (s.handles.size == s.pts.size * 2) s.handles else List(s.pts.size * 2) { 0f }
+        val segs = if (s.kind == VecKind.POLYGON) n else n - 1
+        return (0 until segs).map { i ->
+            val j = (i + 1) % n
+            val x0 = s.pts[i * 2]; val y0 = s.pts[i * 2 + 1]; val x1 = s.pts[j * 2]; val y1 = s.pts[j * 2 + 1]
+            floatArrayOf(x0, y0, x0 + h[i * 4 + 2], y0 + h[i * 4 + 3], x1 + h[j * 4], y1 + h[j * 4 + 1], x1, y1)
+        }
+    }
 }

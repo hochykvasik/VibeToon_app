@@ -1,7 +1,9 @@
 // JNI-мост: PsdNative.parseLayers(path) -> Array<LayerInfo>.
 // Здесь единственное место C++ с jni.h. C++-исключения наружу не выпускаем.
 #include <jni.h>
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <new>
 #include <thread>
 #include <string>
@@ -120,6 +122,46 @@ Java_com_vibetoon_nativebridge_PsdNative_loadTexture(JNIEnv* env, jobject, jlong
         throwNew(env, "java/io/IOException", e.what());
     }
     return -1;
+}
+
+// Пакет 23: пиксели слоя в Kotlin (вставка другого PSD - слои пишутся в PNG проекта).
+// Возвращает [ширина, высота, ARGB...] без premultiply (формат Bitmap.createBitmap(int[])) или null (слой пуст/ошибка).
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_vibetoon_nativebridge_PsdNative_decodePixels(JNIEnv* env, jobject, jlong h, jint layerId,
+                                                       jfloat scale, jint maxTex) {
+    auto* s = reinterpret_cast<vt::PsdSession*>(h);
+    try {
+        vt::DecodedLayer d;
+        if (!s->decode(layerId, scale, maxTex, d)) return nullptr;
+        const size_t n = static_cast<size_t>(d.width) * static_cast<size_t>(d.height);
+        if (n == 0 || d.rgba.size() < n * 4 || n + 2 > static_cast<size_t>(INT32_MAX)) return nullptr;
+        jintArray arr = env->NewIntArray(static_cast<jsize>(n + 2));
+        if (!arr) return nullptr;  // OOM уже выброшен JVM
+        jint* dst = env->GetIntArrayElements(arr, nullptr);
+        if (!dst) return nullptr;
+        dst[0] = d.width;
+        dst[1] = d.height;
+        const uint8_t* src = d.rgba.data();
+        for (size_t i = 0; i < n; ++i, src += 4) {
+            const uint32_t a = src[3];
+            uint32_t r = 0, g = 0, b = 0;
+            if (a == 255) {
+                r = src[0]; g = src[1]; b = src[2];
+            } else if (a != 0) {
+                r = std::min<uint32_t>(255u, (src[0] * 255u + a / 2u) / a);
+                g = std::min<uint32_t>(255u, (src[1] * 255u + a / 2u) / a);
+                b = std::min<uint32_t>(255u, (src[2] * 255u + a / 2u) / a);
+            }
+            dst[i + 2] = static_cast<jint>((a << 24) | (r << 16) | (g << 8) | b);
+        }
+        env->ReleaseIntArrayElements(arr, dst, 0);
+        return arr;
+    } catch (const std::bad_alloc&) {
+        throwNew(env, "java/lang/OutOfMemoryError", "native OOM in decodePixels");
+    } catch (const std::exception& e) {
+        throwNew(env, "java/io/IOException", e.what());
+    }
+    return nullptr;
 }
 
 extern "C" JNIEXPORT jobjectArray JNICALL

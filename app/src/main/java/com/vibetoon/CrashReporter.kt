@@ -16,7 +16,7 @@ object CrashReporter {
         val f = file(ctx)
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
-            runCatching { f.writeText("Поток: ${thread.name}\n" + Log.getStackTraceString(error)) }
+            runCatching { f.writeText("Thread: ${thread.name}\n" + Log.getStackTraceString(error)) }
             previous?.uncaughtException(thread, error)
         }
     }

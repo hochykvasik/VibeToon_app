@@ -1,21 +1,38 @@
 #include "render/Renderer.h"
+#include "render/UploadBufferPolicy.h"
+#include "render/MeshPackPolicy.h"
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <utility>
 #include <new>
 
 #include "common/Log.h"
 #include "render/GlUtil.h"
+#include "render/GlState.h"
+#include "render/FxKeyPolicy.h"
+#include "render/GlErrorPolicy.h"
 #include "render/CanvasClipPolicy.h"
+#include "render/FxCachePolicy.h"
+#include "render/GroupCachePolicy.h"
+#include "render/FrameTargetPolicy.h"
+#include "render/BlendBindPolicy.h"
+#include "render/CropPolicy.h"
+#include "render/TexAlias.h"
+#include "render/UploadQueue.h"
+#include <EGL/egl.h>
+#include <chrono>
+#include "render/LayerBounds.h"
 #include "render/EffectRenderPolicy.h"
+#include "render/GroupFxPolicy.h"
 #include "render/MeshPosition.h"
 #include "render/UploadQueue.h"
 
 namespace vt {
 namespace {
 
-// Бюджет GPU-памяти под текстуры слоёв (с учётом mip-уровней +33%).
-constexpr size_t kTextureBudgetBytes = 192u * 1024u * 1024u;
+// Бюджет GPU-памяти под текстуры слоёв - пакет 29: Renderer::budget_ (задаёт Kotlin, см. TextureBudgetPolicy.h).
 // Сколько байт грузим в GPU за один кадр (чтобы не подвешивать UI).
 constexpr size_t kUploadBytesPerFrame = 16u * 1024u * 1024u;
 
@@ -28,13 +45,15 @@ uniform mat3 uH;
 uniform int uMesh;                    // 1 - рисуется Mesh: aPos уже смещена, aUv - исходное положение
 uniform int uWarp;                    // 1 - слой деформирован (рисуется сеткой)
 uniform vec2 uOff[16];                // смещения контрольных точек 4x4 в долях размера слоя
+uniform vec4 uUvRect;                 // спринт 46: обрезка - квадрат слоя = видимая рамка (x, y, w, h доли текстуры); w <= 0 - вся текстура
 out vec2 vUv;
 vec4 bernstein(float t) {
     float s = 1.0 - t;
     return vec4(s * s * s, 3.0 * s * s * t, 3.0 * s * t * t, t * t * t);
 }
 void main() {
-    vUv = uMesh != 0 ? aUv : aPos;    // строка 0 текстуры = верх слоя
+    vec2 base = uMesh != 0 ? aUv : aPos;   // строка 0 текстуры = верх слоя
+    vUv = uUvRect.z > 0.0 ? uUvRect.xy + base * uUvRect.zw : base;
     vec2 pos = aPos;
     if (uWarp != 0 && uMesh == 0) {
         vec4 bu = bernstein(aPos.x);
@@ -61,11 +80,14 @@ void main() { outColor = uColor; }
 )";
 
 // Обычное наложение: premultiplied текстура * прозрачность (фиксированный blend функцией GL).
+// highp: mediump UV (fp16) на текстурах >2048 px теряет до 1-2 текселей точности - «мыло» и дрожание.
 const char* kFragTex = R"(#version 300 es
-precision mediump float;
+precision highp float;
 uniform sampler2D uTex;
 uniform float uOpacity;
+uniform float uLodBias;               // экспорт: -0.5 (менее размытый mip при уменьшении), редактор: 0
 uniform vec4 uTurb;                   // intensity (доля слоя), size (ячеек на слой), complexity (октавы), seed; intensity = 0 - выкл
+uniform vec4 uCrop;                   // спринт 45: обрезка слоя (l, t, r, b в долях текстуры); r <= l - выкл
 in vec2 vUv;
 out vec4 outColor;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -80,13 +102,14 @@ float fbm(vec2 p, int oct) {
     return s;
 }
 void main() {
+    if (uCrop.z > uCrop.x && (vUv.x < uCrop.x || vUv.x > uCrop.z || vUv.y < uCrop.y || vUv.y > uCrop.w)) discard;
     vec2 uv = vUv;
     if (uTurb.x > 0.0) {
         vec2 p = uv * uTurb.y + vec2(uTurb.w * 7.31, uTurb.w * 3.17);
         int oct = int(uTurb.z);
         uv += (vec2(fbm(p, oct), fbm(p + 31.4, oct)) - 0.5) * 2.0 * uTurb.x;
     }
-    outColor = texture(uTex, uv) * uOpacity;
+    outColor = texture(uTex, uv, uLodBias) * uOpacity;
 }
 )";
 
@@ -101,6 +124,8 @@ uniform float uOpacity;
 uniform int uMode;                    // 1 = multiply, 2 = screen, 3 = overlay, 5 = soft light, 6 = add, 7 = darken, 8 = lighten, 9 = color dodge, 10 = color burn
 uniform int uClip;                    // 1 = обтравка: src *= alpha подложки, альфа подложки не меняется
 uniform vec4 uTurb;
+uniform float uLodBias;
+uniform vec4 uCrop;                   // спринт 45: обрезка слоя (как в kFragTex)
 in vec2 vUv;
 out vec4 outColor;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -142,13 +167,14 @@ vec3 blendFn(vec3 cb, vec3 cs) {
     return mix(lo, hi, step(0.5, cs));
 }
 void main() {
+    if (uCrop.z > uCrop.x && (vUv.x < uCrop.x || vUv.x > uCrop.z || vUv.y < uCrop.y || vUv.y > uCrop.w)) discard;
     vec2 uv = vUv;
     if (uTurb.x > 0.0) {
         vec2 p = uv * uTurb.y + vec2(uTurb.w * 7.31, uTurb.w * 3.17);
         int oct = int(uTurb.z);
         uv += (vec2(fbm(p, oct), fbm(p + 31.4, oct)) - 0.5) * 2.0 * uTurb.x;
     }
-    vec4 s = texture(uTex, uv) * uOpacity;
+    vec4 s = texture(uTex, uv, uLodBias) * uOpacity;
     vec4 d = texelFetch(uBackdrop, ivec2(gl_FragCoord.xy), 0);
     float ab = d.a;
     if (uClip != 0) s *= ab;   // обтравка: src *= clipAlpha до смешивания, нижний слой (Dst) не обнуляется
@@ -166,7 +192,8 @@ void main() {
 // Эффекты слоя: один полноэкранный проход над результатом предыдущего (premultiplied текстура).
 // uMode: 0 ChromaKey, 1 Blur, 2 ColorCorrection, 3 Pixelate, 4 Glow, 5 DropShadow, 6 Invert, 7 Vignette,
 // 8 Stroke, 9 Wave, 10 Mirror, 11 Tiles, 12 Noise, 13 Shake, 14 MotionBlur, 15 ZoomBlur (16 Spin - на CPU),
-// 17 RGB Split / Glitch, 18 Pulse, 19 Displacement (процедурная карта смещения).
+// 17 RGB Split / Glitch, 18 Pulse, 19 Displacement (процедурная карта смещения),
+// 22 Inner Glow, 23 Halftone, 24 Line Boil (Спринт 35).
 // Параметры p0..p7 = uP0.xyzw, uP1.xyzw. Расстояния в параметрах - пиксели холста, здесь умножаются на uView.x.
 const char* kFragFx = R"(#version 300 es
 precision highp float;
@@ -190,6 +217,41 @@ float vnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+// Спринт 50: фрактальный шум как у Turbulent Displace слоя (kFragTex), до 6 октав.
+float fbmFx(vec2 p, int oct) {
+    float s = 0.0, a = 0.5;
+    for (int k = 0; k < 6; ++k) { if (k >= oct) break; s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; }
+    return s;
+}
+// Спринт 35: холст (y вниз) -> uv цели; обратное к q в main().
+vec2 uvOf(vec2 qc) { return vec2(qc.x * uView.x + uView.y, uSize.y - (qc.y * uView.x + uView.z)) / uSize; }
+float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+// Покрытие точки полутона в пикселе холста qc: сетка с шагом cell (px холста) под углом ang, краска ink (0..1) в центре ячейки.
+float htDot(vec2 qc, vec2 g, float cell, float ink) {
+    vec2 f = g - (floor(g) + 0.5);
+    float r = 0.7072 * sqrt(clamp(ink, 0.0, 1.0));
+    float aa = 0.75 / max(cell * uView.x, 1.0);
+    return 1.0 - smoothstep(r - aa, r + aa, length(f));
+}
+mat2 rot2(float a) { float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }
+// Центр ячейки сетки (угол ang, шаг cell) для пикселя холста qc: координаты сетки g и центр в холсте.
+vec2 htGrid(vec2 qc, float ang, float cell) { return rot2(-ang) * qc / cell; }
+vec2 htCenter(vec2 g, float ang, float cell) { return rot2(ang) * ((floor(g) + 0.5) * cell); }
+float htInk(float v) { return clamp((clamp(v, 0.0, 1.0) - 0.5) * uP0.z + 0.5 + uP0.w, 0.0, 1.0); }
+float boilNoise(vec2 p, int kind, int oct) {
+    if (kind == 1) return hash(floor(p * 2.0));                              // зернистый: ступеньки без сглаживания
+    if (kind == 2) return 0.5 + 0.25 * (sin(p.x * 2.1 + sin(p.y * 1.3) * 1.7) + sin(p.y * 1.9 + sin(p.x * 1.1) * 1.5));   // волнистый
+    float n = 0.0, a = 0.5, sum = 0.0;
+    for (int i = 0; i < 4; ++i) {                                            // плавный: сумма октав шума
+        if (i >= oct) break;
+        n += a * vnoise(p);
+        sum += a;
+        p = p * 2.03 + 11.7;
+        a *= 0.5;
+    }
+    return n / max(sum, 0.0001);
 }
 
 // Гауссово размытие по спирали (золотой угол): веса exp(-r^2 / 2s^2), s = радиус / 2.
@@ -323,6 +385,73 @@ void main() {
         vec2 m = q / max(uP0.y, 4.0) + vec2(uView.w * uP0.z, -uView.w * uP0.z * 0.7);
         vec2 d = vec2(vnoise(m), vnoise(m + 17.3)) - 0.5;
         o = tx(uv + vec2(d.x, -d.y) * 2.0 * uP0.x * k / uSize);
+    } else if (uMode == 25) {                       // спринт 50: Turbulent Displace группы: доля, ячеек, октавы, seed; рамка x, y, w, h (холст)
+        vec2 box = max(uP1.zw, vec2(1.0));
+        vec2 p = (q - uP1.xy) / box * uP0.y + vec2(uP0.w * 7.31, uP0.w * 3.17);
+        int oct = int(uP0.z);
+        vec2 d = (vec2(fbmFx(p, oct), fbmFx(p + 31.4, oct)) - 0.5) * 2.0 * uP0.x * box;
+        o = tx(uvOf(q + d));
+    } else if (uMode == 22) {                       // Inner Glow: цвет rgb, радиус, распространение, интенсивность, режим, инверсия
+        if (c.a > 0.0001) {
+            float ba = blurAt(uv, max(uP0.w * k, 0.5)).a;
+            float edge = clamp((1.0 - ba) * 2.0, 0.0, 1.0);                 // у края контура размытая альфа ~0.5
+            float m = clamp(edge / (1.0 - clamp(uP1.x, 0.0, 0.98)), 0.0, 1.0);
+            if (uP1.w >= 0.5) m = 1.0 - m;                                   // инверсия: свечение от центра
+            float a = clamp(m * uP1.y, 0.0, 1.0);
+            vec3 col = unpre(c), g = clamp(uP0.xyz, 0.0, 1.0), r;
+            int bm = int(uP1.z + 0.5);
+            if (bm == 1) r = 1.0 - (1.0 - col) * (1.0 - g);                  // экран
+            else if (bm == 2) r = min(col + g, vec3(1.0));                   // добавление
+            else if (bm == 3) r = col * g;                                   // умножение (затемнение краёв тёмным цветом)
+            else r = g;                                                      // обычный
+            o = vec4(mix(col, r, a) * c.a, c.a);                             // альфа слоя не меняется: за контур не выходит
+        }
+    } else if (uMode == 23) {                       // Halftone: ячейка (px), угол, контраст, сдвиг, режим, цвет точек rgb
+        float cell = max(uP0.x, 2.0);
+        float ang = radians(uP0.y);
+        int hm = int(uP1.x + 0.5);
+        vec3 ink = clamp(uP1.yzw, 0.0, 1.0);
+        if (hm == 3 || hm == 4) {                   // CMYK на белом / RGB на чёрном: свой угол у каждого канала
+            vec4 angs = hm == 3 ? vec4(15.0, 75.0, 0.0, 45.0) : vec4(15.0, 75.0, 0.0, 0.0);
+            vec4 cov = vec4(0.0);
+            for (int ch = 0; ch < 4; ++ch) {
+                if (hm == 4 && ch == 3) break;
+                float aa = ang + radians(angs[ch] - 45.0);
+                vec2 g = htGrid(q, aa, cell);
+                vec4 s = tx(uvOf(htCenter(g, aa, cell)));
+                vec3 sc = unpre(s);
+                float v;
+                if (hm == 3) {
+                    float kk = 1.0 - max(max(sc.r, sc.g), sc.b);
+                    float den = max(1.0 - kk, 0.0001);
+                    v = ch == 0 ? (1.0 - sc.r - kk) / den : ch == 1 ? (1.0 - sc.g - kk) / den : ch == 2 ? (1.0 - sc.b - kk) / den : kk;
+                } else v = ch == 0 ? sc.r : ch == 1 ? sc.g : sc.b;
+                cov[ch] = htDot(q, g, cell, htInk(v) * step(0.0001, s.a));
+            }
+            vec3 col;
+            if (hm == 3) col = (1.0 - cov.x * vec3(1.0, 0.0, 0.0)) * (1.0 - cov.y * vec3(0.0, 1.0, 0.0)) * (1.0 - cov.z * vec3(0.0, 0.0, 1.0)) * (1.0 - cov.w);
+            else col = cov.xyz;
+            o = vec4(col * c.a, c.a);
+        } else {
+            vec2 g = htGrid(q, ang, cell);
+            vec4 s = tx(uvOf(htCenter(g, ang, cell)));
+            vec3 sc = unpre(s);
+            float cov = htDot(q, g, cell, htInk((1.0 - lum(sc)) * s.a)) * c.a;   // точки только в пределах рисунка
+            vec3 dc = hm == 2 ? sc : ink;
+            if (hm == 1) o = vec4(dc * cov + vec3(1.0) * (c.a - cov), c.a);     // на белой «бумаге» внутри контура
+            else o = vec4(dc * cov, cov);
+        }
+    } else if (uMode == 24) {                       // Line Boil: амплитуда, масштаб шума, fps дрожания, тип, цикл, октавы, зерно, текстура
+        float st = floor(max(uView.w, 0.0) * clamp(uP0.z, 0.1, 24.0) + 0.0001);
+        float cyc = floor(uP1.x + 0.5);
+        st = cyc >= 1.0 ? mod(st, cyc) : mod(st, 4096.0);                   // без цикла - период 4096 шагов (точность sin в hash)
+        vec2 seed = vec2(hash(vec2(st, uP1.z + 1.3)), hash(vec2(uP1.z + 7.9, st))) * 173.0;
+        vec2 m = q / max(uP0.y, 2.0) + seed;
+        int kind = int(uP0.w + 0.5), oct = int(clamp(uP1.y, 1.0, 4.0) + 0.5);
+        vec2 d = vec2(boilNoise(m, kind, oct), boilNoise(m + vec2(37.2, 91.4), kind, oct)) - 0.5;
+        o = tx(uv + vec2(d.x, -d.y) * 2.0 * uP0.x * k / uSize);
+        float gr = vnoise(m * 4.0 + 31.7);
+        o *= clamp(1.0 - uP1.w * (gr - 0.3) * 1.4, 0.0, 1.0);               // дрожание текстуры (прозрачное зерно)
     }
     outColor = o;
 }
@@ -340,6 +469,7 @@ int Renderer::initGL() {
     GLint maxTex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
     LOGI("GL_MAX_TEXTURE_SIZE=%d", maxTex);
+    maxTexSize_ = maxTex;
 
     progSolid_ = buildProgram(kVertex, kFragSolid);
     progTex_ = buildProgram(kVertex, kFragTex);
@@ -360,6 +490,8 @@ int Renderer::initGL() {
     uSolidColor_ = glGetUniformLocation(progSolid_, "uColor");
     uTexMvp_ = glGetUniformLocation(progTex_, "uMvp");
     uTexOpacity_ = glGetUniformLocation(progTex_, "uOpacity");
+    uTexLod_ = glGetUniformLocation(progTex_, "uLodBias");
+    uBlLod_ = glGetUniformLocation(progBlend_, "uLodBias");
     uTexSampler_ = glGetUniformLocation(progTex_, "uTex");
     uTexWarp_ = glGetUniformLocation(progTex_, "uWarp");
     uTexOff_ = glGetUniformLocation(progTex_, "uOff");
@@ -379,6 +511,10 @@ int Renderer::initGL() {
     uBlH_ = glGetUniformLocation(progBlend_, "uH");
     uTexTurb_ = glGetUniformLocation(progTex_, "uTurb");
     uBlTurb_ = glGetUniformLocation(progBlend_, "uTurb");
+    uTexCrop_ = glGetUniformLocation(progTex_, "uCrop");
+    uBlCrop_ = glGetUniformLocation(progBlend_, "uCrop");
+    uTexUv_ = glGetUniformLocation(progTex_, "uUvRect");
+    uBlUv_ = glGetUniformLocation(progBlend_, "uUvRect");
 
     // Mesh: динамический VBO (позиция + uv, обновляется при каждой отрисовке) и IBO.
     glGenVertexArrays(1, &meshVao_);
@@ -441,6 +577,16 @@ int Renderer::initGL() {
 
     // Новый контекст: старые id (текстуры, FBO) недействительны.
     textures_.clear();
+    shadowTex_.clear();
+    fxCache_.clear();
+    fxCacheBytes_ = 0;
+    groupCache_.clear();   // FBO прошлого контекста недействительны (не удаляем - их id уже чужие)
+    texGen_.clear();
+    texUse_.clear();
+    modifiedTex_.clear();
+    texEvents_.clear();
+    ++texSalt_;
+    bumpEpoch();
     textureBytes_ = 0;
     fboPool_.clear();
     fboCreated_ = 0;
@@ -457,7 +603,11 @@ int Renderer::initGL() {
 void Renderer::setViewport(int width, int height) {
     const int w = width > 0 ? width : 1;
     const int h = height > 0 ? height : 1;
-    if (w != width_ || h != height_) releaseTargets();  // FBO привязаны к размеру экрана
+    // FBO привязаны к размеру экрана. Кэш эффектов сбрасываем при ЛЮБОМ вызове (и том же размере):
+    // поверхность пересоздана, старые экранные рамки кэша могут не соответствовать новому кадру.
+    if (w != width_ || h != height_) { releaseTargets(); releaseEditorTarget(); }
+    dropFxCache();
+    bumpEpoch();
     width_ = w;
     height_ = h;
     glViewport(0, 0, width_, height_);
@@ -465,56 +615,202 @@ void Renderer::setViewport(int width, int height) {
 }
 
 void Renderer::beginExport(int width, int height) {
+    bumpEpoch();
     savedW_ = width_; savedH_ = height_;
     savedZoom_ = zoom_; savedPanX_ = panX_; savedPanY_ = panY_;
+    savedRotDeg_ = rotDeg_; savedFlipX_ = flipX_; savedFlipY_ = flipY_;
     exportMode_ = true;
-    zoom_ = 1.f; panX_ = panY_ = 0.f;
+    zoom_ = 1.f; panX_ = panY_ = 0.f; rotDeg_ = 0.f; flipX_ = flipY_ = false;
+    releaseTargets();  // свежие FBO/подложка под размер экспорта: никаких stale-целей редактора
     setViewport(width, height);
+    // Экспорт в Surface кодека: рисуем в FBO (blit FBO->FBO надёжен), затем blit на поверхность.
+    // Blit ИЗ window surface ненадёжен на части драйверов и давал артефакт «мини-копия холста».
+    if (screenFbo_ == 0 && width > 0 && height > 0) {
+        glGenTextures(1, &exportTex_);
+        glBindTexture(GL_TEXTURE_2D, exportTex_);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenFramebuffers(1, &exportFbo_);
+        glBindFramebuffer(GL_FRAMEBUFFER, exportFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, exportTex_, 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            screenFbo_ = exportFbo_;
+            exportToSurface_ = true;
+        } else {
+            glDeleteFramebuffers(1, &exportFbo_); glDeleteTextures(1, &exportTex_);
+            exportFbo_ = exportTex_ = 0;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
 }
 
-bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out) {
-    if (w < 1 || h < 1 || w > 4096 || h > 4096 || exportMode_) return false;
-    GLuint tex = 0, fbo = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+int Renderer::captureToTexture(int id, int w, int h, bool transparent, int flags) {
+    if (id < 0 || w < 1 || h < 1) return kCaptureToTexFailed;
+    if (maxTexSize_ > 0 && (w > maxTexSize_ || h > maxTexSize_)) { pushTexEvent(kTexRejectedSize, id); return kCaptureToTexFailed; }
+    if (!ensureRoom(texbudget::textureBytes(w, h), id)) { pushTexEvent(kTexRejectedBudget, id); return kCaptureToTexBudget; }
+    std::vector<uint8_t> none;
+    if (!captureFrame(w, h, transparent, none, flags, id)) return kCaptureToTexFailed;
+    return textures_.count(id) ? kCaptureToTexOk : kCaptureToTexNotReady;
+}
+
+// Пакет 29: содержимое FBO снимка -> новая текстура [id] (строки перевёрнуты: как у загруженных картинок, строка 0 -
+// верх), с mip-уровнями. Только GPU. Прежняя текстура [id] заменяется. false - ошибка GL (прежняя не тронута).
+bool Renderer::keepCaptureAsTexture(GLuint srcFbo, int id, int w, int h) {
+    const size_t bytes = texbudget::textureBytes(w, h);
+    checkGl("before keepCaptureAsTexture");
+    GLuint dst = 0, dstFbo = 0;
+    glGenTextures(1, &dst);
+    glBindTexture(GL_TEXTURE_2D, dst);
+    const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(w, h))));
+    glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, w, h);
+    glGenFramebuffers(1, &dstFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dstFbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
+    bool ok = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
     if (ok) {
-        beginExport(w, h);
-        screenFbo_ = fbo;
-        transparentCapture_ = transparent;
-        int guard = 0;
-        while (drawFrame() && guard++ < 500) { /* ждём все текстуры из очереди */ }
-        out.assign(static_cast<size_t>(w) * h * 4, 0);
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
-        transparentCapture_ = false;
-        screenFbo_ = 0;
-        endExport();
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+        glBlitFramebuffer(0, 0, w, h, 0, h, w, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, dst);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        ok = checkGl("keepCaptureAsTexture");
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+    glDeleteFramebuffers(1, &dstFbo);
+    if (!ok) { if (dst) glDeleteTextures(1, &dst); return false; }
+    const auto old = textures_.find(id);
+    if (old != textures_.end()) {
+        glDeleteTextures(1, &old->second.id);
+        textureBytes_ -= std::min(textureBytes_, old->second.bytes);
+        textures_.erase(old);
+    }
+    Tex t;
+    t.id = dst; t.w = w; t.h = h; t.bytes = bytes;   // альфы для касаний нет: такие текстуры только для экспорта
+    textures_[id] = std::move(t);
+    textureBytes_ += bytes;
+    texUse_[id] = ++useClock_;
+    droppedTex_.erase(id);
+    dropFxEntry(id);
+    touchTex(id);
+    return true;
+}
+
+bool Renderer::captureFrame(int w, int h, bool transparent, std::vector<uint8_t>& out, int flags, int toTexture) {
+    // Приложение в фоне: поверхность GLSurfaceView снята, контекст не текущий - любые GL-вызовы дадут мусор
+    // (раньше пустой снимок мог стать картинкой символа). Отказ - вызывающий повторит после возврата.
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT) return false;
+    GLint maxTexture = 0, maxRenderbuffer = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
+    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbuffer);
+    const int limit = std::min(8192, std::min(maxTexture, maxRenderbuffer));
+    if (w < 1 || h < 1 || w > limit || h > limit || exportMode_) return false;
+    GlState glState;
+    // Never resize/reuse the editor's blend backdrop or group/effect targets.
+    // A capture may have exactly the viewport size, so size checks alone aren't isolation.
+    auto editorPool = std::move(fboPool_);
+    const GLuint editorBackdropTex = backdropTex_, editorBackdropFbo = backdropFbo_;
+    const GLuint editorCurrent = curFbo_, editorScreen = screenFbo_;
+    const int editorCreated = fboCreated_;
+    fboPool_.clear(); backdropTex_ = backdropFbo_ = 0; fboCreated_ = 0;
+    GLuint tex = 0, fbo = 0;
+    bool ok = false;
+    try {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if (ok) {
+            screenFbo_ = fbo;  // до beginExport: снимок, не Surface-экспорт (без внутреннего FBO)
+            beginExport(w, h);
+            transparentCapture_ = transparent;
+            const bool shadow = (flags & kCaptureShadow) != 0;
+            if (shadow) {
+                // Снимок символа: нужны только его теневые текстуры (их немного). Общую очередь загрузок здесь
+                // НЕ вычерпываем: после возврата из фона в ней весь проект, и раньше снимок держал GL-поток
+                // секундами (главный поток ждёт GL в onPause/onResume/surfaceChanged -> ANR).
+                uploadShadows();
+                useShadows_ = true;
+                drawFrame();
+                useShadows_ = false;
+            } else {
+                // Прочие снимки дорисовывают загрузки, но не дольше ~1.5 с (защита главного потока от ANR).
+                const auto t0 = std::chrono::steady_clock::now();
+                int guard = 0;
+                while (drawFrame() && guard++ < 500) {
+                    if (std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(1500)) break;
+                }
+            }
+            const bool notReady = (flags & kCaptureStrict) != 0 && stats_.missing > 0;
+            if (notReady) {
+                out.clear();
+                ok = true;
+            } else if (toTexture >= 0) {
+                ok = keepCaptureAsTexture(fbo, toTexture, w, h);   // пакет 29: без glReadPixels
+            } else {
+                out.assign(static_cast<size_t>(w) * h * 4, 0);
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
+                ok = checkGl("captureFrame");
+            }
+        }
+    } catch (const std::exception& e) {
+        LOGW("capture allocation failed: %s", e.what());
+        ok = false;
+    }
+    transparentCapture_ = false;
+    useShadows_ = false;
+    if (flags & kCaptureShadow) clearShadows();   // теневые текстуры живут ровно один снимок
+    screenFbo_ = editorScreen;
+    endExport();
+    releaseTargets();
+    fboPool_ = std::move(editorPool);
+    backdropTex_ = editorBackdropTex; backdropFbo_ = editorBackdropFbo;
+    curFbo_ = editorCurrent; fboCreated_ = editorCreated;
     glDeleteFramebuffers(1, &fbo);
     glDeleteTextures(1, &tex);
+    bumpEpoch();
+    if (!ok) out.clear();
     return ok;
 }
 
 void Renderer::endExport() {
     if (!exportMode_) return;
+    bumpEpoch();
     exportMode_ = false;
+    if (exportToSurface_) {
+        if (exportFbo_) glDeleteFramebuffers(1, &exportFbo_);
+        if (exportTex_) glDeleteTextures(1, &exportTex_);
+        exportFbo_ = exportTex_ = 0;
+        exportToSurface_ = false;
+        screenFbo_ = 0;
+    }
     zoom_ = savedZoom_; panX_ = savedPanX_; panY_ = savedPanY_;
+    rotDeg_ = savedRotDeg_; flipX_ = savedFlipX_; flipY_ = savedFlipY_;
     setViewport(savedW_, savedH_);
 }
 
 void Renderer::setCanvas(int width, int height) {
+    if (width != canvasW_ || height != canvasH_) bumpEpoch();
     canvasW_ = width > 0 ? width : 1;
     canvasH_ = height > 0 ? height : 1;
 }
 
 void Renderer::setWarps(const int* ids, const float* offsets, int n) {
+    bumpEpoch();
     warps_.clear();
     for (int i = 0; i < n; ++i) {
         std::array<float, 32> a;
@@ -524,6 +820,7 @@ void Renderer::setWarps(const int* ids, const float* offsets, int n) {
 }
 
 void Renderer::setPerspectives(const int* ids, const float* mats, int n) {
+    bumpEpoch();
     persps_.clear();
     for (int i = 0; i < n; ++i) {
         std::array<float, 9> a;
@@ -533,6 +830,7 @@ void Renderer::setPerspectives(const int* ids, const float* mats, int n) {
 }
 
 void Renderer::setTurbulence(const int* ids, const float* data, int n) {
+    bumpEpoch();
     turbs_.clear();
     for (int i = 0; i < n; ++i) {
         std::array<float, 4> a;
@@ -542,6 +840,7 @@ void Renderer::setTurbulence(const int* ids, const float* data, int n) {
 }
 
 void Renderer::setEffects(const int* ids, const int* counts, int n, const float* data) {
+    bumpEpoch();
     effects_.clear();
     size_t o = 0;
     for (int i = 0; i < n; ++i) {
@@ -557,10 +856,17 @@ void Renderer::setEffects(const int* ids, const int* counts, int n, const float*
 }
 
 void Renderer::setMeshes(const int* ids, const int* counts, int n, const float* verts, const int* tris) {
+    bumpEpoch();
     meshes_.clear();
     size_t vo = 0, to = 0;
     for (int i = 0; i < n; ++i) {
         const int vc = counts[i * 2], tc = counts[i * 2 + 1];
+        if (!vt::meshpack::meshValid(vc, tc)) {
+            // спринт 43: неверная сетка пропускается только сама; смещения следующих сеток не сбиваются
+            vo += static_cast<size_t>(vc > 0 ? vc : 0) * 4;
+            to += static_cast<size_t>(tc > 0 ? tc : 0) * 3;
+            continue;
+        }
         MeshGeom g;
         g.verts.reserve(static_cast<size_t>(vc) * 4);
         for (int k = 0; k < vc; ++k) {
@@ -580,6 +886,7 @@ void Renderer::setMeshes(const int* ids, const int* counts, int n, const float* 
 }
 
 void Renderer::setScene(const int* ops, const float* params, int n) {
+    bumpEpoch();
     scene_.clear();
     scene_.reserve(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) {
@@ -587,12 +894,26 @@ void Renderer::setScene(const int* ops, const float* params, int n) {
         const float* p = params + i * 8;
         scene_.push_back({o[0], o[1], o[2], o[3], {p[0], p[1], p[2], p[3], p[4], p[5]}, p[6]});
     }
+    // пакет 29: давность текстур для LRU-вытеснения (слои сцены и формы их экземпляров)
+    ++useClock_;
+    for (const Item& it : scene_) {
+        if (it.op != 0) continue;
+        texUse_[it.layerId] = useClock_;
+        const auto a = aliases_.find(it.layerId);
+        if (a != aliases_.end()) {
+            if (a->second.primary >= 0) texUse_[a->second.primary] = useClock_;
+            if (a->second.fallback >= 0) texUse_[a->second.fallback] = useClock_;
+        }
+    }
 }
 
-void Renderer::setCamera(float zoom, float panX, float panY) {
+void Renderer::setCamera(float zoom, float panX, float panY, float rotDeg, bool flipX, bool flipY) {
     zoom_ = zoom > 0.f ? zoom : 1.f;
     panX_ = panX;
     panY_ = panY;
+    rotDeg_ = rotDeg;
+    flipX_ = flipX;
+    flipY_ = flipY;
 }
 
 // Холст -> экран: сначала вписывание (поля 5%, по центру), затем камера (zoom вокруг центра + pan).
@@ -605,6 +926,26 @@ void Renderer::viewTransform(float& scale, float& ox, float& oy) const {
     scale = fit * zoom_;
     ox = cx + (fx - cx) * zoom_ + panX_;
     oy = cy + (fy - cy) * zoom_ + panY_;
+}
+
+// Холст -> экран: screen = (a0*x + a2*y + a4, a1*x + a3*y + a5). Поворот/отражение вида — только вид.
+void Renderer::viewAffine(float a[6]) const {
+    const float fit = (exportMode_ ? 1.0f : 0.95f) * std::min(static_cast<float>(width_) / canvasW_,
+                                       static_cast<float>(height_) / canvasH_);
+    const float fx = (width_ - canvasW_ * fit) * 0.5f;
+    const float fy = (height_ - canvasH_ * fit) * 0.5f;
+    const float cx = width_ * 0.5f, cy = height_ * 0.5f;
+    const float th = rotDeg_ * 0.01745329252f;
+    const float c = std::cos(th), s = std::sin(th);
+    const float sx = flipX_ ? -1.f : 1.f, sy = flipY_ ? -1.f : 1.f;
+    // A = R * F
+    const float a00 = c * sx, a01 = -s * sy, a10 = s * sx, a11 = c * sy;
+    const float k = zoom_ * fit;
+    a[0] = k * a00; a[1] = k * a10; a[2] = k * a01; a[3] = k * a11;
+    // t = C + zoom * A * (f - C) + pan
+    const float ex = fx - cx, ey = fy - cy;
+    a[4] = cx + zoom_ * (a00 * ex + a01 * ey) + panX_;
+    a[5] = cy + zoom_ * (a10 * ex + a11 * ey) + panY_;
 }
 
 void Renderer::setBackground(float r, float g, float b, float a) {
@@ -621,12 +962,17 @@ void Renderer::setSelection(const float* quads, int n) {
 //   canvas = (a*u + c*v + tx, b*u + d*v + ty)
 // затем холст -> экран (вписывание и камера) -> NDC (ось y экрана вниз). Матрица mat3 по столбцам.
 void Renderer::mvpFor(const float m[6], GLfloat o[9]) const {
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
-    o[0] = m[0] * scale / width_ * 2.f;   o[1] = -m[1] * scale / height_ * 2.f;  o[2] = 0.f;
-    o[3] = m[2] * scale / width_ * 2.f;   o[4] = -m[3] * scale / height_ * 2.f;  o[5] = 0.f;
-    o[6] = (ox + m[4] * scale) / width_ * 2.f - 1.f;
-    o[7] = 1.f - (oy + m[5] * scale) / height_ * 2.f;
+    float a[6];
+    viewAffine(a);
+    // screen = view * (layer -> canvas); NDC: x = sx/w*2-1, y = 1-sy/h*2 (столбцы mat3)
+    o[0] = (a[0] * m[0] + a[2] * m[1]) / width_ * 2.f;
+    o[1] = -(a[1] * m[0] + a[3] * m[1]) / height_ * 2.f;
+    o[2] = 0.f;
+    o[3] = (a[0] * m[2] + a[2] * m[3]) / width_ * 2.f;
+    o[4] = -(a[1] * m[2] + a[3] * m[3]) / height_ * 2.f;
+    o[5] = 0.f;
+    o[6] = (a[0] * m[4] + a[2] * m[5] + a[4]) / width_ * 2.f - 1.f;
+    o[7] = 1.f - (a[1] * m[4] + a[3] * m[5] + a[5]) / height_ * 2.f;
     o[8] = 1.f;
 }
 
@@ -655,8 +1001,9 @@ const uint8_t* Renderer::layerAlpha(int layerId, int& w, int& h) const {
 }
 
 bool Renderer::layerThumb(int layerId, int size, std::vector<uint8_t>& out) {
-    const auto t = textures_.find(layerId);
-    if (t == textures_.end() || t->second.w <= 0 || t->second.h <= 0 || size < 4 || !progTex_) return false;
+    float rect[4];
+    const Tex* tp = resolveTex(layerId, rect);   // экземпляр символа: миниатюра текущей формы
+    if (!tp || tp->w <= 0 || tp->h <= 0 || size < 4 || !progTex_) return false;
     GLint prevFbo = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     GLint prevVp[4];
@@ -675,14 +1022,14 @@ bool Renderer::layerThumb(int layerId, int size, std::vector<uint8_t>& out) {
         glClearColor(0.f, 0.f, 0.f, 0.f);
         glClear(GL_COLOR_BUFFER_BIT);
         // вписываем по длинной стороне: единичный квадрат -> прямоугольник в NDC
-        const float aw = static_cast<float>(t->second.w), ah = static_cast<float>(t->second.h);
+        const float aw = static_cast<float>(tp->w), ah = static_cast<float>(tp->h);
         const float sx = aw >= ah ? 1.f : aw / ah, sy = ah >= aw ? 1.f : ah / aw;
         const GLfloat mvp[9] = {2.f * sx, 0.f, 0.f, 0.f, 2.f * sy, 0.f, -sx, -sy, 1.f};
         glBindVertexArray(vao_);
         const int saveMesh = 0;
         (void)saveMesh;
         curMesh_ = nullptr; curPersp_ = nullptr; curTurb_ = nullptr;
-        drawTexture(t->second.id, mvp, 1.f, kNormal, false);
+        drawTexture(tp->id, mvp, 1.f, kNormal, false);
         out.assign(static_cast<size_t>(size) * size * 4, 0);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, size, size, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
@@ -718,19 +1065,24 @@ bool Renderer::readLayerPixels(int layerId, std::vector<uint8_t>& out, int& w, i
 }
 
 int Renderer::hitTest(float sx, float sy) const {
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
-    const float px = (sx - ox) / scale;   // координаты на холсте
-    const float py = (sy - oy) / scale;
+    float a[6];
+    viewAffine(a);
+    const float det = a[0] * a[3] - a[2] * a[1];
+    if (std::fabs(det) < 1e-12f) return -1;
+    const float dx = sx - a[4], dy = sy - a[5];
+    const float px = (a[3] * dx - a[2] * dy) / det;   // координаты на холсте
+    const float py = (-a[1] * dx + a[0] * dy) / det;
     for (size_t i = scene_.size(); i-- > 0;) {
         const Item& it = scene_[i];
-        if (it.op != kLayer || it.opacity < 0.01f) continue;
+        if (it.op != kLayer || it.opacity < 0.01f || !maskpolicy::hittable(it.flags)) continue;   // слой-маска касанием не ловится
         const float a = it.m[0], b = it.m[1], c = it.m[2], d = it.m[3];
         const float det = a * d - b * c;
         if (std::fabs(det) < 1e-9f) continue;   // вырожденная матрица
         const float rx = px - it.m[4], ry = py - it.m[5];
         const float u = (d * rx - c * ry) / det;
         const float v = (-b * rx + a * ry) / det;
+        const auto crIt = crops_.find(it.layerId);
+        const float* cropC = crIt == crops_.end() ? nullptr : crIt->second.data();
         // слой с сеткой: точка ищется на ДЕФОРМИРОВАННОЙ сетке (позиции u+dx, v+dy), текстурные координаты берутся из треугольника
         const auto mi = meshes_.find(it.layerId);
         if (mi != meshes_.end() && !mi->second.idx.empty()) {
@@ -748,8 +1100,9 @@ int Renderer::hitTest(float sx, float sy) const {
                 const float w3 = 1.f - w1 - w2;
                 if (w1 < -1e-4f || w2 < -1e-4f || w3 < -1e-4f) continue;
                 if (it.flags & kFlagHitBbox || !hasAlpha) return it.layerId;
-                const float tu = w1 * A[2] + w2 * B[2] + w3 * C[2];
-                const float tv = w1 * A[3] + w2 * B[3] + w3 * C[3];
+                float tu = w1 * A[2] + w2 * B[2] + w3 * C[2];
+                float tv = w1 * A[3] + w2 * B[3] + w3 * C[3];
+                if (cropC) croppolicy::toTexture(cropC, tu, tv, tu, tv);   // спринт 46: сетка лежит на видимой рамке
                 const Tex& tex = tm->second;
                 const int cx = std::min(tex.w - 1, std::max(0, static_cast<int>(tu * tex.w)));
                 const int cy = std::min(tex.h - 1, std::max(0, static_cast<int>(tv * tex.h)));
@@ -761,13 +1114,18 @@ int Renderer::hitTest(float sx, float sy) const {
             }
             continue;
         }
-        if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) continue;
+        if (u < 0.f || u >= 1.f || v < 0.f || v >= 1.f) continue;   // спринт 46: квадрат обрезанного слоя = видимая рамка
         if (it.flags & kFlagHitBbox) return it.layerId;   // текст: достаточно попасть в рамку
-        auto t = textures_.find(it.layerId);
-        if (t == textures_.end() || t->second.alpha.empty()) continue;
-        const Tex& tex = t->second;
-        const int tx = std::min(tex.w - 1, static_cast<int>(u * tex.w));
-        const int ty = std::min(tex.h - 1, static_cast<int>(v * tex.h));
+        float rr[4];
+        const Tex* tp = resolveTex(it.layerId, rr);
+        if (!tp || tp->alpha.empty()) continue;
+        const Tex& tex = *tp;
+        float su = 0.f, sv = 0.f;
+        float qu = u, qv = v;
+        if (cropC) croppolicy::toTexture(cropC, u, v, qu, qv);   // спринт 46: доля полного квадрата (картинки) слоя
+        if (!texalias::toForm(qu, qv, rr, su, sv)) continue;   // форма символа - в своём под-прямоугольнике
+        const int tx = std::min(tex.w - 1, static_cast<int>(su * tex.w));
+        const int ty = std::min(tex.h - 1, static_cast<int>(sv * tex.h));
         if (tex.alpha[static_cast<size_t>(ty) * tex.w + tx] > 20) return it.layerId;
     }
     return -1;
@@ -777,8 +1135,8 @@ int Renderer::hitTest(float sx, float sy) const {
 // Рисуется в пространстве экрана, поэтому толщина одинакова при любом перекосе и масштабе.
 void Renderer::drawSelection() {
     if (selQuads_.empty()) return;
-    float scale, ox, oy;
-    viewTransform(scale, ox, oy);
+    float a[6];
+    viewAffine(a);
     glUseProgram(progSolid_);
     glUniform4f(uSolidColor_, 1.f, 0.75f, 0.f, 1.f);
     GLfloat mvp[9];
@@ -786,8 +1144,9 @@ void Renderer::drawSelection() {
     for (size_t q = 0; q + 8 <= selQuads_.size(); q += 8) {
     float sxp[4], syp[4];
     for (int i = 0; i < 4; ++i) {
-        sxp[i] = ox + selQuads_[q + i * 2] * scale;
-        syp[i] = oy + selQuads_[q + i * 2 + 1] * scale;
+        const float cx = selQuads_[q + i * 2], cy = selQuads_[q + i * 2 + 1];
+        sxp[i] = a[0] * cx + a[2] * cy + a[4];
+        syp[i] = a[1] * cx + a[3] * cy + a[5];
     }
     for (int i = 0; i < 4; ++i) {
         const int j = (i + 1) % 4;
@@ -808,6 +1167,174 @@ void Renderer::clearTextures() {
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
     textureBytes_ = 0;
+    texUse_.clear();
+    modifiedTex_.clear();
+    evictable_.clear();
+    texEvents_.clear();
+    ++texSalt_;
+    clearShadows();
+    dropFxCache();
+    // спринт 55: FBO кэша групп (экранного размера), версии и надгробия прошлого проекта тоже отдают память
+    dropGroupCache();
+    texGen_.clear();
+    droppedTex_.clear();
+    bumpEpoch();
+}
+
+void Renderer::clearShadows() {
+    for (auto& kv : shadowTex_) { glDeleteTextures(1, &kv.second.id); textureBytes_ -= std::min(textureBytes_, kv.second.bytes); }
+    shadowTex_.clear();
+}
+
+void Renderer::setInteractive(bool on) {
+    if (interactive_ == on) return;
+    interactive_ = on;
+}
+
+const Renderer::Tex* Renderer::findTex(int layerId) const {
+    float rect[4];
+    return resolveTex(layerId, rect);
+}
+
+const Renderer::Tex* Renderer::resolveTex(int layerId, float rect[4]) const {
+    rect[0] = 0.f; rect[1] = 0.f; rect[2] = 1.f; rect[3] = 1.f;
+    if (useShadows_) {
+        const auto s = shadowTex_.find(layerId);
+        if (s != shadowTex_.end()) return &s->second;
+    }
+    if (!aliases_.empty()) {
+        const auto a = aliases_.find(layerId);
+        if (a != aliases_.end()) {
+            const TexAlias& al = a->second;
+            if (al.primary >= 0) {
+                const auto p = textures_.find(al.primary);
+                if (p != textures_.end()) { for (int i = 0; i < 4; ++i) rect[i] = al.pr[i]; return &p->second; }
+            }
+            if (al.fallback >= 0) {
+                const auto f = textures_.find(al.fallback);
+                if (f != textures_.end()) { for (int i = 0; i < 4; ++i) rect[i] = al.fr[i]; return &f->second; }
+            }
+        }
+    }
+    const auto t = textures_.find(layerId);
+    return t == textures_.end() ? nullptr : &t->second;
+}
+
+void Renderer::setTextureAliases(const int* ids, const int* prim, const int* fallback, const float* rects, int n) {
+    std::unordered_map<int, TexAlias> next;
+    for (int i = 0; i < n; ++i) {
+        TexAlias a;
+        a.primary = prim[i];
+        a.fallback = fallback[i];
+        for (int k = 0; k < 4; ++k) {
+            a.pr[k] = rects[i * 8 + k];
+            a.fr[k] = rects[i * 8 + 4 + k];
+        }
+        texalias::sanitize(a.pr);   // вырожденный прямоугольник - весь квадрат
+        texalias::sanitize(a.fr);
+        next[ids[i]] = a;
+    }
+    bool same = next.size() == aliases_.size();
+    if (same) for (const auto& kv : next) {
+        const auto o = aliases_.find(kv.first);
+        if (o == aliases_.end() || o->second.primary != kv.second.primary || o->second.fallback != kv.second.fallback) { same = false; break; }
+    }
+    aliases_.swap(next);
+    if (!same) { bumpEpoch(); for (int i = 0; i < n; ++i) dropFxEntry(ids[i]); }
+    ++useClock_;   // пакет 29: формы на экране - самые свежие для LRU
+    for (int i = 0; i < n; ++i) {
+        if (prim[i] >= 0) texUse_[prim[i]] = useClock_;
+        if (fallback[i] >= 0) texUse_[fallback[i]] = useClock_;
+    }
+}
+
+// Спринт 45: обрезка слоёв (по 4 числа l, t, r, b на слой). Изменение - новая эпоха и сброс кэша эффектов слоя.
+void Renderer::setCrops(const int* ids, const float* rects, int n) {
+    std::unordered_map<int, std::array<float, 4>> next;
+    for (int i = 0; i < n; ++i) {
+        float r[4] = {rects[i * 4], rects[i * 4 + 1], rects[i * 4 + 2], rects[i * 4 + 3]};
+        if (!croppolicy::sanitize(r)) continue;
+        next[ids[i]] = {r[0], r[1], r[2], r[3]};
+    }
+    if (next == crops_) return;
+    for (const auto& kv : crops_) if (!next.count(kv.first) || next[kv.first] != kv.second) dropFxEntry(kv.first);
+    for (const auto& kv : next) if (!crops_.count(kv.first)) dropFxEntry(kv.first);
+    crops_.swap(next);
+    bumpEpoch();
+}
+
+// ---------------------------------------------------------------- пакет 29: бюджет и вытеснение текстур
+
+void Renderer::setEvictable(const int* ids, int n) {
+    evictable_.clear();
+    for (int i = 0; i < n; ++i) evictable_.insert(ids[i]);
+}
+
+void Renderer::pushTexEvent(int kind, int id) {
+    if (texEvents_.size() >= 512) return;   // Kotlin забирает каждый кадр; переполнение - только если он не успевает
+    texEvents_.push_back(kind);
+    texEvents_.push_back(id);
+}
+
+void Renderer::evictTexture(int id) {
+    const auto t = textures_.find(id);
+    if (t == textures_.end()) return;
+    glDeleteTextures(1, &t->second.id);
+    textureBytes_ -= std::min(textureBytes_, t->second.bytes);
+    textures_.erase(t);
+    texUse_.erase(id);
+    touchTex(id);
+    dropFxEntry(id);
+    bumpEpoch();
+    pushTexEvent(kTexEvicted, id);
+    LOGI("texture %d evicted (LRU), %zu/%zu MB in use", id, textureBytes_ / texbudget::kMiB, budget_ / texbudget::kMiB);
+}
+
+bool Renderer::ensureRoom(size_t need, int keepId) {
+    if (texbudget::fits(textureBytes_, need, budget_)) return true;
+    if (need > budget_) return false;
+    // закреплены: слои текущей сцены и формы их экземпляров, слой под кистью и его чтения, изменённые на месте,
+    // не разрешённые Kotlin к вытеснению
+    std::unordered_set<int> live;
+    for (const Item& it : scene_) {
+        if (it.op != 0) continue;
+        live.insert(it.layerId);
+        const auto a = aliases_.find(it.layerId);
+        if (a != aliases_.end()) { live.insert(a->second.primary); live.insert(a->second.fallback); }
+    }
+    if (paintActive_) live.insert(paintLayer_);
+    for (const PaintRead& pr : paintReads_) live.insert(pr.layerId);
+    std::vector<texbudget::Candidate> cands;
+    cands.reserve(textures_.size());
+    for (const auto& kv : textures_) {
+        const int id = kv.first;
+        const auto u = texUse_.find(id);
+        texbudget::Candidate c;
+        c.id = id;
+        c.lastUse = u == texUse_.end() ? 0 : u->second;
+        c.bytes = kv.second.bytes;
+        c.pinned = id == keepId || live.count(id) || !evictable_.count(id) || modifiedTex_.count(id);
+        cands.push_back(c);
+    }
+    std::vector<int> victims;
+    if (!texbudget::plan(std::move(cands), textureBytes_, need, budget_, victims)) return false;
+    for (int id : victims) evictTexture(id);
+    return texbudget::fits(textureBytes_, need, budget_);
+}
+
+void Renderer::dropTextures(const int* ids, int n) {
+    for (int i = 0; i < n; ++i) {
+        droppedTex_.insert(ids[i]);
+        touchTex(ids[i]);
+        texUse_.erase(ids[i]);
+        modifiedTex_.erase(ids[i]);
+        const auto t = textures_.find(ids[i]);
+        if (t == textures_.end()) continue;
+        glDeleteTextures(1, &t->second.id);
+        textureBytes_ -= std::min(textureBytes_, t->second.bytes);
+        textures_.erase(t);
+    }
+    if (n > 0) bumpEpoch();
 }
 
 // Отдельная проверяемая замена; не изменяет прежнюю текстуру при отказе.
@@ -822,10 +1349,8 @@ int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, i
     if (!queueGuard.prepareLayer(layerId)) return -5;
     // Консервативная оценка всех mip-уровней, включая пик одновременного существования обеих текстур.
     const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 8;
-    if (bytes > kTextureBudgetBytes || textureBytes_ > kTextureBudgetBytes - bytes) return -4;
-    GLint maxTex = 0;
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
-    if (w > maxTex || h > maxTex) return -4;
+    if (maxTexSize_ > 0 && (w > maxTexSize_ || h > maxTexSize_)) return -4;
+    if (!ensureRoom(bytes, layerId)) { pushTexEvent(kTexRejectedBudget, layerId); return -4; }
     Tex t;
     t.w = w; t.h = h; t.bytes = bytes;
     try {
@@ -855,6 +1380,9 @@ int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, i
         return -6;
     }
     queueGuard.invalidateLayer(layerId);
+    touchTex(layerId);
+    markModified(layerId);   // пакет 29: содержимое из памяти (не из файла) - не вытеснять
+    bumpEpoch();
     const GLuint oldId = old->second.id;
     textureBytes_ -= old->second.bytes;
     old->second = std::move(t);
@@ -864,60 +1392,157 @@ int Renderer::replaceTextureChecked(int layerId, int expectedW, int expectedH, i
     return 0;
 }
 
+bool Renderer::makeTexture(const PendingUpload& up, size_t bytes, Tex& t) {
+    t.bytes = bytes;
+    t.w = up.width;
+    t.h = up.height;
+    t.alpha.resize(static_cast<size_t>(up.width) * up.height);
+    for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = up.rgba[i * 4 + 3];
+    // Отделяем ошибку новой загрузки от оставшихся ошибок предыдущего кадра.
+    checkGl("before uploadPending");
+    glGenTextures(1, &t.id);
+    glBindTexture(GL_TEXTURE_2D, t.id);
+    const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(up.width, up.height))));
+    glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, up.width, up.height);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE,
+                    up.rgba.data());
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (!t.id || !checkGl("uploadPending texture")) {
+        if (t.id) glDeleteTextures(1, &t.id);
+        t.id = 0;
+        LOGW("texture allocation failed, layer %d unchanged", up.layerId);
+        return false;
+    }
+    return true;
+}
+
+// Спринт 31: CPU-буфер загруженного кадра возвращается в пул (следующий кадр видео/рисунка не выделяет память).
+static void recycleUpload(PendingUpload& up) {
+    uploadQueue::recycleBuffer(std::move(up.rgba));
+    up.rgba = std::vector<uint8_t>();
+}
+
+// Спринт 31: запись в существующую текстуру через GL_PIXEL_UNPACK_BUFFER. Данные копируются в буфер драйвера
+// сразу (CPU-буфер можно вернуть в пул), а перенос в текстуру идёт по очереди GPU, не блокируя поток GL.
+// Любая ошибка драйвера навсегда (до пересоздания контекста) выключает путь - дальше обычный glTexSubImage2D.
+bool Renderer::uploadViaPbo(const PendingUpload& up) {
+    const size_t bytes = static_cast<size_t>(up.width) * up.height * 4;
+    if (!uploadbuf::usePbo(uploadPboBroken_, bytes)) return false;
+    GLuint& pbo = uploadPbo_[uploadPboNext_];
+    uploadPboNext_ ^= 1;   // два буфера по очереди: новый кадр не ждёт, пока GPU дочитает предыдущий
+    if (!pbo) glGenBuffers(1, &pbo);
+    if (!pbo) { uploadPboBroken_ = true; return false; }
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(bytes), up.rgba.data(), GL_STREAM_DRAW);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    if (!checkGl("uploadPending pbo")) {
+        uploadPboBroken_ = true;
+        LOGW("PBO upload failed, falling back to direct texture upload");
+        return false;
+    }
+    return true;
+}
+
 void Renderer::uploadPending() {
-    size_t uploaded = 0;
+    size_t uploaded = 0, processed = 0;
     PendingUpload up;
-    while (uploaded < kUploadBytesPerFrame && uploadQueue::pop(up)) {
-        const size_t bytes = static_cast<size_t>(up.width) * up.height * 4 * 4 / 3;  // с mip
-        auto old = textures_.find(up.layerId);
-        // Старую текстуру держим до успешного создания новой: бюджет учитывает пик обеих.
-        if (up.width <= 0 || up.height <= 0 || bytes > kTextureBudgetBytes ||
-            textureBytes_ > kTextureBudgetBytes - bytes) {
-            LOGW("texture budget exceeded, layer %d unchanged (%zu MB in use)", up.layerId,
-                 textureBytes_ / (1024 * 1024));
-            continue;
-        }
-        GLint maxTex = 0;
-        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
-        if (up.width > maxTex || up.height > maxTex) {
+    while (uploaded < kUploadBytesPerFrame) {
+        if (up.rgba.capacity()) recycleUpload(up);
+        if (!uploadQueue::pop(up)) break;
+        ++processed;
+        const size_t bytes = texbudget::textureBytes(up.width, up.height);  // с mip
+        if (droppedTex_.contains(up.layerId)) continue;   // форма уже удалена - загрузка опоздала
+        if (up.width <= 0 || up.height <= 0 || up.rgba.size() < static_cast<size_t>(up.width) * up.height * 4) continue;
+        if (maxTexSize_ > 0 && (up.width > maxTexSize_ || up.height > maxTexSize_)) {
             LOGW("texture dimensions exceed GL limit, layer %d unchanged", up.layerId);
+            pushTexEvent(kTexRejectedSize, up.layerId);
             continue;
         }
+        auto old = textures_.find(up.layerId);
+        // Пакет 29: тот же размер - пишем в существующую текстуру (без новой памяти, пика и пересоздания).
+        if (old != textures_.end() && old->second.id && old->second.w == up.width && old->second.h == up.height) {
+            Tex& t = old->second;
+            checkGl("before uploadPending reuse");
+            glBindTexture(GL_TEXTURE_2D, t.id);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            if (!uploadViaPbo(up))
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE, up.rgba.data());
+            glGenerateMipmap(GL_TEXTURE_2D);
+            if (checkGl("uploadPending reuse")) {
+                if (t.alpha.size() != static_cast<size_t>(up.width) * up.height) t.alpha.resize(static_cast<size_t>(up.width) * up.height);
+                for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = up.rgba[i * 4 + 3];
+                uploaded += up.rgba.size();
+                dropFxEntry(up.layerId);
+                touchTex(up.layerId);
+                bumpEpoch();
+                continue;   // буфер вернётся в пул в начале цикла
+            }
+            // ошибка записи - пробуем обычный путь с новой текстурой
+        }
+        // Старую текстуру держим до успешного создания новой: бюджет учитывает пик обеих. Не хватает - вытесняем
+        // давно не показанные текстуры, которые можно восстановить; не вышло - сообщаем Kotlin (предупреждение).
+        if (!ensureRoom(bytes, up.layerId)) {
+            LOGW("texture budget exceeded, layer %d unchanged (%zu/%zu MB in use)", up.layerId,
+                 textureBytes_ / texbudget::kMiB, budget_ / texbudget::kMiB);
+            pushTexEvent(kTexRejectedBudget, up.layerId);
+            continue;
+        }
+        old = textures_.find(up.layerId);   // ensureRoom не трогает keepId, но итератор мог стать недействительным
         Tex t;
-        t.bytes = bytes;
-        t.w = up.width;
-        t.h = up.height;
-        t.alpha.resize(static_cast<size_t>(up.width) * up.height);
-        for (size_t i = 0; i < t.alpha.size(); ++i) t.alpha[i] = up.rgba[i * 4 + 3];
-        // Отделяем ошибку новой загрузки от оставшихся ошибок предыдущего кадра.
-        checkGl("before uploadPending");
-        glGenTextures(1, &t.id);
-        glBindTexture(GL_TEXTURE_2D, t.id);
-        const int levels = 1 + static_cast<int>(std::floor(std::log2(std::max(up.width, up.height))));
-        glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, up.width, up.height);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, up.width, up.height, GL_RGBA, GL_UNSIGNED_BYTE,
-                        up.rgba.data());
-        glGenerateMipmap(GL_TEXTURE_2D);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        if (!t.id || !checkGl("uploadPending texture")) {
-            if (t.id) glDeleteTextures(1, &t.id);
-            LOGW("texture allocation failed, layer %d unchanged", up.layerId);
-            continue;
-        }
+        if (!makeTexture(up, bytes, t)) continue;
         if (old != textures_.end()) {
             glDeleteTextures(1, &old->second.id);
-            textureBytes_ -= old->second.bytes;
+            textureBytes_ -= std::min(textureBytes_, old->second.bytes);
             textures_.erase(old);
         }
         textures_[up.layerId] = std::move(t);
         textureBytes_ += bytes;
+        texUse_[up.layerId] = ++useClock_;   // только что загруженная - самая свежая
         uploaded += up.rgba.size();
-        up = PendingUpload();  // освобождаем CPU-буфер сразу
+        dropFxEntry(up.layerId);
+        touchTex(up.layerId);
+        bumpEpoch();
+        recycleUpload(up);  // CPU-буфер сразу в пул (или системе, если пул полон)
     }
-    checkGl("uploadPending");
+    if (up.rgba.capacity()) recycleUpload(up);
+    if (glerr::afterQueue(processed)) checkGl("uploadPending");   // спринт 55: пустая очередь - без glGetError
+}
+
+// Теневые текстуры снимка символа: кадр символа рисуется своими рисунками участников, а текстуры слоёв
+// редактора (кадр сцены) не трогаются - нет гонки «снимок символа подменил рот на холсте».
+void Renderer::uploadShadows() {
+    PendingUpload up;
+    size_t processed = 0;
+    while (true) {
+        if (up.rgba.capacity()) recycleUpload(up);
+        if (!uploadQueue::popShadow(up)) break;
+        ++processed;
+        const size_t bytes = texbudget::textureBytes(up.width, up.height);
+        if (up.width <= 0 || up.height <= 0) continue;
+        if (maxTexSize_ > 0 && (up.width > maxTexSize_ || up.height > maxTexSize_)) continue;
+        if (!ensureRoom(bytes, -1)) {
+            LOGW("shadow texture budget exceeded, layer %d", up.layerId);
+            continue;
+        }
+        Tex t;
+        if (!makeTexture(up, bytes, t)) continue;
+        auto old = shadowTex_.find(up.layerId);
+        if (old != shadowTex_.end()) {
+            glDeleteTextures(1, &old->second.id);
+            textureBytes_ -= std::min(textureBytes_, old->second.bytes);
+            shadowTex_.erase(old);
+        }
+        shadowTex_[up.layerId] = std::move(t);
+        textureBytes_ += bytes;
+        recycleUpload(up);
+    }
+    if (up.rgba.capacity()) recycleUpload(up);
+    if (glerr::afterQueue(processed)) checkGl("uploadShadows");
 }
 
 // ---------------------------------------------------------------- цели рендера
@@ -931,6 +1556,7 @@ void Renderer::bindTarget(GLuint fbo) {
 // Берёт FBO из пула (или создаёт), делает текущей целью и очищает в прозрачный.
 Renderer::Fbo Renderer::acquireFbo() {
     Fbo f;
+    bool created = false;
     if (!fboPool_.empty()) {
         f = fboPool_.back();
         fboPool_.pop_back();
@@ -948,11 +1574,19 @@ Renderer::Fbo Renderer::acquireFbo() {
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             LOGE("FBO incomplete");
         ++fboCreated_;
+        created = true;
         LOGI("FBO #%d created %dx%d (%.1f MB)", fboCreated_, width_, height_,
              width_ * height_ * 4 / 1048576.0);
     }
     bindTarget(f.fbo);
     glClearColor(0.f, 0.f, 0.f, 0.f);
+    if (frametarget::fullClearOnCreate(created)) {
+        // Новая текстура содержит мусор драйвера: первая очистка - целиком, затем scissor вызывающего.
+        GLboolean sc = glIsEnabled(GL_SCISSOR_TEST);
+        glDisable(GL_SCISSOR_TEST);
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (sc) glEnable(GL_SCISSOR_TEST);
+    }
     glClear(GL_COLOR_BUFFER_BIT);
     return f;
 }
@@ -960,6 +1594,7 @@ Renderer::Fbo Renderer::acquireFbo() {
 void Renderer::releaseFbo(const Fbo& f) { fboPool_.push_back(f); }
 
 void Renderer::releaseTargets() {
+    dropGroupCache();   // FBO кэша групп - экранного размера, как и пул
     for (const Fbo& f : fboPool_) {
         glDeleteFramebuffers(1, &f.fbo);
         glDeleteTextures(1, &f.tex);
@@ -973,6 +1608,9 @@ void Renderer::releaseTargets() {
 
 void Renderer::ensureBackdrop() {
     if (backdropTex_) return;
+    // спринт 45: создание не меняет привязку активного блока (раньше затирало текстуру слоя - «мини-холст» в экспорте)
+    GLint prevTex = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
     glGenTextures(1, &backdropTex_);
     glBindTexture(GL_TEXTURE_2D, backdropTex_);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width_, height_);
@@ -981,7 +1619,44 @@ void Renderer::ensureBackdrop() {
     glGenFramebuffers(1, &backdropFbo_);
     glBindFramebuffer(GL_FRAMEBUFFER, backdropFbo_);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, backdropTex_, 0);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    const GLboolean sc = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);   // новая текстура - мусор драйвера: очищаем целиком
+    glClear(GL_COLOR_BUFFER_BIT);
+    if (sc) glEnable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_FRAMEBUFFER, curFbo_);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex));
+}
+
+bool Renderer::ensureEditorTarget() {
+    if (!frametarget::needsRealloc(editorTex_, editorW_, editorH_, width_, height_)) return true;
+    releaseEditorTarget();
+    glGenTextures(1, &editorTex_);
+    glBindTexture(GL_TEXTURE_2D, editorTex_);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width_, height_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenFramebuffers(1, &editorFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, editorFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, editorTex_, 0);
+    const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!ok) {   // запасной путь: рисуем прямо в окно, как раньше
+        LOGW("editor target incomplete %dx%d", width_, height_);
+        releaseEditorTarget();
+        return false;
+    }
+    editorW_ = width_; editorH_ = height_;
+    return true;
+}
+
+void Renderer::releaseEditorTarget() {
+    if (editorFbo_) glDeleteFramebuffers(1, &editorFbo_);
+    if (editorTex_) glDeleteTextures(1, &editorTex_);
+    editorFbo_ = editorTex_ = 0;
+    editorW_ = editorH_ = 0;
 }
 
 // Копирует текущую цель в текстуру подложки (blit, а не glCopyTexSubImage2D:
@@ -1020,11 +1695,11 @@ void Renderer::drawQuadOrGrid(const float* warp) {
 }
 
 void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int blend, bool clipMode, const float* warp) {
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tex);
     const bool shaderBlend = blend == kMultiply || blend == kScreen || blend == kOverlay || blend == kSoftLight ||
                              blend == kAdd || blend == kDarken || blend == kLighten || blend == kColorDodge || blend == kColorBurn;
     if (!shaderBlend) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tex);
         glUseProgram(progTex_);
         glEnable(GL_BLEND);
         if (clipMode)
@@ -1034,43 +1709,66 @@ void Renderer::drawTexture(GLuint tex, const GLfloat mvp[9], float opacity, int 
         glUniform1i(uTexSampler_, 0);
         glUniformMatrix3fv(uTexMvp_, 1, GL_FALSE, mvp);
         glUniform1f(uTexOpacity_, opacity);
+        glUniform1f(uTexLod_, exportLodBias(exportMode_));
         glUniform1i(uTexMesh_, curMesh_ ? 1 : 0);
         glUniform1i(uTexPersp_, curPersp_ ? 1 : 0);
         if (curTurb_) glUniform4fv(uTexTurb_, 1, curTurb_); else glUniform4f(uTexTurb_, 0.f, 0.f, 0.f, 0.f);
         if (curPersp_) glUniformMatrix3fv(uTexH_, 1, GL_FALSE, curPersp_);
         glUniform1i(uTexWarp_, warp ? 1 : 0);
         if (warp) glUniform2fv(uTexOff_, 16, warp);
+        float crop[4];
+        croppolicy::uniformValue(curCrop_, crop);
+        glUniform4fv(uTexCrop_, 1, crop);   // спринт 45: нули вне обрезанного слоя - остальные рисования программы не режутся
+        float uvr[4];
+        croppolicy::uvRect(curUv_, uvr);
+        glUniform4fv(uTexUv_, 1, uvr);      // спринт 46: квадрат слоя - видимая рамка (нули - вся текстура)
         drawQuadOrGrid(warp);
+        if (curCrop_) glUniform4f(uTexCrop_, 0.f, 0.f, 0.f, 0.f);
+        if (curUv_) glUniform4f(uTexUv_, 0.f, 0.f, 0.f, 0.f);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         return;
     }
-    copyBackdrop();
+    // Спринт 45: подложка готовится ДО привязки слоя (её создание меняет привязку активного блока), слой - последним.
+    // Иначе в первом кадре после смены цели (экспорт, снимки) слой рисовался копией всего кадра - «мини-холст».
+    struct GlBind {
+        void activeTexture(int unit) const { glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit)); }
+        void bindTexture(unsigned t) const { glBindTexture(GL_TEXTURE_2D, t); }
+    } gl;
+    blendbind::bindInputs(gl, tex, [this]() { copyBackdrop(); return static_cast<unsigned>(backdropTex_); });
     glUseProgram(progBlend_);
     glDisable(GL_BLEND);  // шейдер выдаёт готовый результат
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, backdropTex_);
-    glActiveTexture(GL_TEXTURE0);
     glUniform1i(uBlTex_, 0);
     glUniform1i(uBlBackdrop_, 1);
     glUniform1i(uBlMode_, blend);
     glUniform1i(uBlClip_, clipMode ? 1 : 0);
     glUniformMatrix3fv(uBlMvp_, 1, GL_FALSE, mvp);
     glUniform1f(uBlOpacity_, opacity);
+    glUniform1f(uBlLod_, exportLodBias(exportMode_));
     glUniform1i(uBlMesh_, curMesh_ ? 1 : 0);
     glUniform1i(uBlPersp_, curPersp_ ? 1 : 0);
     if (curTurb_) glUniform4fv(uBlTurb_, 1, curTurb_); else glUniform4f(uBlTurb_, 0.f, 0.f, 0.f, 0.f);
     if (curPersp_) glUniformMatrix3fv(uBlH_, 1, GL_FALSE, curPersp_);
     glUniform1i(uBlWarp_, warp ? 1 : 0);
     if (warp) glUniform2fv(uBlOff_, 16, warp);
+    float crop[4];
+    croppolicy::uniformValue(curCrop_, crop);
+    glUniform4fv(uBlCrop_, 1, crop);
+    float uvr[4];
+    croppolicy::uvRect(curUv_, uvr);
+    glUniform4fv(uBlUv_, 1, uvr);
     drawQuadOrGrid(warp);
+    if (curCrop_) glUniform4f(uBlCrop_, 0.f, 0.f, 0.f, 0.f);
+    if (curUv_) glUniform4f(uBlUv_, 0.f, 0.f, 0.f, 0.f);
     glEnable(GL_BLEND);
 }
 
 // Один проход эффекта: читает srcTex, пишет в текущую цель (она уже очищена и привязана).
 void Renderer::runEffect(GLuint srcTex, const float* e) {
     if (!progFx_) return;
-    float sc, ox, oy;
-    viewTransform(sc, ox, oy);
+    float va[6];
+    viewAffine(va);
+    const float sc = std::sqrt(va[0] * va[0] + va[1] * va[1]);
+    const float ox = va[4], oy = va[5];
     glUseProgram(progFx_);
     glDisable(GL_BLEND);
     glActiveTexture(GL_TEXTURE0);
@@ -1088,33 +1786,298 @@ void Renderer::runEffect(GLuint srcTex, const float* e) {
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 }
 
-// Слой с эффектами: слой -> FBO A, затем каждый эффект читает A и пишет в B (A и B меняются местами),
-// в конце результат накладывается на родителя с прозрачностью и режимом слоя.
-void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode) {
-    const auto fx = effects_.find(it.layerId);
-    if (!applyLayerEffect(clipMode, fx != effects_.end(), progFx_ != 0, textures_.find(it.layerId) != textures_.end())) {
-        drawLayerPlain(it, opacity, blend, clipMode);
-        return;
-    }
-    const GLuint parent = curFbo_;
-    Fbo a = acquireFbo();
-    drawLayerPlain(it, 1.f, kNormal, false);
+bool Renderer::hasGroupEffects(int groupId) const {
+    const auto fx = effects_.find(groupId);
+    return fx != effects_.end() && !fx->second.empty();
+}
+
+// Спринт 50: буфер группы -> проходы эффектов (A -> B, как у слоя). Проходы - на всю цель: рамку группы рендерер не
+// знает, а обрезка кадром (экспорт) действует только при наложении. Возвращает буфер результата (он текущая цель).
+Renderer::Fbo Renderer::runGroupEffects(const Fbo& src, int groupId) {
+    const auto fx = effects_.find(groupId);
+    if (fx == effects_.end() || fx->second.empty() || !progFx_) return src;
+    if (canvasScissorOn_) glDisable(GL_SCISSOR_TEST);
+    Fbo a = src;
     for (const auto& e : fx->second) {
         Fbo b = acquireFbo();
         runEffect(a.tex, e.data());
         releaseFbo(a);
         a = b;
+        ++stats_.fxPasses;
     }
+    restoreCanvasScissor();
+    return a;
+}
+
+// Слой с эффектами: слой -> FBO A, затем каждый эффект читает A и пишет в B (A и B меняются местами),
+// в конце результат накладывается на родителя с прозрачностью и режимом слоя.
+void Renderer::drawLayer(const Item& it, float opacity, int blend, bool clipMode) {
+    const auto fx = effects_.find(it.layerId);
+    if (!applyLayerEffect(clipMode, fx != effects_.end(), progFx_ != 0, findTex(it.layerId) != nullptr)) {
+        drawLayerPlain(it, opacity, blend, clipMode);
+        return;
+    }
+    // Эффекты считаются только в экранной рамке слоя + охват цепочки (scissor), а не на весь экран:
+    // групповой эффект на 60 слоях раньше давал 60 x (очистка + проходы + наложение) полноэкранных FBO.
+    float va[6];
+    viewAffine(va);
+    const float sc = std::sqrt(va[0] * va[0] + va[1] * va[1]);
+    std::vector<const float*>& chain = fxChain_;   // спринт 55: без нового вектора на каждый слой каждого кадра
+    chain.clear();
+    for (const auto& e : fx->second) chain.push_back(e.data());
+    const float reach = chainReach(chain.data(), static_cast<int>(chain.size()));
+    const bool deformed = meshes_.count(it.layerId) || warps_.count(it.layerId) || persps_.count(it.layerId) || turbs_.count(it.layerId);
+    // Кэш результата: та же сцена и вид - без проходов эффектов; во время жеста камеры - с преобразованием вида.
+    const bool cacheable = fxCacheEnabled() && !deformed && reach >= 0.f;
+    const uint64_t fxKey = cacheable ? fxContentKey(it, fx->second) : 0;
+    if (cacheable && drawFxFromCache(it, va, reach, opacity, blend, fxKey)) return;
+    const float W = static_cast<float>(width_), H = static_cast<float>(height_);
+    ScreenRect work{0.f, 0.f, W, H}, clearArea = work;
+    if (reach >= 0.f && !deformed) {
+        const float pad = reach * sc + 2.f;
+        const ScreenRect body = layerScreenRect(va, it.m);
+        if (body.empty() || outsideTarget(expand(body, pad), W, H)) { ++stats_.culled; return; }
+        work = intersect(expand(body, pad), W, H);
+        clearArea = intersect(expand(body, pad * 2.f + 2.f), W, H);   // чтения за рамкой видят нули, а не мусор пула
+    }
+    int box[4] = {0, 0, width_, height_}, cbox[4] = {0, 0, width_, height_};
+    const bool limited = !(work.x0 <= 0.f && work.y0 <= 0.f && work.x1 >= W && work.y1 >= H);
+    if (limited) {
+        ++stats_.scissoredFx;
+        scissorBox(clearArea, height_, cbox);
+        scissorBox(work, height_, box);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(cbox[0], cbox[1], cbox[2], cbox[3]);
+    } else if (canvasScissorOn_) {
+        glDisable(GL_SCISSOR_TEST);   // внутренние проходы - на всю цель, обрезка кадром только при наложении
+    }
+    const GLuint parent = curFbo_;
+    Fbo a = acquireFbo();
+    if (limited) glScissor(box[0], box[1], box[2], box[3]);
+    drawLayerPlain(it, 1.f, kNormal, false);
+    for (const auto& e : fx->second) {
+        if (limited) glScissor(cbox[0], cbox[1], cbox[2], cbox[3]);   // очистка с запасом
+        Fbo b = acquireFbo();
+        if (limited) glScissor(box[0], box[1], box[2], box[3]);       // проход - только рамка
+        runEffect(a.tex, e.data());
+        releaseFbo(a);
+        a = b;
+        ++stats_.fxPasses;
+    }
+    if (cacheable) storeFxCache(it, a.fbo, box, va, fxKey);
     bindTarget(parent);
+    // Наложение: рамка слоя, пересечённая с обрезкой кадра (экспорт).
+    if (limited || canvasScissorOn_) {
+        ScreenRect comp = work;
+        if (canvasScissorOn_) {
+            comp.x0 = std::max(comp.x0, canvasScissor_.x0); comp.y0 = std::max(comp.y0, canvasScissor_.y0);
+            comp.x1 = std::min(comp.x1, canvasScissor_.x1); comp.y1 = std::min(comp.y1, canvasScissor_.y1);
+        }
+        int cb[4];
+        if (!scissorBox(comp, height_, cb)) cb[2] = cb[3] = 0;
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(cb[0], cb[1], cb[2], cb[3]);
+    }
     compositeFbo(a, opacity, blend);
     releaseFbo(a);
+    restoreCanvasScissor();
+}
+
+// ---------------------------------------------------------------- кэш результата эффектов
+
+namespace {
+constexpr size_t kFxCacheBudget = 128u * 1024u * 1024u;
+}
+
+bool Renderer::fxCacheEnabled() const {
+    return !exportMode_ && !useShadows_ && !paintActive_ && screenFbo_ == 0;
+}
+
+// Спринт 55: ключ содержимого слоя для кэша эффектов - трансформация, записи эффектов, текстура (и форма символа),
+// обрезка. Смена кадра или чужого слоя ключ не меняет: неподвижный слой с Blur/Glow/Shadow не пересчитывается в Play.
+uint64_t Renderer::fxContentKey(const Item& it, const std::vector<std::array<float, 10>>& fx) const {
+    uint64_t tex = texHash(groupcache::kFnvBasis, it.layerId);
+    if (!aliases_.empty()) {
+        const auto a = aliases_.find(it.layerId);
+        if (a != aliases_.end()) {
+            tex = groupcache::mixInt(tex, a->second.primary); tex = groupcache::mixInt(tex, a->second.fallback);
+            tex = groupcache::mixFloats(tex, a->second.pr, 4); tex = groupcache::mixFloats(tex, a->second.fr, 4);
+            if (a->second.primary >= 0) tex = texHash(tex, a->second.primary);
+            if (a->second.fallback >= 0) tex = texHash(tex, a->second.fallback);
+        }
+    }
+    const auto cr = crops_.find(it.layerId);
+    const float* crop = cr != crops_.end() ? cr->second.data() : nullptr;
+    uint64_t fxh = groupcache::mix(groupcache::kFnvBasis, static_cast<uint64_t>(fx.size()));
+    for (const auto& e : fx) fxh = fxkey::effectsHash(fxh, e.data(), e.size());
+    // размер холста входит в проходы эффектов (uCanvas) - часть «соли» записи
+    const uint64_t salt = groupcache::mixInt(groupcache::mixInt(groupcache::mix(groupcache::kFnvBasis, texSalt_), canvasW_), canvasH_);
+    return fxkey::layerKey(it.layerId, it.m, fxh, tex, crop, crop ? 4u : 0u, salt);
+}
+
+bool Renderer::drawFxFromCache(const Item& it, const float va[6], float reach, float opacity, int blend, uint64_t key) {
+    auto e = fxCache_.find(it.layerId);
+    if (e == fxCache_.end() || !e->second.tex) return false;
+    if (!fxkey::entryValid(e->second.key, key, e->second.vw, e->second.vh, width_, height_)) return false;
+    FxEntry& c = e->second;
+    float d[6];
+    if (!fxcache::screenDelta(va, c.va, d)) return false;
+    const float W = static_cast<float>(width_), H = static_cast<float>(height_);
+    if (!fxcache::isIdentity(d)) {
+        if (!interactive_ || !fxcache::scaleAcceptable(d)) return false;
+        float dInv[6];
+        if (!fxcache::invert(d, dInv)) return false;
+        const float sc = std::sqrt(va[0] * va[0] + va[1] * va[1]);
+        const ScreenRect body = layerScreenRect(va, it.m);
+        if (body.empty()) return false;
+        const ScreenRect need = intersect(expand(body, reach * sc + 2.f), W, H);
+        if (need.empty()) { c.used = true; ++stats_.culled; return true; }   // слой ушёл за экран
+        const ScreenRect cached{static_cast<float>(c.bx), H - static_cast<float>(c.by + c.bh),
+                                static_cast<float>(c.bx + c.bw), H - static_cast<float>(c.by)};
+        if (!fxcache::covers(cached, need, dInv)) return false;   // открылась непосчитанная часть - пересчёт
+    }
+    // Строка 0 текстуры кэша = нижняя строка рамки (GL): v = 0 -> нижний край рамки на экране.
+    float ox, oy;
+    fxcache::apply(d, static_cast<float>(c.bx), H - static_cast<float>(c.by), ox, oy);
+    const float bw = static_cast<float>(c.bw), bh = static_cast<float>(c.bh);
+    GLfloat mvp[9];
+    mvpScreen(ox, oy, d[0] * bw, d[1] * bw, -d[2] * bh, -d[3] * bh, mvp);
+    restoreCanvasScissor();
+    drawTexture(c.tex, mvp, opacity, blend, false);
+    c.used = true;
+    ++stats_.fxCached;
+    return true;
+}
+
+void Renderer::storeFxCache(const Item& it, GLuint srcFbo, const int box[4], const float va[6], uint64_t key) {
+    const int bw = box[2], bh = box[3];
+    if (!fxcache::entryAllowed(bw, bh, width_, height_)) { dropFxEntry(it.layerId); return; }
+    const size_t bytes = static_cast<size_t>(bw) * static_cast<size_t>(bh) * 4u;
+    auto found = fxCache_.find(it.layerId);
+    const size_t oldBytes = (found != fxCache_.end() && found->second.tex) ? static_cast<size_t>(found->second.bw) * found->second.bh * 4u : 0u;
+    if (fxCacheBytes_ - std::min(fxCacheBytes_, oldBytes) + bytes > kFxCacheBudget) { dropFxEntry(it.layerId); return; }
+    FxEntry& c = fxCache_[it.layerId];
+    if (c.tex && (c.bw != bw || c.bh != bh)) {
+        glDeleteFramebuffers(1, &c.fbo);
+        glDeleteTextures(1, &c.tex);
+        fxCacheBytes_ -= std::min(fxCacheBytes_, oldBytes);
+        c.fbo = c.tex = 0;
+    }
+    if (!c.tex) {
+        glGenTextures(1, &c.tex);
+        glBindTexture(GL_TEXTURE_2D, c.tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, bw, bh);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenFramebuffers(1, &c.fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, c.fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, c.tex, 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE || !checkGl("fx cache alloc")) {
+            glDeleteFramebuffers(1, &c.fbo);
+            glDeleteTextures(1, &c.tex);
+            fxCache_.erase(it.layerId);
+            bindTarget(curFbo_);
+            return;
+        }
+        fxCacheBytes_ += bytes;
+    }
+    c.bw = bw; c.bh = bh;
+    // blit учитывает scissor: на время копии выключаем (вызывающий заново ставит scissor перед наложением)
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, c.fbo);
+    glBlitFramebuffer(box[0], box[1], box[0] + bw, box[1] + bh, 0, 0, bw, bh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, curFbo_);
+    c.bx = box[0]; c.by = box[1];
+    for (int i = 0; i < 6; ++i) c.va[i] = va[i];
+    c.key = key;
+    c.vw = width_; c.vh = height_;
+    c.used = true;
+}
+
+void Renderer::dropFxEntry(int layerId) {
+    auto e = fxCache_.find(layerId);
+    if (e == fxCache_.end()) return;
+    if (e->second.fbo) glDeleteFramebuffers(1, &e->second.fbo);
+    if (e->second.tex) {
+        glDeleteTextures(1, &e->second.tex);
+        fxCacheBytes_ -= std::min(fxCacheBytes_, static_cast<size_t>(e->second.bw) * e->second.bh * 4u);
+    }
+    fxCache_.erase(e);
+}
+
+void Renderer::dropFxCache() {
+    for (auto& kv : fxCache_) {
+        if (kv.second.fbo) glDeleteFramebuffers(1, &kv.second.fbo);
+        if (kv.second.tex) glDeleteTextures(1, &kv.second.tex);
+    }
+    fxCache_.clear();
+    fxCacheBytes_ = 0;
+}
+
+void Renderer::gcFxCache() {
+    for (auto it = fxCache_.begin(); it != fxCache_.end();) {
+        if (!it->second.used) {
+            if (it->second.fbo) glDeleteFramebuffers(1, &it->second.fbo);
+            if (it->second.tex) {
+                glDeleteTextures(1, &it->second.tex);
+                fxCacheBytes_ -= std::min(fxCacheBytes_, static_cast<size_t>(it->second.bw) * it->second.bh * 4u);
+            }
+            it = fxCache_.erase(it);
+        } else {
+            it->second.used = false;
+            ++it;
+        }
+    }
+}
+
+void Renderer::restoreCanvasScissor() {
+    if (canvasScissorOn_) {
+        int cb[4];
+        scissorBox(canvasScissor_, height_, cb);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(cb[0], cb[1], cb[2], cb[3]);
+    } else {
+        glDisable(GL_SCISSOR_TEST);
+    }
 }
 
 void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool clipMode) {
-    auto t = textures_.find(it.layerId);
-    if (t == textures_.end()) return;  // текстура ещё не загружена
+    float rect[4];
+    const Tex* t = resolveTex(it.layerId, rect);
+    if (!t) {   // текстура ещё не загружена
+        if (it.opacity > 0.001f) ++stats_.missing;
+        return;
+    }
+    // Форма символа, обрезанная по содержимому: рисуется в своём под-прямоугольнике квадрата экземпляра.
+    float sub[6];
+    const float* M = it.m;
+    // спринт 46: обрезка - квадрат слоя в сцене уже равен видимой рамке (SceneBuilder), текстура берётся из неё
+    const auto cr = crops_.find(it.layerId);
+    const float* cropC = cr == crops_.end() ? nullptr : cr->second.data();
+    float formCrop[4];
+    if (!texalias::isFull(rect)) {
+        float r2[4] = {rect[0], rect[1], rect[2], rect[3]};
+        if (cropC) {
+            // форма символа обрезанного экземпляра: под-прямоугольник формы - в долях рамки, вне рамки - отбрасывается
+            croppolicy::aliasRect(cropC, rect, r2);
+            croppolicy::formCrop(cropC, rect, formCrop);
+        }
+        texalias::subRect(it.m, r2, sub);
+        M = sub;
+    }
+    // Отсечение: слой без деформаций целиком вне цели не рисуется (зум/панорама на большом холсте).
+    if (!meshes_.count(it.layerId) && !warps_.count(it.layerId) && !persps_.count(it.layerId)) {
+        float va[6];
+        viewAffine(va);
+        const ScreenRect r = layerScreenRect(va, M);
+        if (r.empty() || outsideTarget(expand(r, 1.f), static_cast<float>(width_), static_cast<float>(height_))) { ++stats_.culled; return; }
+    }
+    ++stats_.drawn;
     GLfloat mvp[9];
-    mvpFor(it.m, mvp);
+    mvpFor(M, mvp);
     const auto m = meshes_.find(it.layerId);
     curMesh_ = m == meshes_.end() ? nullptr : &m->second;   // Mesh приоритетнее Warp
     const auto pp = persps_.find(it.layerId);
@@ -1122,10 +2085,45 @@ void Renderer::drawLayerPlain(const Item& it, float opacity, int blend, bool cli
     const auto tb = turbs_.find(it.layerId);
     curTurb_ = tb == turbs_.end() ? nullptr : tb->second.data();
     const auto w = warps_.find(it.layerId);
-    drawTexture(t->second.id, mvp, opacity, blend, clipMode, curMesh_ || w == warps_.end() ? nullptr : w->second.data());
+    // спринт 46: обычный слой - текстурная рамка квадрата (uUvRect); форма символа - отбрасывание вне рамки в её текстуре
+    const bool full = texalias::isFull(rect);
+    curUv_ = full ? cropC : nullptr;
+    curCrop_ = !full && cropC ? formCrop : nullptr;
+    drawTexture(t->id, mvp, opacity, blend, clipMode, curMesh_ || w == warps_.end() ? nullptr : w->second.data());
     curMesh_ = nullptr;
     curPersp_ = nullptr;
     curTurb_ = nullptr;
+    curCrop_ = nullptr;
+    curUv_ = nullptr;
+}
+
+// Слой внутри маски «Маски по слою» рисуется без шейдерных эффектов: кэш эффектов хранится по id слоя, а тот же слой
+// в этом кадре рисуется ещё раз с растяжением. Маска - форма слоя (с его деформерами) без растяжения.
+void Renderer::drawItem(const Item& it, float opacity, int blend, bool clipMode) {
+    if (maskpolicy::plainDraw(it.flags)) drawLayerPlain(it, opacity, blend, clipMode);
+    else drawLayer(it, opacity, blend, clipMode);
+}
+
+// Текущая цель умножается на альфу маски: цвет и альфа (premultiplied) * maskAlpha. Спринт 38: маска слоя с инверсией -
+// на (1 - maskAlpha): нарисованное на маске скрывает слой.
+void Renderer::multiplyByMask(const Fbo& mask, bool invert) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, mask.tex);
+    glUseProgram(progTex_);
+    glEnable(GL_BLEND);
+    const GLenum dst = maskpolicy::dstFactor(invert ? (kFlagMasked | kFlagMaskInvert) : kFlagMasked) == 1 ? GL_ONE_MINUS_SRC_ALPHA : GL_SRC_ALPHA;
+    glBlendFuncSeparate(GL_ZERO, dst, GL_ZERO, dst);
+    glUniform1i(uTexSampler_, 0);
+    glUniformMatrix3fv(uTexMvp_, 1, GL_FALSE, kFullscreen);
+    glUniform1f(uTexOpacity_, 1.f);
+    glUniform1f(uTexLod_, 0.f);
+    glUniform1i(uTexMesh_, 0);
+    glUniform1i(uTexPersp_, 0);
+    glUniform4f(uTexTurb_, 0.f, 0.f, 0.f, 0.f);
+    glUniform1i(uTexWarp_, 0);
+    curMesh_ = nullptr;
+    drawQuadOrGrid(nullptr);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 // Накладывает готовый FBO (группу или clipping-цепочку) на текущую цель.
@@ -1133,10 +2131,134 @@ void Renderer::compositeFbo(const Fbo& f, float opacity, int blend) {
     drawTexture(f.tex, kFullscreen, opacity, blend, false);
 }
 
+// ---------------------------------------------------------------- пакет 27: кэш поддеревьев групп
+
+bool Renderer::groupCacheEnabled() const {
+    // Снимки (символы, миниатюры, GIF/PNG) рисуются один раз и своим размером - кэш не нужен и не должен их касаться.
+    return !useShadows_ && !paintActive_ && (screenFbo_ == 0 || exportToSurface_);
+}
+
+uint64_t Renderer::texHash(uint64_t h, int layerId) const {
+    const auto t = textures_.find(layerId);
+    if (t == textures_.end()) h = groupcache::mixInt(h, -1);
+    else {
+        h = groupcache::mix(h, t->second.id);
+        h = groupcache::mixInt(h, t->second.w);
+        h = groupcache::mixInt(h, t->second.h);
+    }
+    const auto g = texGen_.find(layerId);
+    return groupcache::mix(h, g == texGen_.end() ? 0u : g->second);
+}
+
+uint64_t Renderer::subtreeHash(size_t begin, size_t end, int& layers, bool& hasMask) const {
+    using namespace groupcache;
+    layers = 0;
+    hasMask = false;
+    uint64_t h = kFnvBasis;
+    h = mixInt(h, width_); h = mixInt(h, height_);
+    h = mixInt(h, canvasW_); h = mixInt(h, canvasH_);
+    float va[6];
+    viewAffine(va);
+    h = mixFloats(h, va, 6);
+    h = mixInt(h, canvasScissorOn_ ? 1 : 0);
+    if (canvasScissorOn_) {
+        const float sc[4] = {canvasScissor_.x0, canvasScissor_.y0, canvasScissor_.x1, canvasScissor_.y1};
+        h = mixFloats(h, sc, 4);
+    }
+    h = mixInt(h, (interactive_ ? 1 : 0) | (exportMode_ ? 2 : 0));
+    h = mix(h, texSalt_);
+    for (size_t k = begin + 1; k < end && k < scene_.size(); ++k) {
+        const Item& it = scene_[k];
+        h = mixInt(h, it.op); h = mixInt(h, it.layerId); h = mixInt(h, it.blend); h = mixInt(h, it.flags);
+        h = mixFloats(h, it.m, 6);
+        h = mixFloat(h, it.opacity);
+        if (it.flags & (kFlagMaskSrc | kFlagMasked)) hasMask = true;
+        if (it.op == kBeginGroup && groupfx::hashEffects(it.op)) {
+            // спринт 50: эффекты вложенной группы (в том числе зависящие от времени) меняют вид родителя
+            const auto ge = effects_.find(it.layerId);
+            if (ge != effects_.end()) {
+                h = mix(h, ge->second.size());
+                for (const auto& fx : ge->second) h = mixFloats(h, fx.data(), fx.size());
+            }
+        }
+        if (it.op != kLayer) continue;
+        ++layers;
+        const int id = it.layerId;
+        h = texHash(h, id);
+        if (!aliases_.empty()) {
+            const auto a = aliases_.find(id);
+            if (a != aliases_.end()) {
+                h = mixInt(h, a->second.primary); h = mixInt(h, a->second.fallback);
+                h = mixFloats(h, a->second.pr, 4); h = mixFloats(h, a->second.fr, 4);
+                if (a->second.primary >= 0) h = texHash(h, a->second.primary);
+                if (a->second.fallback >= 0) h = texHash(h, a->second.fallback);
+            }
+        }
+        const auto w = warps_.find(id);
+        if (w != warps_.end()) h = mixFloats(h, w->second.data(), w->second.size());
+        const auto m = meshes_.find(id);
+        if (m != meshes_.end()) {
+            h = mixFloats(h, m->second.verts.data(), m->second.verts.size());
+            h = mix(h, m->second.idx.size());
+            for (GLushort ix : m->second.idx) h = mixInt(h, ix);
+        }
+        const auto p = persps_.find(id);
+        if (p != persps_.end()) h = mixFloats(h, p->second.data(), p->second.size());
+        const auto t = turbs_.find(id);
+        if (t != turbs_.end()) h = mixFloats(h, t->second.data(), t->second.size());
+        const auto cr = crops_.find(id);
+        if (cr != crops_.end()) h = mixFloats(h, cr->second.data(), cr->second.size());
+        const auto e = effects_.find(id);
+        if (e != effects_.end()) {
+            h = mix(h, e->second.size());
+            for (const auto& fx : e->second) h = mixFloats(h, fx.data(), fx.size());
+        }
+    }
+    return h;
+}
+
+uint64_t Renderer::groupKey(int groupId) {
+    const int n = groupOcc_[groupId]++;
+    return (static_cast<uint64_t>(static_cast<uint32_t>(groupId)) << 32) | static_cast<uint32_t>(n);
+}
+
+int Renderer::groupKeptCount() const {
+    int n = 0;
+    for (const auto& kv : groupCache_) if (kv.second.st.hasCache) ++n;
+    return n;
+}
+
+void Renderer::dropGroupCache() {
+    for (auto& kv : groupCache_) {
+        if (!kv.second.st.hasCache) continue;
+        if (kv.second.fbo.fbo) glDeleteFramebuffers(1, &kv.second.fbo.fbo);
+        if (kv.second.fbo.tex) glDeleteTextures(1, &kv.second.fbo.tex);
+    }
+    groupCache_.clear();
+}
+
+void Renderer::gcGroupCache() {
+    for (auto it = groupCache_.begin(); it != groupCache_.end();) {
+        GroupEntry& g = it->second;
+        if (g.st.used) { g.st.used = false; ++it; continue; }
+        if (g.st.hasCache) {
+            // FBO экранного размера - обратно в пул; другого размера (не должно быть) - удаляем
+            if (g.st.w == width_ && g.st.h == height_) releaseFbo(g.fbo);
+            else { glDeleteFramebuffers(1, &g.fbo.fbo); glDeleteTextures(1, &g.fbo.tex); }
+        }
+        it = groupCache_.erase(it);
+    }
+}
+
 bool Renderer::drawFrame() {
     uploadPending();
 
-    bindTarget(screenFbo_);
+    // Кадр редактора - во внутренний FBO: наложения читают подложку из него, а не из окна.
+    GLuint root = screenFbo_;
+    if (frametarget::renderViaOffscreen(screenFbo_, exportMode_) && ensureEditorTarget()) root = editorFbo_;
+    const bool viaEditor = root != 0 && root == editorFbo_;
+    glDisable(GL_SCISSOR_TEST);   // очистка цели - целиком, вне зависимости от прошлого кадра
+    bindTarget(root);
     if (transparentCapture_) glClearColor(0.f, 0.f, 0.f, 0.f);
     else if (exportMode_) glClearColor(bg_[0], bg_[1], bg_[2], 1.f);
     else glClearColor(0.2f, 0.2f, 0.22f, 1.f);
@@ -1156,26 +2278,87 @@ bool Renderer::drawFrame() {
     // В редакторе содержимое монтажного стола видно на сером фоне; экспорт и capture обрезаны кадром.
     // Scissor действует и на очистку/композитинг FBO, поэтому внутри него группы считаются верно.
     if (clipSceneToCanvas(exportMode_)) {
-        float sc, ox, oy;
-        viewTransform(sc, ox, oy);
-        const int x0 = static_cast<int>(std::floor(ox));
-        const int x1 = static_cast<int>(std::ceil(ox + canvasW_ * sc));
-        const int y0 = static_cast<int>(std::floor(oy));
-        const int y1 = static_cast<int>(std::ceil(oy + canvasH_ * sc));
+        // При повороте/отражении вида холст - повёрнутый прямоугольник: scissor по его AABB.
+        float a[6];
+        viewAffine(a);
+        const float corners[4][2] = {{0.f, 0.f}, {static_cast<float>(canvasW_), 0.f},
+                                     {static_cast<float>(canvasW_), static_cast<float>(canvasH_)}, {0.f, static_cast<float>(canvasH_)}};
+        float minX = 1e30f, minY = 1e30f, maxX = -1e30f, maxY = -1e30f;
+        for (const auto& c : corners) {
+            const float sx = a[0] * c[0] + a[2] * c[1] + a[4];
+            const float sy = a[1] * c[0] + a[3] * c[1] + a[5];
+            minX = std::min(minX, sx); maxX = std::max(maxX, sx);
+            minY = std::min(minY, sy); maxY = std::max(maxY, sy);
+        }
+        const int x0 = static_cast<int>(std::floor(minX));
+        const int x1 = static_cast<int>(std::ceil(maxX));
+        const int y0 = static_cast<int>(std::floor(minY));
+        const int y1 = static_cast<int>(std::ceil(maxY));
         glEnable(GL_SCISSOR_TEST);
         glScissor(x0, height_ - y1, std::max(0, x1 - x0), std::max(0, y1 - y0));  // начало координат снизу
+        canvasScissorOn_ = true;
+        canvasScissor_ = {static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x1), static_cast<float>(y1)};
+    } else {
+        canvasScissorOn_ = false;
     }
+    stats_ = FrameStats{};
+    groupOcc_.clear();
+    const bool groupCacheOn = groupCacheEnabled();
 
     // Обход потока операций снизу вверх.
-    std::vector<Frame> stack;
+    std::vector<Frame>& stack = frameStack_;   // спринт 55: буферы переиспользуются между кадрами
+    std::vector<Fbo>& masks = frameMasks_;     // готовые маски «Маски по слою» (пакет 26)
+    stack.clear();
+    masks.clear();
     const size_t n = scene_.size();
     for (size_t i = 0; i < n; ++i) {
         const Item& it = scene_[i];
 
         if (it.op == kBeginGroup) {
-            // FBO нужен, только если у группы прозрачность < 1 или режим не Normal/Pass-through.
-            const bool isolated = (it.blend != kNormal && it.blend != kPass) || it.opacity < 0.999f;
-            Frame f{isolated, it.opacity, it.blend, curFbo_, {}};
+            // FBO нужен, только если у группы прозрачность < 1 или режим не Normal/Pass-through; маске и группе под маской - всегда.
+            const int mflags = it.flags & (kFlagMaskSrc | kFlagMasked | kFlagMaskInvert);   // спринт 38: инверсия едет в Frame до kEndGroup
+            // спринт 50: шейдерные эффекты группы целиком - буфер всегда, кэш поддерева не используется
+            const bool groupFx = groupfx::applies(it.flags, hasGroupEffects(it.layerId), progFx_ != 0);
+            const bool isolated = groupfx::isolated(maskpolicy::isolated(mflags, it.blend == kNormal || it.blend == kPass, it.opacity), groupFx);
+            Frame f{isolated, it.opacity, it.blend, curFbo_, {}, mflags};
+            f.fx = groupFx;
+            // ключ - у каждой группы, чтобы номера появлений одинаковых id не зависели от того, что взято из кэша
+            const uint64_t key = groupCacheOn ? groupKey(it.layerId) : 0;
+            if (groupfx::cacheable(isolated && groupCacheOn, groupFx)) {
+                // Пакет 27: неизменное поддерево берётся из сохранённого FBO, содержимое не перерисовывается.
+                size_t e = i;
+                for (int depth = 0; e < n; ++e) {
+                    if (scene_[e].op == kBeginGroup) ++depth;
+                    else if (scene_[e].op == kEndGroup && --depth == 0) break;
+                }
+                int layers = 0;
+                bool hasMask = false;
+                const uint64_t hash = e < n ? subtreeHash(i, e, layers, hasMask) : 0;
+                if (e < n && groupcache::eligible(true, isolated, mflags, hasMask, layers)) {
+                    GroupEntry& g = groupCache_[key];
+                    const bool canKeep = g.st.hasCache || groupKeptCount() < groupcache::maxEntries(width_, height_);
+                    const groupcache::Action act = groupcache::decide(g.st, hash, width_, height_, canKeep);
+                    if (act == groupcache::Action::Reuse) {
+                        groupcache::reused(g.st);
+                        // вложенные группы тоже «нужны» (их записи не освобождаются), номера появлений id - как при рисовании
+                        for (size_t k = i + 1; k < e; ++k) {
+                            if (scene_[k].op != kBeginGroup) continue;
+                            const auto nested = groupCache_.find(groupKey(scene_[k].layerId));
+                            if (nested != groupCache_.end()) nested->second.st.used = true;
+                        }
+                        restoreCanvasScissor();
+                        compositeFbo(g.fbo, it.opacity, it.blend);
+                        ++stats_.groupCached;
+                        i = e;
+                        continue;
+                    }
+                    f.cacheable = true;
+                    f.keep = act == groupcache::Action::DrawAndKeep;
+                    f.cacheKey = key;
+                    f.hash = hash;
+                    f.missingBefore = stats_.missing;
+                }
+            }
             if (isolated) f.fbo = acquireFbo();  // делает FBO текущей целью
             stack.push_back(f);
 
@@ -1183,10 +2366,48 @@ bool Renderer::drawFrame() {
             if (stack.empty()) continue;
             const Frame f = stack.back();
             stack.pop_back();
-            if (f.isolated) {
+            if (!maskpolicy::composites(f.flags)) {
+                // маска не накладывается: ждёт следующую группу kFlagMasked
+                bindTarget(f.parentFbo);
+                masks.push_back(f.fbo);
+            } else if (f.isolated) {
+                if (f.fx) {
+                    // спринт 50: эффекты группы над её буфером (до маски: маска режет уже обработанный результат)
+                    const Fbo out = runGroupEffects(f.fbo, it.layerId);
+                    if ((f.flags & kFlagMasked) && !masks.empty()) {
+                        const Fbo m = masks.back();
+                        masks.pop_back();
+                        bindTarget(out.fbo);
+                        multiplyByMask(m, maskpolicy::inverted(f.flags));
+                        releaseFbo(m);
+                    }
+                    bindTarget(f.parentFbo);
+                    compositeFbo(out, f.opacity, f.blend);
+                    releaseFbo(out);
+                    continue;
+                }
+                if ((f.flags & kFlagMasked) && !masks.empty()) {
+                    const Fbo m = masks.back();
+                    masks.pop_back();
+                    multiplyByMask(m, maskpolicy::inverted(f.flags));   // цель сейчас - FBO этой группы
+                    releaseFbo(m);
+                }
                 bindTarget(f.parentFbo);
                 compositeFbo(f.fbo, f.opacity, f.blend);
-                releaseFbo(f.fbo);
+                bool kept = false;
+                if (f.cacheable) {
+                    const auto g = groupCache_.find(f.cacheKey);
+                    if (g != groupCache_.end()) {
+                        // недогруженные текстуры внутри - картинка неполная, не сохраняем
+                        // бюджет проверяется и здесь: несколько групп кадра могли решить «сохранить» одновременно
+                        const bool keep = f.keep && stats_.missing == f.missingBefore &&
+                                          (g->second.st.hasCache || groupKeptCount() < groupcache::maxEntries(width_, height_));
+                        if (g->second.st.hasCache) { releaseFbo(g->second.fbo); g->second.fbo = Fbo{}; }   // устаревший FBO
+                        groupcache::drawn(g->second.st, f.hash, width_, height_, keep);
+                        if (keep) { g->second.fbo = f.fbo; kept = true; }
+                    }
+                }
+                if (!kept) releaseFbo(f.fbo);
             }
 
         } else {  // kLayer
@@ -1196,14 +2417,14 @@ bool Renderer::drawFrame() {
                 while (j < n && scene_[j].op == kLayer && (scene_[j].flags & kFlagClipped)) ++j;
 
             if (j == i + 1) {
-                drawLayer(it, it.opacity, it.blend, false);  // обычный слой, без буферов
+                drawItem(it, it.opacity, it.blend, false);  // обычный слой, без буферов
             } else {
                 // База + clipped-слои рисуются в отдельный FBO: база с opacity 1, clipped по её альфе.
                 // Затем результат кладётся на родителя с opacity и режимом БАЗЫ.
                 const GLuint parent = curFbo_;
                 const Fbo f = acquireFbo();
-                drawLayer(it, 1.f, kNormal, false);
-                for (size_t k = i + 1; k < j; ++k) drawLayer(scene_[k], scene_[k].opacity, scene_[k].blend, true);
+                drawItem(it, 1.f, kNormal, false);
+                for (size_t k = i + 1; k < j; ++k) drawItem(scene_[k], scene_[k].opacity, scene_[k].blend, true);
                 bindTarget(parent);
                 compositeFbo(f, it.opacity, it.blend);
                 releaseFbo(f);
@@ -1217,34 +2438,53 @@ bool Renderer::drawFrame() {
         stack.pop_back();
         if (f.isolated) {
             bindTarget(f.parentFbo);
-            compositeFbo(f.fbo, f.opacity, f.blend);
+            if (maskpolicy::composites(f.flags)) compositeFbo(f.fbo, f.opacity, f.blend);
             releaseFbo(f.fbo);
         }
     }
+    for (const Fbo& m : masks) releaseFbo(m);   // маска без группы под ней (не должно быть) - просто освобождается
+    masks.clear();
 
+    glDisable(GL_SCISSOR_TEST);   // blit учитывает scissor: копия на окно/поверхность - целиком
+    if (exportToSurface_) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, exportFbo_);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, width_, height_, 0, 0, width_, height_, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+    if (viaEditor) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, editorFbo_);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, width_, height_, 0, 0, width_, height_, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
     bindTarget(0);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    glDisable(GL_SCISSOR_TEST);   // рамка выделения может выходить за холст
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // рамка выделения может выходить за холст
+    if (!exportMode_) gcFxCache();
+    if (groupCacheOn) gcGroupCache();
     if (!exportMode_) drawSelection();
     glBindVertexArray(0);
-    checkGl("drawFrame");
+    if (glerr::frameCheckDue(++frameNo_, exportMode_)) checkGl("drawFrame");   // спринт 55: не каждый кадр (синхронизация драйвера)
     return !uploadQueue::empty();
 }
 
 int Renderer::readPixel(int x, int y) const {
     if (x < 0 || y < 0 || x >= width_ || y >= height_) return 0;
     unsigned char px[4] = {0, 0, 0, 0};
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Пипетка читает внутренний кадр редактора (без рамки выделения), окно - только запасной путь.
+    glBindFramebuffer(GL_FRAMEBUFFER, editorFbo_ && editorW_ == width_ && editorH_ == height_ ? editorFbo_ : 0);
     glReadPixels(x, height_ - 1 - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
     return (0xFF << 24) | (px[0] << 16) | (px[1] << 8) | px[2];
 }
 
 void Renderer::release() {
+    dropGroupCache();
     for (auto& kv : textures_) glDeleteTextures(1, &kv.second.id);
     textures_.clear();
+    clearShadows();
+    dropFxCache();
     textureBytes_ = 0;
     releaseTargets();
+    releaseEditorTarget();
     paintFreeTargets();
     for (GLuint& gt : grainTex_) { if (gt) glDeleteTextures(1, &gt); gt = 0; }
     if (layerFbo_) glDeleteFramebuffers(1, &layerFbo_);
@@ -1258,6 +2498,7 @@ void Renderer::release() {
     if (progTex_) glDeleteProgram(progTex_);
     if (progBlend_) glDeleteProgram(progBlend_);
     vbo_ = vao_ = progSolid_ = progTex_ = progBlend_ = 0;
+    for (GLuint& pb : uploadPbo_) { if (pb) glDeleteBuffers(1, &pb); pb = 0; }
 }
 
 }  // namespace vt

@@ -38,6 +38,8 @@ val ACCENTS: List<Accent> = listOf(
 /** Что выбрано в настройках внешнего вида; хранится в SharedPreferences и мгновенно применяется (все поля - состояние Compose). */
 class AppSettings(context: Context) {
     private val p = context.applicationContext.getSharedPreferences("vt_app", Context.MODE_PRIVATE)
+    /** Спринт 39: окно цвета (последние цвета, режим) - отдельный раздел резервной копии. */
+    private val colorPrefs = context.applicationContext.getSharedPreferences("vt_colors", Context.MODE_PRIVATE)
 
     /** "ru", "en" или пусто (ещё не выбран - берётся язык системы). */
     var lang by mutableStateOf(p.getString("lang", "") ?: "")
@@ -52,9 +54,35 @@ class AppSettings(context: Context) {
     var gridCells by mutableIntStateOf(com.vibetoon.domain.render.CanvasGrid.density(p.getInt("grid_cells", 16)))
     fun saveGrid() { p.edit().putBoolean("show_grid", showGrid).putInt("grid_cells", gridCells).apply() }
     var resetFrameAfterPause by mutableStateOf(p.getBoolean("reset_frame_after_pause", false))
+    var compatibleVideoExport by mutableStateOf(p.getBoolean("compatible_video_export", false))
+    fun saveExport() { p.edit().putBoolean("compatible_video_export", compatibleVideoExport).putBoolean("perf_hud", perfHud).apply() }
+    /** Панель метрик производительности поверх холста (время кадра, отсечённые слои, проходы эффектов). */
+    var perfHud by mutableStateOf(p.getBoolean("perf_hud", false))
+    /** Векторный режим работы: кисть/ластик автоматически выбирают или создают слой по типу инструмента. */
+    var vectorWorkflow by mutableStateOf(p.getBoolean("vector_workflow", false))
+    /** Авто-режим пиксельного редактирования: при выборе кисти/ластика слой выбирается или создаётся сам. */
+    var autoPixelEdit by mutableStateOf(p.getBoolean("auto_pixel_edit", false))
+    /** Ластик и смаз (smudge) действуют только на выбранных слоях с путями (векторных). */
+    var onlyEraseSelectedPaths by mutableStateOf(p.getBoolean("only_erase_selected_paths", false))
+    /** Временные опорные точки: пивот действует только на время жеста и не сохраняется в проект. */
+    var temporaryPivots by mutableStateOf(p.getBoolean("temporary_pivots", false))
+    /** Правка опорной точки слоя включена (пивот перетаскивается на холсте). */
+    var pivotEditing by mutableStateOf(p.getBoolean("pivot_editing", true))
+    var rotateCanvas by mutableStateOf(p.getBoolean("rotate_canvas_2f", true))
+    fun savePixelModes() { p.edit().putBoolean("rotate_canvas_2f", rotateCanvas).putBoolean("vector_workflow", vectorWorkflow).putBoolean("auto_pixel_edit", autoPixelEdit).putBoolean("only_erase_selected_paths", onlyEraseSelectedPaths).putBoolean("temporary_pivots", temporaryPivots).putBoolean("pivot_editing", pivotEditing).apply() }
     var checkerThumbnails by mutableStateOf(p.getBoolean("checker_thumbnails", false))
+    /** Спринт 31: плавное появление панелей и окон (вместе с системным масштабом анимаций; 0 в Android - мгновенно). */
+    var uiAnimations by mutableStateOf(p.getBoolean("ui_animations", true))
+    fun saveMotion() { p.edit().putBoolean("ui_animations", uiAnimations).apply() }
     // До появления настройки звук при скраббинге был включён всегда.
     var audioWhileScrubbing by mutableStateOf(p.getBoolean("audio_while_scrubbing", true))
+    /** Пакет 23: PSD Import Mode (код PsdInsertPlan.Mode: 0 слои как в файле, 1 одним слоем, 2 слои как кадры). */
+    var psdImportMode by mutableStateOf(p.getInt("psd_import_mode", 0))
+    fun savePsdImportMode() { p.edit().putInt("psd_import_mode", psdImportMode).apply() }
+    /** Пакет 22: Show Symbol Context (по умолчанию вкл.) и Symbol Context Opacity в процентах (5-100, по умолчанию 30). */
+    var symbolContext by mutableStateOf(p.getBoolean("symbol_context", true))
+    var symbolContextOpacity by mutableStateOf(p.getInt("symbol_context_opacity", com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT))
+    fun saveSymbolContext() { p.edit().putBoolean("symbol_context", symbolContext).putInt("symbol_context_opacity", symbolContextOpacity).apply() }
     fun savePlaybackAndDisplay() { p.edit().putBoolean("reset_frame_after_pause", resetFrameAfterPause).putBoolean("checker_thumbnails", checkerThumbnails).putBoolean("audio_while_scrubbing", audioWhileScrubbing).apply() }
     // Значения по умолчанию сохраняют прежнее поведение редактора.
     var autoKeyframes by mutableStateOf(p.getBoolean("auto_keyframes", false))
@@ -72,12 +100,53 @@ class AppSettings(context: Context) {
     var quickSelection by mutableStateOf(p.getBoolean("quick_selection", false))
     var selectLayersOnCanvas by mutableStateOf(p.getBoolean("select_layers_canvas", true))
     fun saveSprint68() { p.edit().putBoolean("shape_assist", shapeAssist).putBoolean("touch_detection", touchDetection).putBoolean("double_tap_multi_select", doubleTapMultiSelect).putBoolean("manual_selection_close", manualSelectionClose).putBoolean("show_motion_path", showMotionPath).putBoolean("refocus_button", refocusButton).putBoolean("follow_camera", followCamera).putBoolean("long_press_picker", longPressPicker).putBoolean("finger_drawing", fingerDrawing).putBoolean("cursor_enabled", cursorEnabled).putBoolean("cursor_hover_preview", cursorHoverPreview).putBoolean("select_layers_canvas", selectLayersOnCanvas).putBoolean("quick_selection", quickSelection).apply() }
+    /** Stylus sprint: кривая нажима пера (строка PressureCurve), стабилизация 1–10, ластик на обратном конце пера, индикатор нажима на холсте. */
+    var pressureCurve by mutableStateOf(com.vibetoon.domain.input.PressureCurve.decode(p.getString("pressure_curve", null)).encode())
+    var stabilization by mutableStateOf(p.getInt("stabilization", com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL).coerceIn(1, 10))
+    var stylusEraserTip by mutableStateOf(p.getBoolean("stylus_eraser_tip", true))
+    var pressureHud by mutableStateOf(p.getBoolean("pressure_hud", false))
+    /** Спринт 40: наклон пера меняет кисть (TiltMath.Mode: 0 - не влияет, 1 - толщина, 2 - штриховка, 3 - плоское перо) и сила 0..100. */
+    var stylusTilt by mutableStateOf(com.vibetoon.domain.input.TiltMath.Mode.of(p.getInt("stylus_tilt", 0)).id)
+    var stylusTiltStrength by mutableStateOf(p.getInt("stylus_tilt_strength", com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH).coerceIn(0, 100))
+    /** Спринт 44: кнопка на корпусе пера (StylusButtons.Action: 0 - не использовать, 1 - ластик, пока зажата, 2 - пипетка). */
+    var stylusButton by mutableStateOf(com.vibetoon.domain.input.StylusButtons.Action.of(p.getInt(com.vibetoon.domain.input.StylusButtons.PREF, com.vibetoon.domain.input.StylusButtons.DEFAULT.id)).id)
+    fun saveStylus() { p.edit().putString("pressure_curve", pressureCurve).putInt("stabilization", stabilization.coerceIn(1, 10)).putBoolean("stylus_eraser_tip", stylusEraserTip).putBoolean("pressure_hud", pressureHud).putInt("stylus_tilt", stylusTilt).putInt("stylus_tilt_strength", stylusTiltStrength.coerceIn(0, 100)).putInt(com.vibetoon.domain.input.StylusButtons.PREF, stylusButton).apply() }
+    fun resetStylus() {
+        pressureCurve = com.vibetoon.domain.input.PressureCurve.DEFAULT_ENCODED; stabilization = com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL
+        stylusEraserTip = true; pressureHud = false
+        stylusTilt = 0; stylusTiltStrength = com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH
+        stylusButton = com.vibetoon.domain.input.StylusButtons.DEFAULT.id; saveStylus()
+    }
+    // ключи пера всегда есть в настройках, чтобы «Manual Backup» сохранял их и с типами по умолчанию
+    init { if (!p.contains("pressure_curve") || !p.contains("stabilization")) saveStylus() }
+    init { if (!p.contains("stylus_tilt")) saveStylus() }   // спринт 40: ключи наклона тоже попадают в Manual Backup
+    init { if (!p.contains(com.vibetoon.domain.input.StylusButtons.PREF)) saveStylus() }   // спринт 44: и кнопка пера
     var stepFrames by mutableStateOf(p.getBoolean("step_frames", true))
     var quickDeleteDrawing by mutableStateOf(p.getBoolean("quick_delete_drawing", false))
     var selectionMaskVisible by mutableStateOf(p.getBoolean("selection_mask_visible", true))
     var boneColors by mutableStateOf(p.getBoolean("bone_colors", false))
     fun saveSprint67() { p.edit().putBoolean("auto_keyframes", autoKeyframes).putBoolean("step_frames", stepFrames).putBoolean("quick_delete_drawing", quickDeleteDrawing).putBoolean("selection_mask_visible", selectionMaskVisible).putBoolean("bone_colors", boneColors).apply() }
     /** Касание двумя пальцами - Undo, тремя - Redo (по умолчанию выключено, чтобы не мешать жестам камеры). */
+    /** Пакет 10: «Import Images as Symbols» - «+ Изображение» сразу создаёт символ с экземпляром. */
+    var importImagesAsSymbols by mutableStateOf(p.getBoolean("import_images_as_symbols", false))
+    /** Пакет 12: Resolution Limit - картинки при импорте уменьшаются до длинной стороны холста. */
+    var resolutionLimit by mutableStateOf(p.getBoolean("import_resolution_limit", false))
+    /** Пакет 16: замки слоёв PSD переносятся при импорте; текст PSD - картинкой (выкл. - редактируемый текст). */
+    var importLayerLocks by mutableStateOf(p.getBoolean("import_layer_locks", false))
+    var importTextAsPixels by mutableStateOf(p.getBoolean("import_text_as_pixels", true))
+    /** Пакет 17: «+ Изображение» вписывает картинку в рисунок выбранного слоя-картинки (на плейхеде). */
+    var importIntoDrawing by mutableStateOf(p.getBoolean("import_into_drawing", false))
+    fun saveImport() { p.edit().putBoolean("import_images_as_symbols", importImagesAsSymbols).putBoolean("import_resolution_limit", resolutionLimit)
+        .putBoolean("import_layer_locks", importLayerLocks).putBoolean("import_text_as_pixels", importTextAsPixels).putBoolean("import_into_drawing", importIntoDrawing).apply() }
+    /** Спринт 41: проект продлевается под длину добавленного аудио и видео (по умолчанию вкл.). */
+    var autoExtendMedia by mutableStateOf(p.getBoolean("auto_extend_media", true))
+    /** Спринт 41: импорт и экспорт видео продолжаются в фоне (служба с уведомлением; по умолчанию вкл.). */
+    var backgroundWork by mutableStateOf(p.getBoolean("background_work", true))
+    /** Спринт 41: «Добавить ключ» и автоключ кости ставят ключи всей цепочке (родители и дочерние кости). */
+    var boneChainKeys by mutableStateOf(p.getBoolean("bone_chain_keys", true))
+    fun saveSprint41() { p.edit().putBoolean("auto_extend_media", autoExtendMedia).putBoolean("background_work", backgroundWork).putBoolean("bone_chain_keys", boneChainKeys).apply() }
+    // ключи есть в Manual Backup с первого запуска (копия переносит только записанные настройки)
+    init { if (!p.contains("auto_extend_media") || !p.contains("background_work") || !p.contains("bone_chain_keys")) saveSprint41() }
     var tap2Undo by mutableStateOf(p.getBoolean("tap2", false))
     var tap3Redo by mutableStateOf(p.getBoolean("tap3", false))
     fun saveGestures() { p.edit().putBoolean("tap2", tap2Undo).putBoolean("tap3", tap3Redo).apply() }
@@ -91,13 +160,129 @@ class AppSettings(context: Context) {
     }
     fun resetHotkeys() { hotkeys.clear(); val e = p.edit(); for (a in com.vibetoon.domain.HotkeyAction.values()) e.remove("hk_" + a.name); e.apply() }
 
-    val effectiveLang: String get() = lang.ifEmpty { if (Locale.getDefault().language == "ru") "ru" else "en" }
+    /**
+     * Спринт 49: свои кривые плавности (UserCurves) - общие для всех проектов. Лежат в «vt_app», поэтому попадают в
+     * «Резервную копию вручную» и восстанавливаются «Импортом копии»; при обновлении APK не теряются.
+     */
+    var userCurves by mutableStateOf(com.vibetoon.domain.anim.UserCurves.decode(p.getString(com.vibetoon.domain.anim.UserCurves.PREF, null)))
+        private set
+    fun saveUserCurves(list: List<com.vibetoon.domain.anim.UserCurves.Saved>) {
+        userCurves = list
+        // commit: своя кривая записана сразу (не теряется, если приложение закроют сразу после сохранения)
+        p.edit().putString(com.vibetoon.domain.anim.UserCurves.PREF, com.vibetoon.domain.anim.UserCurves.encode(list)).commit()
+    }
+
+    val effectiveLang: String get() = com.vibetoon.domain.settings.AppLanguage.effective(lang, Locale.getDefault().language)
 
     fun save() {
         p.edit().putString("lang", lang).putString("theme", theme).putInt("accent", accent).putBoolean("onboarded", onboarded).putBoolean("left", leftHanded).apply()
     }
 
     fun reset() { lang = ""; theme = "system"; accent = 0; save() }
+
+    /** Пакет 10: «Reset» во вкладке «Отображение» - значения отображения по умолчанию. */
+    fun resetDisplay() {
+        leftHanded = false; showGrid = false; gridCells = com.vibetoon.domain.render.CanvasGrid.density(16)
+        checkerThumbnails = false; selectionMaskVisible = true; boneColors = false
+        symbolContext = true; symbolContextOpacity = com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT
+        uiAnimations = true
+        save(); saveGrid(); savePlaybackAndDisplay(); saveSprint67(); saveSymbolContext(); saveMotion()
+    }
+
+    /** Пакет 10: резервная копия всех настроек (JSON) для «Manual Backup». */
+    fun backupJson(): String = com.vibetoon.domain.settings.SettingsBackup.encode(p.all, colors = colorPrefs.all)
+
+    /** Пакет 10: «Import Backup» - значения записываются с типами текущих настроек и сразу применяются. */
+    fun importBackup(text: String): Boolean {
+        val values = com.vibetoon.domain.settings.SettingsBackup.decode(text) ?: return false
+        val cur = p.all
+        val e = p.edit()
+        for ((k, v) in values) {
+            when (cur[k]) {
+                is Float -> (v as? Number)?.let { e.putFloat(k, it.toFloat()) }
+                is Long -> (v as? Number)?.let { e.putLong(k, it.toLong()) }
+                is Int -> (v as? Number)?.let { e.putInt(k, it.toInt()) }
+                is Boolean -> (v as? Boolean)?.let { e.putBoolean(k, it) }
+                is String -> (v as? String)?.let { e.putString(k, it) }
+                else -> when (v) { is Boolean -> e.putBoolean(k, v); is Int -> e.putInt(k, v); is Float -> e.putFloat(k, v); is String -> e.putString(k, v) }
+            }
+        }
+        e.commit()
+        // спринт 39: последние цвета и режим окна цвета (в старых копиях раздела нет - ничего не меняется)
+        val colors = com.vibetoon.domain.settings.SettingsBackup.decodeColors(text)
+        if (colors.isNotEmpty()) {
+            val ce = colorPrefs.edit()
+            (colors["recent"] as? String)?.let { ce.putString("recent", it) }
+            (colors["mode"] as? Number)?.let { ce.putInt("mode", it.toInt()) }
+            ce.commit()
+        }
+        reload()
+        return true
+    }
+
+    /** Перечитать все значения из настроек (после импорта копии). */
+    private fun reload() {
+        lang = p.getString("lang", "") ?: ""
+        theme = p.getString("theme", "system") ?: "system"
+        accent = p.getInt("accent", 0).coerceIn(0, ACCENTS.size - 1)
+        onboarded = p.getBoolean("onboarded", false)
+        leftHanded = p.getBoolean("left", false)
+        showGrid = p.getBoolean("show_grid", false)
+        gridCells = com.vibetoon.domain.render.CanvasGrid.density(p.getInt("grid_cells", 16))
+        resetFrameAfterPause = p.getBoolean("reset_frame_after_pause", false)
+        compatibleVideoExport = p.getBoolean("compatible_video_export", false)
+        perfHud = p.getBoolean("perf_hud", false)
+        vectorWorkflow = p.getBoolean("vector_workflow", false)
+        autoPixelEdit = p.getBoolean("auto_pixel_edit", false)
+        onlyEraseSelectedPaths = p.getBoolean("only_erase_selected_paths", false)
+        temporaryPivots = p.getBoolean("temporary_pivots", false)
+        pivotEditing = p.getBoolean("pivot_editing", true)
+        rotateCanvas = p.getBoolean("rotate_canvas_2f", true)
+        checkerThumbnails = p.getBoolean("checker_thumbnails", false)
+        uiAnimations = p.getBoolean("ui_animations", true)
+        symbolContext = p.getBoolean("symbol_context", true)
+        psdImportMode = p.getInt("psd_import_mode", 0)
+        symbolContextOpacity = p.getInt("symbol_context_opacity", com.vibetoon.domain.render.SymbolContext.DEFAULT_OPACITY_PERCENT)
+        audioWhileScrubbing = p.getBoolean("audio_while_scrubbing", true)
+        autoKeyframes = p.getBoolean("auto_keyframes", false)
+        shapeAssist = p.getBoolean("shape_assist", false)
+        touchDetection = p.getBoolean("touch_detection", false)
+        doubleTapMultiSelect = p.getBoolean("double_tap_multi_select", false)
+        manualSelectionClose = p.getBoolean("manual_selection_close", false)
+        showMotionPath = p.getBoolean("show_motion_path", false)
+        refocusButton = p.getBoolean("refocus_button", false)
+        followCamera = p.getBoolean("follow_camera", false)
+        longPressPicker = p.getBoolean("long_press_picker", false)
+        fingerDrawing = p.getBoolean("finger_drawing", true)
+        pressureCurve = com.vibetoon.domain.input.PressureCurve.decode(p.getString("pressure_curve", null)).encode()
+        stabilization = p.getInt("stabilization", com.vibetoon.domain.input.StrokeStabilizer.DEFAULT_LEVEL).coerceIn(1, 10)
+        stylusEraserTip = p.getBoolean("stylus_eraser_tip", true)
+        pressureHud = p.getBoolean("pressure_hud", false)
+        stylusTilt = com.vibetoon.domain.input.TiltMath.Mode.of(p.getInt("stylus_tilt", 0)).id
+        stylusTiltStrength = p.getInt("stylus_tilt_strength", com.vibetoon.domain.input.TiltMath.DEFAULT_STRENGTH).coerceIn(0, 100)
+        stylusButton = com.vibetoon.domain.input.StylusButtons.Action.of(p.getInt(com.vibetoon.domain.input.StylusButtons.PREF, com.vibetoon.domain.input.StylusButtons.DEFAULT.id)).id
+        cursorEnabled = p.getBoolean("cursor_enabled", true)
+        cursorHoverPreview = p.getBoolean("cursor_hover_preview", false)
+        quickSelection = p.getBoolean("quick_selection", false)
+        selectLayersOnCanvas = p.getBoolean("select_layers_canvas", true)
+        stepFrames = p.getBoolean("step_frames", true)
+        quickDeleteDrawing = p.getBoolean("quick_delete_drawing", false)
+        selectionMaskVisible = p.getBoolean("selection_mask_visible", true)
+        boneColors = p.getBoolean("bone_colors", false)
+        importImagesAsSymbols = p.getBoolean("import_images_as_symbols", false)
+        resolutionLimit = p.getBoolean("import_resolution_limit", false)
+        autoExtendMedia = p.getBoolean("auto_extend_media", true)
+        backgroundWork = p.getBoolean("background_work", true)
+        boneChainKeys = p.getBoolean("bone_chain_keys", true)
+        importLayerLocks = p.getBoolean("import_layer_locks", false)
+        importTextAsPixels = p.getBoolean("import_text_as_pixels", true)
+        importIntoDrawing = p.getBoolean("import_into_drawing", false)
+        tap2Undo = p.getBoolean("tap2", false)
+        tap3Redo = p.getBoolean("tap3", false)
+        hotkeys.clear()
+        for (a in com.vibetoon.domain.HotkeyAction.values()) p.getInt("hk_" + a.name, -1).takeIf { it >= 0 }?.let { hotkeys[a] = it }
+        userCurves = com.vibetoon.domain.anim.UserCurves.decode(p.getString(com.vibetoon.domain.anim.UserCurves.PREF, null))   // спринт 49
+    }
 }
 
 val LocalAppSettings = compositionLocalOf<AppSettings?> { null }

@@ -23,6 +23,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,7 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -90,7 +91,9 @@ private const val TAB_COLOR = "Цветокоррекция"
 private const val TAB_EFFECTS = "Эффекты"
 private const val TAB_TIME = "Время"
 private const val TAB_VOLUME = "Громкость"
-private val STUB_TABS = listOf("Обрезка", TAB_EFFECTS, "Рисование")
+private const val TAB_CROP = "Обрезка"
+// спринт 45: заглушка рисования убрана (рисование - инструменты кисти), «Обрезка» - настоящая вкладка
+private val STUB_TABS = listOf(TAB_CROP, TAB_EFFECTS)
 
 private val EFFECTS = listOf(
     "Gaussian Blur", "Adjustments", "Pixelate", "Chroma Key", "Sharpness", "Halftone", "Turbulent Displace", "Bones",
@@ -123,11 +126,11 @@ private fun EffectsTab(vm: MainViewModel) {
             TurbSlider("Line Boil, кадров (0 - выкл)", t.boil.toFloat(), 0f..24f, t.boil.toString()) { vm.setTurbParam(3, it) }
         }
         if (groupFxInfo.isNotEmpty()) Text(groupFxInfo, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-        if (groupFxInfo.isNotEmpty()) androidx.compose.material3.OutlinedButton(
+        if (groupFxInfo.isNotEmpty() && !groupFxBlocked) androidx.compose.material3.OutlinedButton(
             onClick = vm::keyGroupEffects, enabled = !groupFxBlocked && layerFx.isNotEmpty(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
         ) { Text("Ключи эффектов на вложенных слоях", fontSize = 12.sp) }
-        if (groupFxInfo.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (groupFxInfo.isNotEmpty() && !groupFxBlocked) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             androidx.compose.material3.OutlinedButton(onClick = { vm.moveGroupEffectKeys(-1) }, enabled = !groupFxBlocked) { Text("Ключ −1", fontSize = 12.sp) }
             androidx.compose.material3.OutlinedButton(onClick = { vm.moveGroupEffectKeys(1) }, enabled = !groupFxBlocked) { Text("Ключ +1", fontSize = 12.sp) }
             androidx.compose.material3.OutlinedButton(onClick = vm::deleteGroupEffectKeys, enabled = !groupFxBlocked) { Text("Удалить ключи", fontSize = 12.sp) }
@@ -139,7 +142,7 @@ private fun EffectsTab(vm: MainViewModel) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
             ) { Text("+ Добавить эффект", fontSize = 12.sp, maxLines = 1, softWrap = false) }
         }
-        if (layerFx.isEmpty() && !groupFxBlocked) Text(
+        if (layerFx.isEmpty()) Text(
             "Эффектов нет. Нажмите «+ Добавить эффект»: Хромакей, Размытие, Цветокоррекция, Пикселизация, Свечение, Тень и другие. Цепочка применяется сверху вниз.",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
         )
@@ -150,15 +153,16 @@ private fun EffectsTab(vm: MainViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${idx + 1}. ${com.vibetoon.ui.i18n.L(def.title)}", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.weight(1f))
                         androidx.compose.material3.IconButton(onClick = { vm.moveEffect(idx, -1) }, enabled = idx > 0, modifier = Modifier.size(32.dp)) {
-                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowUp, "Выше")
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowUp, com.vibetoon.ui.i18n.L("Выше"))
                         }
                         androidx.compose.material3.IconButton(onClick = { vm.moveEffect(idx, 1) }, enabled = idx < layerFx.lastIndex, modifier = Modifier.size(32.dp)) {
-                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowDown, "Ниже")
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.KeyboardArrowDown, com.vibetoon.ui.i18n.L("Ниже"))
                         }
                         androidx.compose.material3.IconButton(onClick = { vm.removeEffect(idx) }, modifier = Modifier.size(32.dp)) {
-                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, "Удалить эффект")
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, com.vibetoon.ui.i18n.L("Удалить эффект"))
                         }
                     }
+                    if (def.hint.isNotEmpty()) Text(com.vibetoon.ui.i18n.L(def.hint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                     if (def.colorAt >= 0) {
                         val at = def.colorAt
                         val col = Color(e.p[at], e.p[at + 1], e.p[at + 2])
@@ -190,7 +194,20 @@ private fun EffectsTab(vm: MainViewModel) {
                     }
                     def.params.forEachIndexed { pi, p ->
                         val isColor = def.colorAt >= 0 && pi in def.colorAt..def.colorAt + 2
-                        if (!isColor) TurbSlider(p.name, e.p[pi], p.min..p.max, "%.2f".format(e.p[pi])) { vm.setEffectParam(idx, pi, it) }
+                        if (isColor) Unit
+                        else if (p.options.isNotEmpty()) {
+                            // дискретный выбор (волна Swing): чипы вместо ползунка
+                            val cur = kotlin.math.round(e.p[pi]).toInt()
+                            Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(p.name, fontSize = 12.sp)
+                                p.options.forEachIndexed { oi, label ->
+                                    androidx.compose.material3.FilterChip(selected = cur == oi, onClick = { vm.setEffectParam(idx, pi, oi.toFloat()) },
+                                        label = { Text(label, fontSize = 12.sp) })
+                                }
+                            }
+                        } else TurbSlider(p.name, e.p[pi], p.min..p.max, if (p.whole) "%.0f".format(e.p[pi]) else if (p.name.contains("°")) "%.1f°".format(e.p[pi]) else "%.2f".format(e.p[pi])) {
+                            vm.setEffectParam(idx, pi, if (p.whole) kotlin.math.round(it) else it)   // Спринт 35: целые параметры (октавы, зерно, цикл)
+                        }
                     }
                 }
             }
@@ -212,8 +229,7 @@ private val TEXT_COLORS = listOf(
 
 /**
  * Панель "Инспектор" под таймлайном. Вкладки: "Трансформация" (X, Y, Scale X/Y с цепочкой, Rotation,
- * Opacity), "Текст" (появляется, когда выделен текстовый слой) и заглушки "Обрезка", "Эффекты",
- * "Рисование" под будущие этапы. Числа в полях и положение слоя на холсте синхронизированы в обе стороны.
+ * Opacity), "Текст" (появляется, когда выделен текстовый слой), "Обрезка" (спринт 45) и "Эффекты". Числа в полях и положение слоя на холсте синхронизированы в обе стороны.
  */
 @Composable
 fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
@@ -229,7 +245,7 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
     var tabName by rememberSaveable { mutableStateOf(TAB_TRANSFORM) }
 
     val isSymbol = selectedId?.let { vm.isSymbolInstance(it) } == true
-    val isAudio = selectedId?.let { vm.isAudioTrack(it) } == true
+    val isAudio = selectedId?.let { vm.hasSound(it) } == true   // пакет 11: и у видео - его звук
     val tabs = buildList {
         add(TAB_TRANSFORM)
         if (isSymbol) add(TAB_TIME)
@@ -245,7 +261,9 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
     }
     // выбрали экземпляр символа - открывается «Время»; ушли с него - обратно к трансформации
     LaunchedEffect(isSymbol) { tabName = if (isSymbol) TAB_TIME else if (tabName == TAB_TIME) TAB_TRANSFORM else tabName }
-    val selectedIndex = tabs.indexOf(tabName).coerceAtLeast(0)
+    // спринт 54: индекс только в границах текущего списка (вкладки «Время»/«Громкость»/«Текст» появляются и пропадают)
+    val lastIndex = remember { intArrayOf(0) }
+    val selectedIndex = com.vibetoon.domain.ui.TabIndex.indexOf(tabs, tabName, lastIndex[0]).also { lastIndex[0] = it }
 
     val pickFont = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importFont(uri)
@@ -253,7 +271,7 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
 
     Column(modifier.fillMaxWidth()) {
         // ScrollableTabRow: названия вкладок целиком, даже на узком телефоне
-        ScrollableTabRow(selectedTabIndex = selectedIndex, edgePadding = 0.dp) {
+        com.vibetoon.ui.shell.SafeScrollableTabRow(selectedTabIndex = selectedIndex, tabCount = tabs.size, edgePadding = 0.dp) {
             tabs.forEachIndexed { i, title ->
                 Tab(
                     selected = selectedIndex == i,
@@ -263,7 +281,7 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
             }
         }
         Box(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-            when (tabs[selectedIndex]) {
+            when (tabs.getOrNull(selectedIndex)) {
                 TAB_TRANSFORM -> TransformTab(state, playing, uniform, vm)
                 TAB_TIME -> selectedId?.let { com.vibetoon.ui.SymbolTimeTab(vm, it) }
                 TAB_VOLUME -> selectedId?.let { VolumeTab(vm, it, vm.frame.collectAsStateWithLifecycle().value) }
@@ -271,14 +289,63 @@ fun InspectorPanel(vm: MainViewModel, modifier: Modifier = Modifier) {
                 TAB_CLIP -> ClipTab(vm, selectedId, clips, animation.settings.durationFrames, !playing)
                 TAB_COLOR -> ColorTab(vm, selectedId, colors)
                 TAB_EFFECTS -> EffectsTab(vm)
-                else -> Text(
-                    "«${tabs[selectedIndex]}» появится на одном из следующих этапов",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(8.dp)
-                )
+                TAB_CROP -> CropTab(vm, selectedId, !playing)
+                else -> Unit
             }
         }
+    }
+}
+
+/**
+ * Спринт 45: вкладка «Обрезка». Рамка видимой части картинки слоя (PNG, рисунок, текст, видео, слой PSD): отступы краёв
+ * ползунками, «По содержимому» - рамка по непрозрачным пикселям. Изменения сразу видны на холсте (черновик), в проект
+ * попадают кнопкой «Применить» (одна запись Undo). Файл не меняется: «Сбросить» + «Применить» возвращают картинку целиком.
+ */
+@Composable
+private fun CropTab(vm: MainViewModel, selectedId: Int?, enabled: Boolean) {
+    val draft by vm.cropDraft.collectAsStateWithLifecycle()
+    val lprops by vm.layerPropsState.collectAsStateWithLifecycle()
+    val muted = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    if (selectedId == null || !vm.croppable(selectedId)) {
+        Text("Выберите слой-картинку: обрезка работает с PNG, рисунками, текстом, видео и слоями PSD",
+            fontSize = 13.sp, color = muted, modifier = Modifier.padding(8.dp))
+        return
+    }
+    val id = selectedId
+    // ушли со вкладки или со слоя - неприменённая рамка отбрасывается
+    androidx.compose.runtime.DisposableEffect(id) { onDispose { vm.cancelCropDraft() } }
+    val applied = remember(lprops, id) { vm.cropOf(id) }
+    val pending = draft?.takeIf { it.first == id }
+    val c = (if (pending != null) pending.second else applied) ?: com.vibetoon.domain.model.LayerCrop.FULL
+    val src = remember(lprops, id) { vm.cropSourceSize(id) }
+    val (pw, ph) = c.pixelSize(src.first.coerceAtLeast(1), src.second.coerceAtLeast(1))
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
+        Text(if (src.first > 0) "Видимая часть: $pw×$ph px из ${src.first}×${src.second}" else "Видимая часть картинки",
+            fontSize = 12.sp, maxLines = 1)
+        // отступы краёв в долях картинки: слева/сверху - сам край, справа/снизу - 1 - край
+        val edges = listOf("Слева" to c.l, "Сверху" to c.t, "Справа" to 1f - c.r, "Снизу" to 1f - c.b)
+        edges.forEachIndexed { edge, (title, inset) ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(title, fontSize = 12.sp, maxLines = 1, modifier = Modifier.width(60.dp))
+                Slider(
+                    value = inset.coerceIn(0f, 0.99f), valueRange = 0f..0.99f, enabled = enabled,
+                    onValueChange = { v -> vm.setCropEdge(id, edge, if (edge < 2) v else 1f - v) },
+                    modifier = Modifier.weight(1f)
+                )
+                Text("${(inset * 100).toInt()} %", fontSize = 11.sp, color = muted, maxLines = 1)
+            }
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { vm.cropToContent(id) }, enabled = enabled) { Text("По содержимому", fontSize = 12.sp, maxLines = 1) }
+            OutlinedButton(onClick = { vm.resetCropDraft(id) }, enabled = enabled && (applied != null || pending?.second != null)) { Text("Сбросить", fontSize = 12.sp, maxLines = 1) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = vm::cancelCropDraft, enabled = pending != null) { Text("Отмена", fontSize = 12.sp, maxLines = 1) }
+            androidx.compose.material3.Button(onClick = { vm.applyCrop(id) }, enabled = enabled && pending != null) { Text("Применить", fontSize = 12.sp, maxLines = 1) }
+        }
+        Text(if (pending != null) "Рамка на холсте - предпросмотр: нажмите «Применить», чтобы сохранить обрезку"
+            else "Файл картинки не меняется: края скрываются на холсте и в экспорте и едут вместе с поворотом, сеткой и анимацией",
+            fontSize = 10.sp, color = muted)
     }
 }
 
@@ -303,10 +370,16 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
         else parent?.let { vm.layerName(it) }.orEmpty()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            if (s.count > 1) "Выбрано: ${s.count} (правка применяется ко всем)" else (if (s.isGroup) "Группа: " else "Слой: ") + s.name,
+            if (s.count > 1) "Выбрано: ${s.count} (правка применяется ко всем)" else if (s.isGroup) "Группа: ${s.name}" else "Слой: ${s.name}",
             fontSize = 12.sp, maxLines = 1,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
         )
+        // спринт 44: кривая только выбранного ключа (тап по ромбу или плейхед на ключе)
+        if (s.count == 1) com.vibetoon.ui.timeline.KeyCurveSection(vm, s.id)
+        // спринт 46: ключи времени символа - те же пресеты и «График…»
+        if (s.count == 1) com.vibetoon.ui.timeline.TimeKeysCurveSection(vm, s.id)
+        // спринт 45: несколько ромбов (в том числе на разных слоях) - одна кривая всему набору
+        com.vibetoon.ui.timeline.SelectedKeysCurveSection(vm)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             NumberField("X", s.x, "px", on, { vm.setProperty(Prop.X, it) }, Modifier.weight(1f), perPx = 1f)
             NumberField("Y", s.y, "px", on, { vm.setProperty(Prop.Y, it) }, Modifier.weight(1f), perPx = 1f)
@@ -322,7 +395,7 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
             FilterChip(
                 selected = uniform,
                 onClick = vm::toggleUniformScale,
-                label = { Icon(if (uniform) Icons.Default.Link else Icons.Default.LinkOff, "Пропорции", Modifier.size(18.dp)) }
+                label = { Icon(if (uniform) Icons.Default.Link else Icons.Default.LinkOff, com.vibetoon.ui.i18n.L("Пропорции"), Modifier.size(18.dp)) }
             )
             NumberField("Scale Y", s.scaleYPct, "%", on, { vm.setProperty(Prop.SCALE_Y, it) }, Modifier.weight(1f), perPx = 0.5f, min = 1f)
             NumberField("Opacity", s.opacityPct, "%", on, { vm.setProperty(Prop.OPACITY, it) }, Modifier.weight(1f), perPx = 0.3f, min = 0f, max = 100f)
@@ -331,6 +404,19 @@ private fun TransformTab(s: InspectorState?, playing: Boolean, uniform: Boolean,
         if (s.count == 1) {
             val depth = vm.layerPropsOf(s.id).depth
             NumberField("Глубина (параллакс)", depth, "", on, { vm.setDepth(s.id, it) }, Modifier.fillMaxWidth(), perPx = 0.02f, min = -0.5f, max = 5f)
+        }
+        // Опорная точка (пивот): перетаскивается на холсте, здесь - координаты и быстрые действия
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            NumberField("Пивот X", s.pivotX, "px", on, { vm.setPivot(s.id, it, s.pivotY) }, Modifier.weight(1f), perPx = 1f)
+            NumberField("Пивот Y", s.pivotY, "px", on, { vm.setPivot(s.id, s.pivotX, it) }, Modifier.weight(1f), perPx = 1f)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = vm::pivotToCenter, enabled = on, modifier = Modifier.weight(1f).height(36.dp)) {
+                Text("Пивот в центр", fontSize = 12.sp, maxLines = 1)
+            }
+            OutlinedButton(onClick = vm::pivotReset, enabled = on, modifier = Modifier.weight(1f).height(36.dp)) {
+                Text("Пивот по умолчанию", fontSize = 12.sp, maxLines = 1)
+            }
         }
         Text(
             "Совет: зажмите число и потяните вправо или влево",
@@ -393,15 +479,7 @@ private fun ClipTab(vm: MainViewModel, id: Int?, clips: Map<Int, Clip>, duration
             NumberField("Начало (кадр)", clip.start.toFloat(), "fr", enabled, { vm.setClip(id, it.toInt(), clip.end) }, Modifier.weight(1f), perPx = 0.2f, min = 0f, max = (duration - 1).toFloat())
             NumberField("Конец (кадр)", clip.end.toFloat(), "fr", enabled, { vm.setClip(id, clip.start, it.toInt()) }, Modifier.weight(1f), perPx = 0.2f, min = 1f, max = duration.toFloat())
         }
-        Text("Скорость", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (sp in Clip.SPEEDS) {
-                FilterChip(
-                    selected = clip.speed == sp, onClick = { vm.setClipSpeed(sp) }, enabled = enabled,
-                    label = { Text(String.format(Locale.US, "%.2gx", sp)) }
-                )
-            }
-        }
+        ClipSpeedControl(vm, id, vm.clipSpeedOf(id), enabled)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = clip.reverse, onClick = vm::toggleClipReverse, enabled = enabled, label = { Text("⏪ Реверс") })
             FilterChip(selected = clip.freeze, onClick = vm::toggleClipFreeze, enabled = enabled, label = { com.vibetoon.ui.IconText(Icons.Default.AcUnit, "Стоп-кадр", 14.sp) })
@@ -409,10 +487,45 @@ private fun ClipTab(vm: MainViewModel, id: Int?, clips: Map<Int, Clip>, duration
         }
         Text(
             "Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. " +
-                "Скорость и реверс уже работают для звука; для видео они заработают вместе с воспроизведением видео. " +
-                "Скорость и Цикл меняют и время ключей анимации слоя.",
+                "Скорость 0.10x–3.0x: у звука и видео играет источник, у анимированного слоя пересчитывается время всех его ключей, рисунков и ключей времени символа (плашка растягивается, проект при нужде продлевается). " +
+                "Реверс работает для звука и видео; Цикл повторяет клип до конца проекта или сцены.",
             fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
         )
+    }
+}
+
+/**
+ * Спринт 54: скорость 0.10x–3.0x как в Alight Motion: плавный ползунок (логарифмическая шкала, значение видно во время
+ * перетаскивания, применяется при отпускании - одна запись Undo), точные − / + по 0.05x и быстрые пресеты.
+ */
+@Composable
+private fun ClipSpeedControl(vm: MainViewModel, id: Int, applied: Float, enabled: Boolean) {
+    var pos by remember(id, applied) { mutableStateOf(com.vibetoon.domain.anim.ClipSpeed.toSlider(applied)) }
+    val shown = com.vibetoon.domain.anim.ClipSpeed.fromSlider(pos)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Скорость", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.weight(1f))
+            Text(com.vibetoon.domain.anim.ClipSpeed.label(shown), fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { vm.setClipSpeed(com.vibetoon.domain.anim.ClipSpeed.nudge(applied, up = false)) }, enabled = enabled && applied > com.vibetoon.domain.anim.ClipSpeed.MIN,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp), modifier = Modifier.size(36.dp)) { Text("−", fontSize = 18.sp) }
+            androidx.compose.material3.Slider(
+                value = pos, onValueChange = { pos = it }, enabled = enabled,
+                onValueChangeFinished = { vm.setClipSpeed(com.vibetoon.domain.anim.ClipSpeed.fromSlider(pos)) },
+                modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
+            )
+            OutlinedButton(onClick = { vm.setClipSpeed(com.vibetoon.domain.anim.ClipSpeed.nudge(applied, up = true)) }, enabled = enabled && applied < com.vibetoon.domain.anim.ClipSpeed.MAX,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp), modifier = Modifier.size(36.dp)) { Text("+", fontSize = 18.sp) }
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (sp in com.vibetoon.domain.anim.ClipSpeed.PRESETS) {
+                FilterChip(
+                    selected = kotlin.math.abs(applied - sp) < 0.005f, onClick = { vm.setClipSpeed(sp) }, enabled = enabled,
+                    label = { Text(com.vibetoon.domain.anim.ClipSpeed.label(sp), fontSize = 12.sp) }
+                )
+            }
+        }
     }
 }
 
@@ -451,13 +564,19 @@ private fun ColorSlider(title: String, value: Float, onValue: (Float) -> Unit) {
 private fun VolumeTab(vm: MainViewModel, id: Int, frame: Int) {
     val cur = vm.volumeAt(id)
     val keys = vm.volumeKeyCount(id)
+    var muted by remember(id) { mutableStateOf(vm.isMuted(id)) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Без звука", fontSize = 14.sp, modifier = Modifier.weight(1f))
+            androidx.compose.material3.Switch(checked = muted, onCheckedChange = { muted = it; vm.setMuted(id, it) })
+        }
+        if (vm.videoWithoutSound(id)) Text("В этом видео нет звуковой дорожки", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
         NumberField("Громкость", cur * 100f, "%", true, { vm.setVolumeKey(id, it / 100f) }, Modifier.fillMaxWidth(), perPx = 0.4f, min = 0f, max = 100f)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { vm.setVolumeKey(id, cur) }) { Text(if (vm.hasVolumeKeyHere(id)) "Ключ стоит" else "Поставить ключ", fontSize = 13.sp, maxLines = 1) }
             OutlinedButton(onClick = { vm.removeVolumeKey(id) }, enabled = vm.hasVolumeKeyHere(id)) { Text("Убрать ключ", fontSize = 13.sp, maxLines = 1) }
         }
-        Text("Ключей: $keys. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки и в WAV. В MP4 звука пока нет.", fontSize = 11.sp,
+        Text("Ключей: $keys. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки, в WAV и в звуке MP4 (у видео - его звуковая дорожка).", fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
     }
 }
@@ -474,6 +593,12 @@ private fun TextTab(t: TextState, fonts: List<FontEntry>, vm: MainViewModel, onI
             label = { Text("Текст") },
             minLines = 2,
             maxLines = 4,
+            // спринт 39: курсор, выделение и переносы в поле идут по направлению текста (RTL - справа налево)
+            textStyle = androidx.compose.material3.LocalTextStyle.current.copy(textDirection = when (t.dir) {
+                com.vibetoon.domain.project.TextBidi.RTL -> androidx.compose.ui.text.style.TextDirection.Rtl
+                com.vibetoon.domain.project.TextBidi.LTR -> androidx.compose.ui.text.style.TextDirection.Ltr
+                else -> androidx.compose.ui.text.style.TextDirection.Content
+            }),
             modifier = Modifier.fillMaxWidth()
         )
         Row(
@@ -488,7 +613,7 @@ private fun TextTab(t: TextState, fonts: List<FontEntry>, vm: MainViewModel, onI
                 DropdownMenu(expanded = fontMenu, onDismissRequest = { fontMenu = false }) {
                     for (f in fonts) {
                         DropdownMenuItem(
-                            text = { Text(f.title + if (f.imported) "  (свой)" else "") },
+                            text = { Text(if (f.imported) "${f.title}  (свой)" else f.title) },
                             leadingIcon = { if (f.key == t.font) Icon(Icons.Default.Check, null) },
                             onClick = { vm.setFont(f.key); fontMenu = false }
                         )
@@ -502,6 +627,14 @@ private fun TextTab(t: TextState, fonts: List<FontEntry>, vm: MainViewModel, onI
             for ((a, title) in listOf(0 to "Слева", 1 to "По центру", 2 to "Справа"))
                 FilterChip(selected = t.align == a, onClick = { vm.setTextAlign(a) }, label = { Text(title, fontSize = 12.sp, maxLines = 1, softWrap = false) })
         }
+        // спринт 39: направление письма (иврит, арабский - справа налево); работает и с текстовыми эффектами
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            Text("Направление", fontSize = 12.sp)
+            for ((d, title) in listOf(com.vibetoon.domain.project.TextBidi.AUTO to "Авто", com.vibetoon.domain.project.TextBidi.LTR to "Слева направо", com.vibetoon.domain.project.TextBidi.RTL to "Справа налево"))
+                FilterChip(selected = t.dir == d, onClick = { vm.setTextDirection(d) }, label = { Text(title, fontSize = 12.sp, maxLines = 1, softWrap = false) })
+        }
+        if (t.dir == com.vibetoon.domain.project.TextBidi.AUTO && t.rtl) Text("Текст пишется справа налево (определено по первой букве)", fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             NumberField("Межстрочный", t.lineSpacing * 100f, "%", true, { vm.setLineSpacing(it / 100f) }, Modifier.weight(1f), perPx = 0.5f, min = 50f, max = 300f)
             NumberField("Межбуквенный", t.letterSpacing * 100f, "%", true, { vm.setLetterSpacing(it / 100f) }, Modifier.weight(1f), perPx = 0.3f, min = -20f, max = 100f)
@@ -681,7 +814,7 @@ private fun NumberField(
 @Composable
 private fun TextFxSection(t: TextState, vm: MainViewModel) {
     val fx = t.fx
-    fun sec(v: Float) = "%.1f с".format(v)
+    fun sec(v: Float) = "${"%.1f".format(v)} с"
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Эффекты текста", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         FilterChip(selected = fx.progress, onClick = { vm.setTextFx { it.copy(progress = !it.progress) } }, label = { Text("Печать (по буквам)") })
@@ -703,8 +836,8 @@ private fun TextFxSection(t: TextState, vm: MainViewModel) {
         if (fx.pathBend != 0f) ScrubSlider("Изгиб дуги", fx.pathBend, -100f..100f, "${fx.pathBend.toInt()}") { v -> vm.setTextFx { it.copy(pathBend = if (v == 0f) 1f else v) } }
         FilterChip(selected = fx.weight, onClick = { vm.setTextFx { it.copy(weight = !it.weight) } }, label = { Text("Толщина шрифта") })
         if (fx.weight) {
-            ScrubSlider("Из", fx.weightFrom.toFloat(), 300f..800f, "${fx.weightFrom}") { v -> vm.setTextFx { it.copy(weightFrom = v.toInt()) } }
-            ScrubSlider("В", fx.weightTo.toFloat(), 300f..800f, "${fx.weightTo}") { v -> vm.setTextFx { it.copy(weightTo = v.toInt()) } }
+            ScrubSlider("От", fx.weightFrom.toFloat(), 300f..800f, "${fx.weightFrom}") { v -> vm.setTextFx { it.copy(weightFrom = v.toInt()) } }
+            ScrubSlider("До", fx.weightTo.toFloat(), 300f..800f, "${fx.weightTo}") { v -> vm.setTextFx { it.copy(weightTo = v.toInt()) } }
             ScrubSlider("Время", fx.weightDur, 0.2f..10f, sec(fx.weightDur)) { v -> vm.setTextFx { it.copy(weightDur = v) } }
         }
         FilterChip(selected = fx.random, onClick = { vm.setTextFx { it.copy(random = !it.random) } }, label = { Text("Рандомизатор символов") })

@@ -28,7 +28,7 @@ object RenderNative {
     /** Mesh: слои, [вершин, треугольников] на слой, по 4 float (u, v, dx, dy) на вершину, индексы треугольников. */
     external fun setMeshes(renderer: Long, ids: IntArray, counts: IntArray, verts: FloatArray, tris: IntArray)
     /** Камера: экран = C + (p - C)*zoom + pan (пиксели вида). */
-    external fun setCamera(renderer: Long, zoom: Float, panX: Float, panY: Float)
+    external fun setCamera(renderer: Long, zoom: Float, panX: Float, panY: Float, rotDeg: Float, flipX: Boolean, flipY: Boolean)
     /** Цвет фона холста в формате ARGB (альфа 0 = прозрачный, показывается серым). */
     external fun setBackground(renderer: Long, argb: Int)
     /**
@@ -39,6 +39,29 @@ object RenderNative {
     /** Получить до начала декодирования, применить только если версия слоя/проекта не изменилась. */
     external fun textureUploadTicket(layerId: Int): Long
     external fun uploadBitmapIfCurrent(layerId: Int, bitmap: android.graphics.Bitmap, ticket: Long): Boolean
+    /** Теневая текстура участника символа: видна только ближайшему снимку с [CAPTURE_SHADOW]; текстура слоя в редакторе не меняется. */
+    external fun uploadShadowBitmap(layerId: Int, bitmap: android.graphics.Bitmap): Boolean
+    /** Байт в очереди загрузки текстур (ограничение памяти при массовом восстановлении). */
+    external fun pendingUploadBytes(): Long
+    /** Идёт жест камеры: результаты эффектов слоёв переиспользуются с преобразованием вида (после жеста - точный пересчёт). */
+    external fun setInteractive(renderer: Long, on: Boolean)
+    /** Формы символов (см. SceneData.aliasIds); вызывается вместе со сценой из GL-потока. */
+    external fun setTextureAliases(renderer: Long, ids: IntArray, primary: IntArray, fallback: IntArray, rects: FloatArray)
+    /** Спринт 45: обрезка слоёв - [rects] по 4 числа (l, t, r, b в долях текстуры) на каждый id из [ids]. */
+    external fun setCrops(renderer: Long, ids: IntArray, rects: FloatArray)
+    /** Удалить текстуры форм символов (только GL-поток). */
+    external fun dropTextures(renderer: Long, ids: IntArray)
+    /** Пакет 29: бюджет GPU-памяти под текстуры в байтах (см. TextureBudget). Только GL-поток. */
+    external fun setTextureBudget(renderer: Long, bytes: Long)
+    /** [занято, бюджет] в байтах. Только GL-поток. */
+    external fun textureMemory(renderer: Long): LongArray?
+    /** Текстуры, которые рендерер может вытеснить при нехватке памяти (их восстановит ViewModel). Только GL-поток. */
+    external fun setEvictable(renderer: Long, ids: IntArray?)
+    /** События памяти текстур с прошлого вызова: пары [вид, id] (см. TextureEvents) или null. Только GL-поток. */
+    external fun takeTextureEvents(renderer: Long): IntArray?
+    /** Флаги [captureFrame]: теневые текстуры символа / не снимать, пока у видимых слоёв нет текстур (пустой результат). */
+    const val CAPTURE_SHADOW = 1
+    const val CAPTURE_STRICT = 2
     /** Сбрасывает очередь ещё не загруженных текстур (при открытии другого проекта). */
     external fun clearPendingUploads()
     /** Удаляет все GPU-текстуры слоёв (смена проекта). Только из GL-потока. */
@@ -82,9 +105,13 @@ object RenderNative {
     external fun beginExport(renderer: Long, width: Int, height: Int)
     external fun endExport(renderer: Long)
     /** Снимок кадра w x h в память: RGBA premultiplied, строка 0 - низ кадра (как у glReadPixels); null - ошибка. Только из GL-потока. */
-    external fun captureFrame(renderer: Long, width: Int, height: Int, transparent: Boolean): ByteArray?
+    external fun captureFrame(renderer: Long, width: Int, height: Int, transparent: Boolean, flags: Int): ByteArray?
+    /** Пакет 29: снимок прямо в текстуру [id] без копии в память: 1 - готово, 0 - не всё загружено (CAPTURE_STRICT), -1 - ошибка, -2 - бюджет. */
+    external fun captureToTexture(renderer: Long, id: Int, width: Int, height: Int, transparent: Boolean, flags: Int): Int
     /** Цвет пикселя экрана ARGB (пипетка); вызывать из GL-потока сразу после drawFrame. */
     external fun readPixel(renderer: Long, x: Int, y: Int): Int
     /** true = нужен ещё кадр (позже: идёт загрузка текстур). */
     external fun drawFrame(renderer: Long): Boolean
+    /** Метрики последнего кадра: [нарисовано слоёв, отсечено, эффектов в рамке слоя, проходов эффектов]. */
+    external fun frameStats(renderer: Long): IntArray?
 }

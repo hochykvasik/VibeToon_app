@@ -91,7 +91,8 @@ object BrushMath {
 class DabStroker(private val params: BrushParams) {
     companion object { const val STRIDE = 5 }
 
-    private class Pt(val x: Float, val y: Float, val p: Float)
+    /** [s] - множитель радиуса, [f] - множитель flow, [a] - поворот штампа (NaN - по настройке кисти): спринт 40, наклон пера. */
+    private class Pt(val x: Float, val y: Float, val p: Float, val s: Float = 1f, val f: Float = 1f, val a: Float = Float.NaN)
 
     private val ctrl = ArrayList<Pt>()
     private var residual = 0f
@@ -101,6 +102,22 @@ class DabStroker(private val params: BrushParams) {
     private var traveled = 0f
     private var dirAngle = 0f
     private var rng = (System.nanoTime() and 0x7FFFFFFF).toInt() or 1
+    private var tiltSize = 1f
+    private var tiltFlow = 1f
+    private var tiltAngle = Float.NaN
+
+    /**
+     * Спринт 40: наклон пера для следующих точек ([add]/[begin]): множитель радиуса, множитель flow и поворот штампа
+     * (NaN - поворот по настройке кисти). Между точками значения интерполируются, как нажим. По умолчанию 1, 1, NaN -
+     * штрих идентичен прежнему.
+     */
+    fun setTilt(sizeK: Float, flowK: Float, angle: Float) {
+        tiltSize = if (sizeK.isFinite() && sizeK > 0f) sizeK.coerceIn(0.1f, 4f) else 1f
+        tiltFlow = if (flowK.isFinite()) flowK.coerceIn(0f, 1f) else 1f
+        tiltAngle = angle
+    }
+
+    private fun pt(x: Float, y: Float, p: Float) = Pt(x, y, p, tiltSize, tiltFlow, tiltAngle)
 
     private fun rotationNow(): Float = when (params.rotation) {
         DabRotation.NONE -> 0f
@@ -111,20 +128,20 @@ class DabStroker(private val params: BrushParams) {
         }
     }
 
-    private fun emit(x: Float, y: Float, pressure: Float) {
+    private fun emit(x: Float, y: Float, pressure: Float, sk: Float = 1f, fk: Float = 1f, angle: Float = Float.NaN) {
         if ((n + 1) * STRIDE > out.size) out = out.copyOf(out.size * 2)
-        var r = BrushMath.radiusAt(params, pressure)
+        var r = radiusOf(pressure, sk)
         if (params.taperPx > 0f) r = max(0.5f, r * (0.2f + 0.8f * min(1f, traveled / params.taperPx)))
         var cx = x; var cy = y
         if (params.pixelSnap) {
-            val d = Math.round(2f * BrushMath.radiusAt(params, pressure)).coerceAtLeast(1)
+            val d = Math.round(2f * radiusOf(pressure, sk)).coerceAtLeast(1)
             r = d / 2f
             if (d % 2 == 1) { cx = kotlin.math.floor(x) + 0.5f; cy = kotlin.math.floor(y) + 0.5f } else { cx = Math.round(x).toFloat(); cy = Math.round(y).toFloat() }
         }
         val o = n * STRIDE
         out[o] = cx; out[o + 1] = cy; out[o + 2] = r
-        out[o + 3] = params.flow.coerceIn(0f, 1f)
-        out[o + 4] = rotationNow()
+        out[o + 3] = (params.flow * fk).coerceIn(0f, 1f)
+        out[o + 4] = if (angle.isFinite()) angle else rotationNow()
         n++
     }
 
@@ -134,16 +151,23 @@ class DabStroker(private val params: BrushParams) {
         return r
     }
 
-    private fun stepAt(pressure: Float): Float {
+    /** Радиус штампа с множителем наклона (не больше половины максимального размера кисти). */
+    private fun radiusOf(pressure: Float, sk: Float): Float {
         val r = BrushMath.radiusAt(params, pressure)
+        return if (sk == 1f) r else max(0.5f, min(BrushMath.MAX_SIZE / 2f, r * sk))
+    }
+
+    private fun stepAt(pressure: Float, sk: Float = 1f): Float {
+        val r = radiusOf(pressure, sk)
         return max(2f * r * BrushMath.effectiveSpacing(params.spacing, r), 1f)
     }
 
     /** Первая точка штриха: сразу даёт штамп (тап рисует точку). */
     fun begin(x: Float, y: Float, pressure: Float): FloatArray {
         ctrl.clear(); residual = 0f; n = 0; started = true; traveled = 0f; dirAngle = 0f
-        ctrl.add(Pt(x, y, pressure))
-        emit(x, y, pressure)
+        val first = pt(x, y, pressure)
+        ctrl.add(first)
+        emit(x, y, pressure, first.s, first.f, first.a)
         return take()
     }
 
@@ -152,11 +176,11 @@ class DabStroker(private val params: BrushParams) {
         if (!started) return begin(x, y, pressure)
         val last = ctrl.last()
         if (hypot(x - last.x, y - last.y) < 0.25f) return FloatArray(0)   // дребезг сенсора
-        ctrl.add(Pt(x, y, pressure))
+        ctrl.add(pt(x, y, pressure))
         val k = ctrl.size
         if (k >= 3) {
             val p1 = ctrl[k - 3]; val p2 = ctrl[k - 2]; val p3 = ctrl[k - 1]
-            val p0 = if (k >= 4) ctrl[k - 4] else Pt(2 * p1.x - p2.x, 2 * p1.y - p2.y, p1.p)
+            val p0 = if (k >= 4) ctrl[k - 4] else Pt(2 * p1.x - p2.x, 2 * p1.y - p2.y, p1.p, p1.s, p1.f, p1.a)
             segment(p0, p1, p2, p3)
             if (ctrl.size > 4) ctrl.removeAt(0)
         }
@@ -168,8 +192,8 @@ class DabStroker(private val params: BrushParams) {
         val k = ctrl.size
         if (started && k >= 2) {
             val p1 = ctrl[k - 2]; val p2 = ctrl[k - 1]
-            val p0 = if (k >= 3) ctrl[k - 3] else Pt(2 * p1.x - p2.x, 2 * p1.y - p2.y, p1.p)
-            val p3 = Pt(2 * p2.x - p1.x, 2 * p2.y - p1.y, p2.p)
+            val p0 = if (k >= 3) ctrl[k - 3] else Pt(2 * p1.x - p2.x, 2 * p1.y - p2.y, p1.p, p1.s, p1.f, p1.a)
+            val p3 = Pt(2 * p2.x - p1.x, 2 * p2.y - p1.y, p2.p, p2.s, p2.f, p2.a)
             segment(p0, p1, p2, p3)
         }
         started = false
@@ -181,30 +205,34 @@ class DabStroker(private val params: BrushParams) {
         val chord = hypot(p2.x - p1.x, p2.y - p1.y)
         if (chord < 1e-4f) return
         dirAngle = kotlin.math.atan2(p2.y - p1.y, p2.x - p1.x)
-        val minStep = stepAt(min(p1.p, p2.p))
+        val minStep = min(stepAt(p1.p, p1.s), stepAt(p2.p, p2.s))
         val subs = ceil(chord / max(minStep * 0.5f, 0.5f)).toInt().coerceIn(1, 512)
         fun tt(t: Float, a: Pt, b: Pt) = t + max(hypot(b.x - a.x, b.y - a.y), 1e-4f).pow(0.5f)
         val t0 = 0f; val t1 = tt(t0, p0, p1); val t2 = tt(t1, p1, p2); val t3 = tt(t2, p2, p3)
-        var px = p1.x; var py = p1.y; var pp = p1.p
+        var px = p1.x; var py = p1.y; var pp = p1.p; var ps = p1.s; var pf = p1.f
+        val angle = if (p2.a.isFinite()) p2.a else p1.a
         for (i in 1..subs) {
             val u = i.toFloat() / subs
             val t = t1 + u * (t2 - t1)
             val cx = PathMath.cr(p0.x, p1.x, p2.x, p3.x, t0, t1, t2, t3, t)
             val cy = PathMath.cr(p0.y, p1.y, p2.y, p3.y, t0, t1, t2, t3, t)
             val cp = p1.p + (p2.p - p1.p) * u
+            val cs = p1.s + (p2.s - p1.s) * u
+            val cf = p1.f + (p2.f - p1.f) * u
             var seg = hypot(cx - px, cy - py)
-            while (seg > 1e-6f && residual + seg >= stepAt(pp)) {
-                val need = stepAt(pp) - residual           // сколько пройти до следующего штампа
+            while (seg > 1e-6f && residual + seg >= stepAt(pp, ps)) {
+                val need = stepAt(pp, ps) - residual           // сколько пройти до следующего штампа
                 val f = need / seg
                 px += (cx - px) * f; py += (cy - py) * f
                 pp += (cp - pp) * f
-                traveled += stepAt(pp)
-                emit(px, py, pp)
+                ps += (cs - ps) * f; pf += (cf - pf) * f
+                traveled += stepAt(pp, ps)
+                emit(px, py, pp, ps, pf, angle)
                 seg -= need
                 residual = 0f
             }
             residual += seg
-            px = cx; py = cy; pp = cp
+            px = cx; py = cy; pp = cp; ps = cs; pf = cf
         }
     }
 }

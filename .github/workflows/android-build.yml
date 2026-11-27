@@ -3,7 +3,14 @@ name: Android debug build
 on:
   push:
     branches:
-      - arena/c18f871e-vibetoon
+      - arena/e0fe5b26-vibetoon-app
+      - main
+    # спринт 58: тег vX.Y.Z[-суффикс] на коммите main - сборка, тесты и GitHub Release с APK
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -26,8 +33,41 @@ jobs:
         run: |
           g++ -std=c++17 -pthread -I app/src/main/cpp app/src/test/cpp/UploadQueueTest.cpp app/src/main/cpp/render/UploadQueue.cpp -o /tmp/vibetoon-upload-queue-test
           /tmp/vibetoon-upload-queue-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/LayerBoundsTest.cpp -o /tmp/vibetoon-layer-bounds-test
+          /tmp/vibetoon-layer-bounds-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/FxCachePolicyTest.cpp -o /tmp/vibetoon-fx-cache-test
+          /tmp/vibetoon-fx-cache-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/TexAliasTest.cpp -o /tmp/vibetoon-tex-alias-test
+          /tmp/vibetoon-tex-alias-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/FrameTargetPolicyTest.cpp -o /tmp/vibetoon-frame-target-test
+          /tmp/vibetoon-frame-target-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/MaskPolicyTest.cpp -o /tmp/vibetoon-mask-policy-test
+          /tmp/vibetoon-mask-policy-test
+          g++ -std=c++17 -I app/src/main/cpp app/src/test/cpp/GroupCachePolicyTest.cpp -o /tmp/vibetoon-group-cache-test
+          /tmp/vibetoon-group-cache-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/TextureBudgetPolicyTest.cpp -o /tmp/vibetoon-texture-budget-test
+          /tmp/vibetoon-texture-budget-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/UploadBufferPolicyTest.cpp -o /tmp/vibetoon-upload-buffer-test
+          /tmp/vibetoon-upload-buffer-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/MeshPackPolicyTest.cpp -o /tmp/vibetoon-mesh-pack-test
+          /tmp/vibetoon-mesh-pack-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/BlendBindPolicyTest.cpp -o /tmp/vibetoon-blend-bind-test
+          /tmp/vibetoon-blend-bind-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/CropPolicyTest.cpp -o /tmp/vibetoon-crop-policy-test
+          /tmp/vibetoon-crop-policy-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/GroupFxPolicyTest.cpp -o /tmp/vibetoon-group-fx-test
+          /tmp/vibetoon-group-fx-test
+          g++ -std=c++17 -Wall -Wextra -I app/src/main/cpp app/src/test/cpp/RenderPerfPolicyTest.cpp -o /tmp/vibetoon-render-perf-test
+          /tmp/vibetoon-render-perf-test
       - name: Test beta publishing guards
         run: bash tools/ci/tests/publish-beta-test.sh
+      - name: Test release publishing guards
+        run: bash tools/ci/tests/publish-release-test.sh
+      - name: Check RU/EN dictionary
+        run: |
+          python3 tools/i18n/check_pairs.py
+          python3 tools/i18n/gen.py
+          git diff --exit-code -- app/src/main/res/values/strings.xml app/src/main/res/values-en/strings.xml app/src/main/java/com/vibetoon/ui/i18n/I18nTable.kt
       - name: Run unit tests
         run: |
           set -o pipefail
@@ -45,6 +85,8 @@ jobs:
           APK=app/build/outputs/apk/debug/app-debug.apk
           TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           "$TOOLS/aapt" dump badging "$APK" | grep -F "package: name='com.vibetoon'"
+          # спринт 59: тестовая сборка не debuggable (иначе ART не оптимизирует код и прокрутка дёргается)
+          if "$TOOLS/aapt" dump badging "$APK" | grep -q 'application-debuggable'; then echo 'APK must not be debuggable'; exit 1; fi
           "$TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/vibetoon-signature.txt
           grep -Fi 'Signer #1 certificate SHA-256 digest: 02e8a1d469bb32a6cd30e43659e927068a5daa752bd7055b16a81a36f3b88003' /tmp/vibetoon-signature.txt
           if grep -q 'Signer #2 certificate' /tmp/vibetoon-signature.txt; then echo 'Unexpected second signer'; exit 1; fi
@@ -68,3 +110,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash tools/ci/publish-beta.sh vibetoon-debug.apk
+      - name: Publish GitHub Release (tag v*)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/ci/publish-release.sh vibetoon-debug.apk docs/RELEASE_NOTES_RU.md

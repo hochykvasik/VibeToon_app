@@ -1,10 +1,14 @@
 // JNI для рендерера. Все вызовы (кроме create) приходят из GL-потока.
 // Указатель на Renderer хранится в Kotlin как Long.
+#include "render/MeshPackPolicy.h"
 #include <android/bitmap.h>
 #include <jni.h>
 #include <cstring>
+#include <new>
+#include <vector>
 
 #include "render/Renderer.h"
+#include "render/UploadBufferPolicy.h"
 #include "render/UploadQueue.h"
 
 namespace {
@@ -117,25 +121,22 @@ Java_com_vibetoon_nativebridge_RenderNative_setMeshes(JNIEnv* env, jobject, jlon
     if (env->GetArrayLength(counts) < n * 2) return;
     jint* i = env->GetIntArrayElements(ids, nullptr);
     jint* c = env->GetIntArrayElements(counts, nullptr);
-    long long vNeed = 0, tNeed = 0;
-    for (jsize k = 0; k < n; ++k) { vNeed += 4LL * c[k * 2]; tNeed += 3LL * c[k * 2 + 1]; }
-    if (env->GetArrayLength(verts) >= vNeed && env->GetArrayLength(tris) >= tNeed) {
-        jfloat* v = env->GetFloatArrayElements(verts, nullptr);
-        jint* t = env->GetIntArrayElements(tris, nullptr);
-        R(h)->setMeshes(i, c, n, v, t);
-        env->ReleaseIntArrayElements(tris, t, JNI_ABORT);
-        env->ReleaseFloatArrayElements(verts, v, JNI_ABORT);
-    } else {
-        R(h)->setMeshes(i, c, 0, nullptr, nullptr);   // рассогласованные массивы: сетки сбрасываются, слои рисуются обычно
-    }
+    // спринт 43: сетки проверяются по одной - рассогласование в конце пакета не сбрасывает предыдущие сетки
+    const int fit = vt::meshpack::fittingPrefix(c, n, env->GetArrayLength(verts), env->GetArrayLength(tris));
+    jfloat* v = env->GetFloatArrayElements(verts, nullptr);
+    jint* t = env->GetIntArrayElements(tris, nullptr);
+    R(h)->setMeshes(i, c, fit, v, t);
+    env->ReleaseIntArrayElements(tris, t, JNI_ABORT);
+    env->ReleaseFloatArrayElements(verts, v, JNI_ABORT);
     env->ReleaseIntArrayElements(counts, c, JNI_ABORT);
     env->ReleaseIntArrayElements(ids, i, JNI_ABORT);
 }
 
 JNIEXPORT void JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_setCamera(JNIEnv*, jobject, jlong h, jfloat zoom,
-                                                       jfloat panX, jfloat panY) {
-    R(h)->setCamera(zoom, panX, panY);
+                                                       jfloat panX, jfloat panY, jfloat rotDeg,
+                                                       jboolean flipX, jboolean flipY) {
+    R(h)->setCamera(zoom, panX, panY, rotDeg, flipX == JNI_TRUE, flipY == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL
@@ -148,7 +149,7 @@ Java_com_vibetoon_nativebridge_RenderNative_setBackground(JNIEnv*, jobject, jlon
 // Передаёт Bitmap (RGBA_8888, premultiplied alpha, как выдаёт BitmapFactory) в очередь загрузки
 // текстур: пиксели копируются построчно с учётом stride, дальше путь тот же, что у слоёв PSD.
 // Возвращает false, если формат не RGBA_8888 или Bitmap нельзя заблокировать.
-static jboolean uploadBitmap(JNIEnv* env, jint layerId, jobject bitmap, bool checked, uint64_t ticket) {
+static jboolean uploadBitmap(JNIEnv* env, jint layerId, jobject bitmap, bool checked, uint64_t ticket, bool shadow = false) {
     AndroidBitmapInfo info;
     if (!bitmap || AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS) return JNI_FALSE;
     if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || info.width == 0 || info.height == 0) return JNI_FALSE;
@@ -159,14 +160,27 @@ static jboolean uploadBitmap(JNIEnv* env, jint layerId, jobject bitmap, bool che
     up.layerId = layerId;
     up.width = static_cast<int>(info.width);
     up.height = static_cast<int>(info.height);
-    up.rgba.resize(static_cast<size_t>(info.width) * info.height * 4);
+    const size_t total = static_cast<size_t>(info.width) * info.height * 4;
+    // Спринт 31: буфер из пула (без нового выделения на каждый кадр видео/рисунка); без stride-выравнивания - один memcpy.
+    try { up.rgba = vt::uploadQueue::acquireBuffer(total); }
+    catch (const std::bad_alloc&) { AndroidBitmap_unlockPixels(env, bitmap); return JNI_FALSE; }
     const auto* src = static_cast<const uint8_t*>(pixels);
-    for (uint32_t y = 0; y < info.height; ++y) {
-        std::memcpy(&up.rgba[static_cast<size_t>(y) * info.width * 4], src + static_cast<size_t>(y) * info.stride,
-                    static_cast<size_t>(info.width) * 4);
+    if (vt::uploadbuf::singleCopy(info.stride, info.width)) {
+        std::memcpy(up.rgba.data(), src, total);
+    } else {
+        for (uint32_t y = 0; y < info.height; ++y) {
+            std::memcpy(&up.rgba[static_cast<size_t>(y) * info.width * 4], src + static_cast<size_t>(y) * info.stride,
+                        static_cast<size_t>(info.width) * 4);
+        }
     }
     AndroidBitmap_unlockPixels(env, bitmap);
-    if (checked) return vt::uploadQueue::pushIfCurrent(std::move(up), ticket) ? JNI_TRUE : JNI_FALSE;
+    if (shadow) { vt::uploadQueue::pushShadow(std::move(up)); return JNI_TRUE; }
+    if (checked) {
+        // pushIfCurrent при отказе буфер не забирает: устаревший кадр возвращает память в пул
+        if (vt::uploadQueue::pushIfCurrent(std::move(up), ticket)) return JNI_TRUE;
+        vt::uploadQueue::recycleBuffer(std::move(up.rgba));
+        return JNI_FALSE;
+    }
     vt::uploadQueue::push(std::move(up));
     return JNI_TRUE;
 }
@@ -182,6 +196,101 @@ Java_com_vibetoon_nativebridge_RenderNative_textureUploadTicket(JNIEnv*, jobject
 JNIEXPORT jboolean JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_uploadBitmapIfCurrent(JNIEnv* env, jobject, jint layerId, jobject bitmap, jlong ticket) {
     return uploadBitmap(env, layerId, bitmap, true, static_cast<uint64_t>(ticket));
+}
+
+// Теневая текстура участника символа: используется только ближайшим снимком символа (kCaptureShadow),
+// текстура слоя в редакторе не меняется.
+JNIEXPORT jboolean JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_uploadShadowBitmap(JNIEnv* env, jobject, jint layerId, jobject bitmap) {
+    return uploadBitmap(env, layerId, bitmap, false, 0, true);
+}
+
+// Сколько байт ждёт загрузки в GPU (ограничение памяти при массовом восстановлении текстур).
+JNIEXPORT jlong JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_pendingUploadBytes(JNIEnv*, jobject) {
+    return static_cast<jlong>(vt::uploadQueue::bytes());
+}
+
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setInteractive(JNIEnv*, jobject, jlong h, jboolean on) {
+    R(h)->setInteractive(on == JNI_TRUE);
+}
+
+// Формы символов для экземпляров: применяется вместе со сценой (тот же кадр GL).
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setTextureAliases(JNIEnv* env, jobject, jlong h, jintArray ids, jintArray prim, jintArray fb, jfloatArray rects) {
+    if (!ids || !prim || !fb || !rects) { R(h)->setTextureAliases(nullptr, nullptr, nullptr, nullptr, 0); return; }
+    const jsize n = env->GetArrayLength(ids);
+    if (env->GetArrayLength(prim) < n || env->GetArrayLength(fb) < n || env->GetArrayLength(rects) < n * 8) return;
+    std::vector<jint> a(n), b(n), c(n);
+    std::vector<jfloat> r(static_cast<size_t>(n) * 8);
+    if (n > 0) {
+        env->GetIntArrayRegion(ids, 0, n, a.data());
+        env->GetIntArrayRegion(prim, 0, n, b.data());
+        env->GetIntArrayRegion(fb, 0, n, c.data());
+        env->GetFloatArrayRegion(rects, 0, n * 8, r.data());
+    }
+    R(h)->setTextureAliases(reinterpret_cast<const int*>(a.data()), reinterpret_cast<const int*>(b.data()),
+                            reinterpret_cast<const int*>(c.data()), r.data(), static_cast<int>(n));
+}
+
+// Спринт 45: обрезка слоёв (вкладка «Обрезка»): id и по 4 числа l, t, r, b в долях текстуры.
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setCrops(JNIEnv* env, jobject, jlong h, jintArray ids, jfloatArray rects) {
+    if (!ids || !rects) { R(h)->setCrops(nullptr, nullptr, 0); return; }
+    const jsize n = env->GetArrayLength(ids);
+    if (env->GetArrayLength(rects) < n * 4) return;
+    std::vector<jint> a(n);
+    std::vector<jfloat> r(static_cast<size_t>(n) * 4);
+    if (n > 0) {
+        env->GetIntArrayRegion(ids, 0, n, a.data());
+        env->GetFloatArrayRegion(rects, 0, n * 4, r.data());
+    }
+    R(h)->setCrops(reinterpret_cast<const int*>(a.data()), r.data(), static_cast<int>(n));
+}
+
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_dropTextures(JNIEnv* env, jobject, jlong h, jintArray ids) {
+    if (!ids) return;
+    const jsize n = env->GetArrayLength(ids);
+    std::vector<jint> a(n);
+    if (n > 0) env->GetIntArrayRegion(ids, 0, n, a.data());
+    R(h)->dropTextures(reinterpret_cast<const int*>(a.data()), static_cast<int>(n));
+}
+
+// Пакет 29: бюджет GPU-памяти под текстуры (байты), считается в Kotlin по памяти устройства.
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setTextureBudget(JNIEnv*, jobject, jlong h, jlong bytes) {
+    R(h)->setTextureBudget(static_cast<int64_t>(bytes));
+}
+
+// [занято, бюджет] в байтах.
+JNIEXPORT jlongArray JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_textureMemory(JNIEnv* env, jobject, jlong h) {
+    const jlong v[2] = {static_cast<jlong>(R(h)->textureBytesUsed()), static_cast<jlong>(R(h)->textureBudget())};
+    jlongArray out = env->NewLongArray(2);
+    if (out) env->SetLongArrayRegion(out, 0, 2, v);
+    return out;
+}
+
+// Текстуры, которые можно вытеснить при нехватке памяти (Kotlin их восстановит). null - ни одной.
+JNIEXPORT void JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_setEvictable(JNIEnv* env, jobject, jlong h, jintArray ids) {
+    const jsize n = ids ? env->GetArrayLength(ids) : 0;
+    std::vector<jint> a(n);
+    if (n > 0) env->GetIntArrayRegion(ids, 0, n, a.data());
+    R(h)->setEvictable(reinterpret_cast<const int*>(a.data()), static_cast<int>(n));
+}
+
+// События памяти текстур [вид, id, ...] с прошлого вызова или null (их нет - без выделения памяти).
+JNIEXPORT jintArray JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_takeTextureEvents(JNIEnv* env, jobject, jlong h) {
+    std::vector<int> ev;
+    R(h)->takeTextureEvents(ev);
+    if (ev.empty()) return nullptr;
+    jintArray out = env->NewIntArray(static_cast<jsize>(ev.size()));
+    if (out) env->SetIntArrayRegion(out, 0, static_cast<jsize>(ev.size()), reinterpret_cast<const jint*>(ev.data()));
+    return out;
 }
 
 // Отбрасывает ещё не загруженные в GPU текстуры предыдущего проекта
@@ -388,13 +497,20 @@ Java_com_vibetoon_nativebridge_RenderNative_endExport(JNIEnv*, jobject, jlong h)
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_vibetoon_nativebridge_RenderNative_captureFrame(JNIEnv* env, jobject, jlong h, jint w, jint hh, jboolean transparent) {
+Java_com_vibetoon_nativebridge_RenderNative_captureFrame(JNIEnv* env, jobject, jlong h, jint w, jint hh, jboolean transparent, jint flags) {
     std::vector<uint8_t> px;
-    if (!R(h)->captureFrame(w, hh, transparent == JNI_TRUE, px)) return nullptr;
+    if (!R(h)->captureFrame(w, hh, transparent == JNI_TRUE, px, flags)) return nullptr;
     jbyteArray arr = env->NewByteArray(static_cast<jsize>(px.size()));
     if (!arr) return nullptr;
     env->SetByteArrayRegion(arr, 0, static_cast<jsize>(px.size()), reinterpret_cast<const jbyte*>(px.data()));
     return arr;
+}
+
+// Пакет 29: снимок прямо в текстуру [id] (формы символов для экспорта): 1 - готово, 0 - текстуры участников ещё
+// грузятся (kCaptureStrict), -1 - ошибка, -2 - не хватает бюджета памяти текстур.
+JNIEXPORT jint JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_captureToTexture(JNIEnv*, jobject, jlong h, jint id, jint w, jint hh, jboolean transparent, jint flags) {
+    return R(h)->captureToTexture(id, w, hh, transparent == JNI_TRUE, flags);
 }
 
 JNIEXPORT jint JNICALL
@@ -405,6 +521,17 @@ Java_com_vibetoon_nativebridge_RenderNative_readPixel(JNIEnv*, jobject, jlong h,
 JNIEXPORT jboolean JNICALL
 Java_com_vibetoon_nativebridge_RenderNative_drawFrame(JNIEnv*, jobject, jlong h) {
     return R(h)->drawFrame() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Метрики последнего кадра: [нарисовано, отсечено, эффектов в рамке, проходов эффектов, эффектов из кэша,
+// без текстуры, групп из кэша поддерева (пакет 27)]
+JNIEXPORT jintArray JNICALL
+Java_com_vibetoon_nativebridge_RenderNative_frameStats(JNIEnv* env, jobject, jlong h) {
+    const vt::FrameStats& s = R(h)->lastStats();
+    const jint v[7] = {s.drawn, s.culled, s.scissoredFx, s.fxPasses, s.fxCached, s.missing, s.groupCached};
+    jintArray out = env->NewIntArray(7);
+    if (out) env->SetIntArrayRegion(out, 0, 7, v);
+    return out;
 }
 
 }  // extern "C"

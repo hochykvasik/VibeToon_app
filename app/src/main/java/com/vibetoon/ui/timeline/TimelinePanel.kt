@@ -50,7 +50,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.DropdownMenu
@@ -80,13 +80,17 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
+import com.vibetoon.ui.dragEdgeAutoScroll
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -111,6 +115,7 @@ import kotlin.math.roundToInt
 
 private val ROW_H = 28.dp
 private val RULER_H = 26.dp
+private val MARKER_H = 26.dp
 private val NAME_W = 156.dp
 private const val DEFAULT_FRAME_DP = 10f   // ширина одного кадра на линейке (меняется щипком)
 private const val MIN_FRAME_DP = 1.5f
@@ -141,17 +146,67 @@ fun TimelinePanel(
     val selection by vm.selection.collectAsStateWithLifecycle()
     val clips by vm.clips.collectAsStateWithLifecycle()
     val cellMap by vm.cellMap.collectAsStateWithLifecycle()
+    val cellSpans by vm.cellSpans.collectAsStateWithLifecycle()
     val symMarkers by vm.symMarkers.collectAsStateWithLifecycle()
     val waves by vm.waveforms.collectAsStateWithLifecycle()
+    // пакет 11: плёнка кадров и волна звука на полосах видео-клипов
+    val stripVer by vm.filmstripVersion.collectAsStateWithLifecycle()
+    val videoIds = remember(rows) { vm.videoIds() }
     val timeKeyMap by vm.timeKeys.collectAsStateWithLifecycle()
     val multi by vm.multiSelect.collectAsStateWithLifecycle()
     val keySel by vm.keySelection.collectAsStateWithLifecycle()
+    val bones by vm.bones.collectAsStateWithLifecycle()
+    val boneMode by vm.boneMode.collectAsStateWithLifecycle()
+    // строки костей (пакет 7): в режиме «Кости» - все кости, иначе только кости с ключами; ключи - ромбы ◆
+    val boneRows = remember(bones, animation, boneMode) {
+        val byId = bones.associateBy { it.id }
+        com.vibetoon.domain.anim.BoneKeys.rows(bones.map { it.id }, animation.tracks, boneMode).mapNotNull { byId[it] }
+    }
+    val timeEaseDialog by vm.timeEaseDialog.collectAsStateWithLifecycle()
+    if (timeEaseDialog) AlertDialog(
+        onDismissRequest = vm::closeTimeEaseDialog,
+        title = { Text("Общая кривая: ключи времени символа") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - форма плавно растворяется в форму следующего ключа по кривой (чужие формы не появляются).", fontSize = 12.sp)
+                for (e in listOf(com.vibetoon.domain.project.TimeEase.HOLD, com.vibetoon.domain.project.TimeEase.LINEAR, com.vibetoon.domain.project.TimeEase.SMOOTH,
+                        com.vibetoon.domain.project.TimeEase.EASE_IN, com.vibetoon.domain.project.TimeEase.EASE_OUT))
+                    TextButton(onClick = { vm.applyTimeEaseToSelection(e) }) { Text(vm.timeEaseName(e)) }
+                // спринт 46: своя кривая ключей времени - тот же редактор f(x), что у обычных ключей
+                TextButton(onClick = { vm.openTimeKeysCurveEditor() }) { Text("График…") }
+            }
+        },
+        confirmButton = { TextButton(vm::closeTimeEaseDialog) { Text("Отмена") } }
+    )
+    val markerSel by vm.markerSelection.collectAsStateWithLifecycle()
+    val hasMarkerClip by vm.hasMarkerClip.collectAsStateWithLifecycle()
+    val editingSym by vm.editingSymbol.collectAsStateWithLifecycle()
+    val instMarkers by vm.instanceMarkers.collectAsStateWithLifecycle()
+    // короткие подписи форм считаются один раз на изменение маркеров, а не в каждом кадре отрисовки строки
+    val instShort = remember(instMarkers) { instMarkers.mapValues { (_, ms) -> com.vibetoon.domain.project.SymbolForms.compactLabels(ms.map { it.name }) } }
     val haptic = LocalHapticFeedback.current
     val keyScope = rememberCoroutineScope()
     var keyDragDelta by remember { mutableIntStateOf(0) }
     // Порядок строк = порядок слоёв; выделение его не меняет (иначе ломается «Лесенка»)
-    val shownRows = rows
     var showSettings by remember { mutableStateOf(false) }
+    // сцены (пакет 9)
+    val scenes by vm.scenes.collectAsStateWithLifecycle()
+    val scenePlayOnly by vm.scenePlayOnly.collectAsStateWithLifecycle()
+    var showScenes by remember { mutableStateOf(false) }
+    // текущая сцена меняется только на границах сцен: панель не перекомпонуется на каждом кадре Play
+    val sceneNow by remember(scenes) { derivedStateOf { scenes.firstOrNull { frameS.value in it } } }
+    // пакет 10: открытая сцена (внутри символа - его собственные кадры, сцены не действуют)
+    val activeSceneId by vm.activeScene.collectAsStateWithLifecycle()
+    val activeSc = if (editingSym == null) scenes.firstOrNull { it.id == activeSceneId } else null
+    var sceneMenu by remember { mutableStateOf(false) }
+    var showHierarchy by remember { mutableStateOf(false) }
+    var showKeyList by remember { mutableStateOf(false) }   // пакет 11: список ключей выбранного слоя/кости
+    // пакет 10: «Режим ключей» - только слои с ключами (и их группы)
+    val keyMode by vm.keyMode.collectAsStateWithLifecycle()
+    val keyedIds = remember(rows, animation, timeKeyMap, keyMode) {
+        if (!keyMode) emptySet() else com.vibetoon.domain.anim.KeyMode.keyed(rows.map { it.layer.id }, animation.tracks, timeKeyMap)
+    }
+    val shownRows = remember(rows, keyedIds, keyMode) { if (keyMode) com.vibetoon.domain.anim.KeyMode.rows(rows, keyedIds) else rows }
     val duration = animation.settings.durationFrames
     val fps = animation.settings.fps
 
@@ -170,14 +225,18 @@ fun TimelinePanel(
     }
     val markers by vm.markers.collectAsStateWithLifecycle()
     // Масштаб таймлайна: dp на кадр; меняется щипком двумя пальцами
-    var frameDp by remember { mutableFloatStateOf(DEFAULT_FRAME_DP) }
+    var frameDpRaw by remember { mutableFloatStateOf(DEFAULT_FRAME_DP) }
     val hScroll = rememberScrollState()
     val density = LocalDensity.current
+    // Спринт 41: длинные проекты (до 72 000 кадров) - масштаб ограничен так, чтобы ширина полосы помещалась в Compose
+    val zoomDuration by rememberUpdatedState(duration)
+    val frameDp = com.vibetoon.domain.anim.TimelineZoom.clamp(frameDpRaw, duration, density.density, MIN_FRAME_DP, MAX_FRAME_DP)
     val frameWPx = with(density) { frameDp.dp.toPx() }
     val frameW = frameDp.dp
     val frameNow = frameS
     var anchorX by remember { mutableFloatStateOf(0f) }
-    val hasKey by remember { derivedStateOf { selected?.let { animation.hasKey(it, frameS.value) } ?: false } }
+    // спринт 43: ключ слоя - любая его дорожка (трансформация, сетка, пины, Warp, перспектива, эффекты)
+    val hasKey by remember { derivedStateOf { selected?.let { com.vibetoon.domain.anim.LayerKeyFlow.hasKey(animation, it, frameS.value) } ?: false } }
     val easing by remember { derivedStateOf { selected?.let { animation.easingAt(it, frameS.value) } } }
     val markerHere by remember { derivedStateOf { frameS.value in markers } }
     var easingMenu by remember { mutableStateOf(false) }
@@ -199,10 +258,11 @@ fun TimelinePanel(
                         if (down.size >= 2) {
                             val d = (down[0].position - down[1].position).getDistance()
                             if (last > 0f && d > 0f) {
-                                val next = (frameDp * d / last).coerceIn(MIN_FRAME_DP, MAX_FRAME_DP)
-                                if (next != frameDp) {
-                                    anchorX = frameNow.value * frameDp.dp.toPx() - hScroll.value
-                                    frameDp = next
+                                val cur = com.vibetoon.domain.anim.TimelineZoom.clamp(frameDpRaw, zoomDuration, density.density, MIN_FRAME_DP, MAX_FRAME_DP)
+                                val next = com.vibetoon.domain.anim.TimelineZoom.clamp(cur * d / last, zoomDuration, density.density, MIN_FRAME_DP, MAX_FRAME_DP)
+                                if (next != cur) {
+                                    anchorX = frameNow.value * cur.dp.toPx() - hScroll.value
+                                    frameDpRaw = next
                                 }
                             }
                             last = d
@@ -215,30 +275,19 @@ fun TimelinePanel(
         val stub = LocalStub.current
         val fx by vm.fx.collectAsStateWithLifecycle()
         val onion by vm.onion.collectAsStateWithLifecycle()
-        val onionDepth by vm.onionDepth.collectAsStateWithLifecycle()
-        val onionAlpha by vm.onionAlpha.collectAsStateWithLifecycle()
         var onionDialog by remember { mutableStateOf(false) }
         val loop by vm.loop.collectAsStateWithLifecycle()
         val magnet by vm.magnet.collectAsStateWithLifecycle()
         var selectMode by remember { mutableStateOf(false) }
         val phone = com.vibetoon.ui.shell.LocalPhone.current
         var toolsOpen by remember { mutableStateOf(false) }
-        if (onionDialog) androidx.compose.material3.AlertDialog(
-            onDismissRequest = { onionDialog = false },
-            title = { Text("Калька (Onion Skin)") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Глубина: сколько рисунков назад и вперёд", fontSize = 12.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (d in 1..3) androidx.compose.material3.FilterChip(selected = onionDepth == d, onClick = { vm.setOnionDepth(d) }, label = { Text("$d") })
-                    }
-                    Text("Прозрачность: ${(onionAlpha * 100).toInt()}%", fontSize = 12.sp)
-                    androidx.compose.material3.Slider(value = onionAlpha, onValueChange = { vm.setOnionAlpha(it) }, valueRange = 0.1f..0.9f)
-                    Text("Красный - предыдущий рисунок, зелёный - следующий. Работает на слое-картинке с кадрами (кнопка «Добавить пустой кадр»).", fontSize = 11.sp)
-                }
-            },
-            confirmButton = { androidx.compose.material3.TextButton({ onionDialog = false }) { Text("Готово") } }
-        )
+        if (onionDialog) OnionSkinDialog(vm) { onionDialog = false }   // спринт 37: до/после - свои глубина, прозрачность, цвет
+        // спринт 51: точное время плашки и настройки лесенки
+        var showExactTime by remember { mutableStateOf(false) }
+        var showStagger by remember { mutableStateOf(false) }
+        val exactId = selected
+        if (showExactTime && exactId != null) ExactTimeDialog(vm, exactId) { showExactTime = false }
+        if (showStagger) StaggerDialog(vm) { showStagger = false }
         val stepByFrames = com.vibetoon.ui.theme.LocalAppSettings.current?.stepFrames ?: true
         // ---- Панель воспроизведения ----
         Row(
@@ -249,20 +298,28 @@ fun TimelinePanel(
             TlIcon(Icons.Default.FirstPage, "В начало") { vm.goStart() }
             TlIcon(Icons.Default.ChevronLeft, "Предыдущий кадр") { vm.stepTimeline(-1, stepByFrames) }
             FilledIconButton(onClick = vm::togglePlay, modifier = Modifier.size(40.dp).coachTarget("Играть")) {
-                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Пауза" else "Играть")
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, com.vibetoon.ui.i18n.L(if (playing) "Пауза" else "Играть"))
             }
             TlIcon(Icons.Default.ChevronRight, "Следующий кадр") { vm.stepTimeline(1, stepByFrames) }
             TlIcon(Icons.Default.LastPage, "В конец") { vm.goEnd() }
-            FrameFieldHost(frameS, fps, duration - 1, vm::scrubTo)
-            Text("/ ${TimeFormat.format(duration, fps)}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            // в открытой сцене время считается от её начала, справа - длина сцены
+            FrameFieldHost(frameS, fps, activeSc?.start ?: 0, (activeSc?.length ?: duration) - 1, vm::scrubTo)
+            Text("/ ${TimeFormat.format(activeSc?.length ?: duration, fps)}", fontSize = 12.sp, maxLines = 1, softWrap = false)
             TlIcon(Icons.Default.AutoAwesome, "Эффекты (FX)", active = fx) { vm.toggleFx() }
             TlIcon(Icons.Default.Layers, "Калька (Onion Skin)", active = onion, onLong = { onionDialog = true }) { vm.toggleOnion() }
             TlIcon(Icons.Default.Repeat, "Зацикливание", active = loop) { vm.toggleLoop() }
-            if (!phone) AssistChip(onClick = { stub("Переключение сцен") }, label = { com.vibetoon.ui.DropText("Сцена 1") })
+            // переключение сцен (пакет 10): список сцен, «Весь таймлайн», новая сцена, разрез, управление
+            Box {
+                AssistChip(onClick = { sceneMenu = true }, label = {
+                    com.vibetoon.ui.DropText(activeSc?.let { sceneDisplayName(it.name) } ?: com.vibetoon.ui.i18n.L(if (scenes.isEmpty()) "Сцены" else "Весь таймлайн"))
+                })
+                SceneMenu(vm, sceneMenu, scenes, activeSc, playing) { open -> sceneMenu = false; if (open) showScenes = true }
+            }
             OutlinedButton(
                 onClick = vm::toggleKey,
                 enabled = selected != null && !playing,
-                contentPadding = compact
+                contentPadding = compact,
+                modifier = Modifier.coachTarget("◆ Add Key")   // спринт 45: цель вводного тура
             ) { Text(if (hasKey) "◇ Delete Key" else "◆ Add Key", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             TlIcon(Icons.Default.HighlightAlt, "Выделение ключей рамкой", active = selectMode) { selectMode = !selectMode; if (!selectMode) vm.clearKeySelection() }
             if (phone) TlIcon(Icons.Default.MoreVert, "Ещё", active = toolsOpen) { toolsOpen = !toolsOpen }
@@ -278,15 +335,131 @@ fun TimelinePanel(
                 if (keySel.isEmpty()) (if (selectMode) "Рамкой по ключам" else "Ключи") else "Выбрано: ${keySel.size}",
                 fontSize = 12.sp, maxLines = 1, softWrap = false
             )
+            // пакет 8: снять выделение одним нажатием (раньше - только повторным долгим нажатием по каждому ключу)
+            if (keySel.isNotEmpty()) TextButton(onClick = vm::clearKeySelection, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
+                Text("✕ Снять выделение", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
             val keyBtn = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            // спринт 44: один ромб - «Кривая ключа» (меняется только он), несколько - «Общая кривая» для всех выделенных;
+            // кнопка первой в ряду, чтобы её не приходилось искать прокруткой
+            OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) {
+                Text(if (keySel.size == 1) "Кривая ключа" else "Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
+            // спринт 49: кривая выделенного ключа - в буфер; скопированная кривая - всем выделенным ключам (одна запись Undo)
+            val curveClip by vm.curveClipboard.collectAsStateWithLifecycle()
+            OutlinedButton(onClick = vm::copySelectedCurve, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Копировать кривую", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::pasteCurveToSelection, enabled = keySel.isNotEmpty() && curveClip != null && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вставить кривую", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            // спринт 43: все ключи только активного слоя - чтобы применить к ним общую кривую интерполяции
+            OutlinedButton(onClick = vm::selectLayerKeys, enabled = selected != null && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Выбрать все ключи слоя", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::copySelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::cutSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вырезать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::pasteKeys, enabled = hasKeyClip && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { vm.stretchSelectedKeys(2f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Растянуть ×2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { vm.stretchSelectedKeys(0.5f) }, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Сжать ÷2", fontSize = 12.sp, maxLines = 1, softWrap = false) }
-            OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::reverseSelectedKeys, enabled = keySel.size >= 2 && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Реверс", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::duplicateSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Дублировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = vm::deleteSelectedKeys, enabled = keySel.isNotEmpty() && !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            // переход ключей времени символа (если они есть в выделении): резкая смена формы или плавное проигрывание кадров
+            val tkInst = keySel.firstOrNull { (id, f) -> timeKeyMap[id]?.any { it.frame == f } == true }?.first
+            if (tkInst != null) {
+                Text("Переход:", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                for ((e, t) in listOf(com.vibetoon.domain.project.TimeEase.HOLD to "Hold", com.vibetoon.domain.project.TimeEase.SMOOTH to "Плавно", com.vibetoon.domain.project.TimeEase.LINEAR to "Линейно",
+                        com.vibetoon.domain.project.TimeEase.EASE_IN to "Плавное начало", com.vibetoon.domain.project.TimeEase.EASE_OUT to "Плавный конец"))
+                    OutlinedButton(onClick = { vm.setTimeKeyEase(tkInst, e) }, enabled = !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text(t, fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                OutlinedButton(onClick = { vm.openTimeKeysCurveEditor(tkInst) }, enabled = !playing, contentPadding = keyBtn, modifier = Modifier.height(32.dp)) { Text("График…", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            }
+        }
+        // ---- Маркеры кадров открытого символа: те же операции, что у ключей ----
+        if (!collapsed && editingSym != null && (markerSel.isNotEmpty() || hasMarkerClip)) Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            val mb = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            Text(if (markerSel.isEmpty()) "Маркеры" else "Маркеров: ${markerSel.size}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            if (markerSel.isNotEmpty()) TextButton(onClick = vm::clearMarkerSelection, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) {
+                Text("✕ Снять выделение", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
+            OutlinedButton(onClick = vm::copySelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::cutSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Вырезать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::pasteMarkers, enabled = hasMarkerClip && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::duplicateSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Дублировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::mirrorSelectedMarkers, enabled = markerSel.size >= 2 && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Зеркало", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::openSelectedCurveEditor, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Общая кривая", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::deleteSelectedMarkers, enabled = markerSel.isNotEmpty() && !playing, contentPadding = mb, modifier = Modifier.height(32.dp)) { Text("Удалить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+        }
+        // ---- Режим ключей (пакет 10): переход и выделение по ключам всех слоёв ----
+        if (!collapsed && keyMode) Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            val kb = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            Text("Слоёв с ключами: ${keyedIds.size}", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            OutlinedButton(onClick = { vm.jumpAnyKey(false) }, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("◀ Ключ", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { vm.jumpAnyKey(true) }, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Ключ ▶", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::selectKeysAtFrame, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Ключи кадра", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::selectAllKeys, enabled = !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Все ключи", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::selectLayerKeys, enabled = selected != null && !playing, contentPadding = kb, modifier = Modifier.height(32.dp)) { Text("Выбрать все ключи слоя", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            TextButton(onClick = vm::toggleKeyMode, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(32.dp)) { Text("Все слои", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+        }
+        // ---- Спринт 51: покадровая анимация (как в ToonSquid) - рисунки на дорожке или слои-рисунки лесенкой ----
+        if (!collapsed && selected != null) Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            val fb = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+            val hold by vm.frameHold.collectAsStateWithLifecycle()
+            var holdMenu by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { vm.jumpDrawing(false) }, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp).coachTarget("< Кадр")) { Text("< Кадр", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { vm.jumpDrawing(true) }, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp)) { Text("Кадр >", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::addEmptyFrame, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp).coachTarget("+ Кадр")) { Text("+ Кадр", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = vm::duplicateFrame, enabled = !playing, contentPadding = fb, modifier = Modifier.height(32.dp).coachTarget("Дубль кадра")) { Text("Дубль кадра", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+            TlIcon(Icons.Default.DeleteSweep, "Удалить кадр", enabled = !playing) { vm.deleteFrame() }
+            Text("Длина:", fontSize = 12.sp, maxLines = 1, softWrap = false)
+            // спринт 52: удержание - автоповтор с ускорением (сначала по 1 кадру, потом по 2 и по 4)
+            RepeatIcon(Icons.Default.Remove, "Короче на кадр (удерживайте)", enabled = !playing) { vm.nudgeFrameLength(-it) }
+            RepeatIcon(Icons.Default.Add, "Длиннее на кадр (удерживайте)", enabled = !playing) { vm.nudgeFrameLength(it) }
+            Box {
+                // спринт 52: «Новый кадр: N» тянется влево-вправо, как ползунок (шаг - 12 dp); касание - меню с ползунком
+                var dragHold by remember { mutableStateOf<Int?>(null) }
+                val stepPx = with(androidx.compose.ui.platform.LocalDensity.current) { 12.dp.toPx() }
+                val holdNow by rememberUpdatedState(hold)
+                val shownHold = dragHold ?: hold
+                AssistChip(
+                    onClick = { holdMenu = true },
+                    label = { Text("Новый кадр: $shownHold", fontSize = 12.sp, maxLines = 1, softWrap = false) },
+                    leadingIcon = { Icon(Icons.Default.SwapHoriz, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.coachTarget("Новый кадр").pointerInput(playing) {   // спринт 53: цель урока покадровой анимации
+                        if (playing) return@pointerInput
+                        var start = 0; var acc = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { start = holdNow; acc = 0f; dragHold = holdNow },
+                            onDragEnd = { dragHold?.let { vm.setFrameHold(it) }; dragHold = null },
+                            onDragCancel = { dragHold = null },
+                            onHorizontalDrag = { ch, dx ->
+                                ch.consume(); acc += dx
+                                dragHold = com.vibetoon.domain.anim.StepGestures.dragValue(start, acc, stepPx, 1, com.vibetoon.ui.MAX_FRAME_HOLD)
+                            }
+                        )
+                    }
+                )
+                DropdownMenu(expanded = holdMenu, onDismissRequest = { holdMenu = false }) {
+                    var sv by remember(holdMenu) { mutableStateOf(hold.toFloat()) }
+                    Text("Длина нового кадра: ${sv.roundToInt()}", fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    androidx.compose.material3.Slider(
+                        value = sv, onValueChange = { sv = it }, onValueChangeFinished = { vm.setFrameHold(sv.roundToInt()) },
+                        valueRange = 1f..com.vibetoon.ui.MAX_FRAME_HOLD.toFloat(), steps = com.vibetoon.ui.MAX_FRAME_HOLD - 2,
+                        modifier = Modifier.width(260.dp).padding(horizontal = 16.dp)
+                    )
+                    for (n in listOf(1, 2, 3, 4, 6, 8, 12, 24, 48)) DropdownMenuItem(
+                        text = { Text("Длина нового кадра: $n") },
+                        leadingIcon = { if (n == hold) Icon(Icons.Default.Check, null) },
+                        onClick = { vm.setFrameHold(n); holdMenu = false }
+                    )
+                }
+            }
         }
         // ---- Панель инструментов таймлайна ----
         if (!collapsed && (!phone || toolsOpen)) Row(
@@ -295,8 +468,9 @@ fun TimelinePanel(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
         ) {
             TlIcon(Icons.Default.Adjust, "Магнит", active = magnet) { vm.toggleMagnet() }
-            TlIcon(Icons.Default.AccountTree, "Иерархия трансформаций") { stub("Иерархия трансформаций") }
-            TlIcon(Icons.Default.Timeline, "Режим ключей") { stub("Режим ключей") }
+            TlIcon(Icons.Default.AccountTree, "Иерархия трансформаций") { showHierarchy = true }
+            TlIcon(Icons.Default.Timeline, "Режим ключей", active = keyMode) { vm.toggleKeyMode() }
+            TlIcon(Icons.Default.FormatListBulleted, "Список ключей", enabled = selected != null) { showKeyList = true }
             // f(x): плавность сегмента от ключа выделенного слоя на текущем кадре
             Box {
                 TlIcon(Icons.Default.ShowChart, "Кривые (Easing)", enabled = !playing) { vm.openCurveEditor(true) }
@@ -317,20 +491,30 @@ fun TimelinePanel(
                     }
                 }
             }
-            TlIcon(Icons.Default.Brush, "Добавить пустой кадр") { vm.addEmptyFrame() }
-            TlIcon(Icons.Default.ContentCopy, "Дублировать кадр") { vm.duplicateFrame() }
-            TlIcon(Icons.Default.DeleteSweep, "Удалить кадр") { vm.deleteFrame() }
-            TlIcon(Icons.Default.OpenInFull, "Расширить") { stub("Расширение клипа") }
+            // спринт 51: плашка выделенных слоёв - к плейхеду и флажкам, вписать между флажками, точное время
+            Box {
+                var clipMenu by remember { mutableStateOf(false) }
+                TlIcon(Icons.Default.Straighten, "Плашка: флажки и плейхед", enabled = selected != null && !playing) { clipMenu = true }
+                DropdownMenu(expanded = clipMenu, onDismissRequest = { clipMenu = false }) {
+                    for ((op, title) in CLIP_OPS) DropdownMenuItem(text = { Text(title) }, enabled = !com.vibetoon.domain.anim.ClipTiming.needsMarker(op) || markers.isNotEmpty(),
+                        onClick = { vm.clipTool(op); clipMenu = false })
+                    DropdownMenuItem(text = { Text("Точное время…") }, onClick = { clipMenu = false; showExactTime = true })
+                    DropdownMenuItem(text = { Text("Магнит (прилипание краёв)") }, leadingIcon = { if (magnet) Icon(Icons.Default.Check, null) }, onClick = { vm.toggleMagnet() })
+                }
+            }
+            TlIcon(Icons.Default.OpenInFull, "Расширить клип", enabled = selected != null && !playing) { vm.extendSelectedClips() }
             // Ножницы: разрезать клип выделенного слоя на плейхеде на две независимые части
             TlIcon(Icons.Default.ContentCut, "Разрезать клип", enabled = selected != null && !playing) { vm.splitSelected() }
             TlIcon(Icons.Default.ContentCopy, "Дублировать слой", enabled = selected != null && !playing) { vm.duplicateSelected() }
             // Лесенка: клипы выделенных слоёв встают со сдвигом на 1 кадр
-            TlIcon(Icons.Default.Stairs, "Лесенка", enabled = selection.size >= 2 && !playing) { vm.staggerSelected() }
+            TlIcon(Icons.Default.Stairs, "Лесенка", enabled = selection.size >= 2 && !playing, onLong = { showStagger = true }) { vm.staggerSelected() }
             // Маркеры кадров: перейти к предыдущему, поставить/убрать, перейти к следующему
             TlIcon(Icons.Default.SkipPrevious, "Предыдущий маркер", enabled = markers.isNotEmpty()) { vm.jumpMarker(false) }
             TlIcon(Icons.Default.Flag, "Маркер кадра", active = markerHere) { vm.toggleMarker() }
             TlIcon(Icons.Default.SkipNext, "Следующий маркер", enabled = markers.isNotEmpty()) { vm.jumpMarker(true) }
             TlIcon(Icons.Default.RestartAlt, "Сбросить трансформацию", enabled = selected != null && !playing) { vm.resetLayerTransform() }
+            // Сцены (пакет 9): создание, переход, переименование, удаление; Play и экспорт по сцене
+            TlIcon(Icons.Default.Movie, "Сцены", active = scenes.isNotEmpty()) { showScenes = true }
             // Шестерёнка: длительность проекта и FPS
             TlIcon(Icons.Default.Settings, "Длительность и FPS") { showSettings = true }
         }
@@ -338,6 +522,7 @@ fun TimelinePanel(
         if (!collapsed) {
         // ---- Линейка и дерево слоёв ----
         val vScroll = rememberScrollState()
+        var vViewportPx by remember { mutableIntStateOf(0) }
         val rowPxScroll = with(LocalDensity.current) { ROW_H.toPx() }
         LaunchedEffect(selected) {
             val i = shownRows.indexOfFirst { it.layer.id == selected }
@@ -356,6 +541,17 @@ fun TimelinePanel(
         val frameWPxNow = rememberUpdatedState(frameWPx)
 
         // После щипка playhead остаётся на том же месте экрана
+        // открытие сцены: масштаб «сцена во всё окно» и прокрутка к её началу (пакет 10)
+        LaunchedEffect(activeSc?.id, activeSc?.length, viewportPx) {
+            val sc = activeSc ?: return@LaunchedEffect
+            if (viewportPx <= 0) return@LaunchedEffect
+            val dp = com.vibetoon.domain.anim.TimelineZoom.clamp(viewportPx / density.density / sc.length.coerceAtLeast(1), duration, density.density, MIN_FRAME_DP, MAX_FRAME_DP)
+            anchorX = 0f
+            frameDpRaw = dp
+            androidx.compose.runtime.withFrameNanos { }
+            androidx.compose.runtime.withFrameNanos { }
+            hScroll.scrollTo((sc.start * with(density) { dp.dp.toPx() }).toInt().coerceIn(0, hScroll.maxValue))
+        }
         LaunchedEffect(frameDp) {
             if (anchorX != 0f || hScroll.value != 0) hScroll.scrollTo((frame * frameWPx - anchorX).toInt().coerceAtLeast(0))
         }
@@ -369,6 +565,7 @@ fun TimelinePanel(
             }
         }
 
+        if (scenes.isNotEmpty() && editingSym == null) SceneStrip(vm, scenes, activeSc ?: sceneNow, activeSc != null, frameWPx, contentW, NAME_W, hScroll, viewportPx) { showScenes = true }
         Row {
             Box(Modifier.width(NAME_W).height(RULER_H))
             // Линейка не листается сама (enabled=false): тап и перетаскивание по ней - перемотка.
@@ -430,13 +627,104 @@ fun TimelinePanel(
                             )
                         }
                     }
-                    for (m in markers) {
-                        val mx = m * frameWPx
-                        val flag = Path().apply { moveTo(mx, 0f); lineTo(mx + 9.dp.toPx(), 5.dp.toPx()); lineTo(mx, 10.dp.toPx()); close() }
-                        drawLine(markerColor, Offset(mx, 0f), Offset(mx, size.height), strokeWidth = 2f)
-                        drawPath(flag, markerColor)
+                    // Плейхед рисуется ПОД маркерами: раньше красная линия закрывала линию маркера, и был виден только
+                    // флажок справа - казалось, что маркер встал правее текущего кадра. Теперь метка симметрична.
+                    // вне открытой сцены линейка притушена (пакет 10)
+                    activeSc?.let { sc ->
+                        val shade = Color.Black.copy(alpha = 0.35f)
+                        if (sc.start > 0) drawRect(shade, Offset.Zero, androidx.compose.ui.geometry.Size(sc.start * frameWPx, size.height))
+                        if (sc.end < duration) drawRect(shade, Offset(sc.end * frameWPx, 0f), androidx.compose.ui.geometry.Size((duration - sc.end) * frameWPx, size.height))
                     }
                     drawPlayhead(frame * frameWPx, playheadColor)
+                    for (m in markers) drawMarkerTag(m * frameWPx, markerColor, 5.dp.toPx(), 10.dp.toPx())
+                }
+            }
+        }
+
+        // ---- Полоса маркеров открытого символа: флажки с именами, диапазоны форм, выделение и перенос как у ключей ----
+        if (editingSym != null) Row {
+            Row(Modifier.width(NAME_W).height(MARKER_H).padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Flag, null, Modifier.size(14.dp), tint = Color(0xFFAB47BC))
+                Text("Маркеры форм", modifier = Modifier.padding(start = 3.dp), fontSize = 11.sp, maxLines = 1, softWrap = false)
+            }
+            val markersNow = rememberUpdatedState(symMarkers)
+            val mSelNow = rememberUpdatedState(markerSel)
+            val multiNow = rememberUpdatedState(multi)
+            var mDrag by remember { mutableIntStateOf(0) }
+            Box(Modifier.horizontalScroll(hScroll, enabled = false)) {
+                Canvas(
+                    Modifier
+                        .width(contentW)
+                        .height(MARKER_H)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        .pointerInput(frameWPx) {
+                            val grab = 14.dp.toPx()
+                            fun hitAt(x: Float): Int? = markersNow.value.minByOrNull { abs(it.frame * frameWPx - x) }
+                                ?.takeIf { abs(it.frame * frameWPx - x) <= grab }?.frame
+                            detectTapGestures { pt ->
+                                val hit = hitAt(pt.x)
+                                when {
+                                    hit == null -> { vm.clearMarkerSelection(); vm.scrubTo((pt.x / frameWPx).roundToInt().coerceIn(0, duration - 1)) }
+                                    // пакет 8: повторный тап по выделенному маркеру снимает с него выделение
+                                    hit in mSelNow.value -> com.vibetoon.domain.anim.QuickDeselect.afterTap(mSelNow.value, hit)?.let { vm.selectMarkers(it) }
+                                    multiNow.value -> vm.toggleMarkerSelected(hit)
+                                    else -> { vm.selectMarkers(setOf(hit)); vm.scrubTo(hit) }
+                                }
+                            }
+                        }
+                        .pointerInput(frameWPx, duration) {
+                            val grab = 14.dp.toPx()
+                            var startX = 0f
+                            var acc = 0f
+                            var active = false
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { p ->
+                                    val hit = markersNow.value.minByOrNull { abs(it.frame * frameWPx - p.x) }?.takeIf { abs(it.frame * frameWPx - p.x) <= grab }?.frame
+                                    active = hit != null
+                                    if (hit != null) {
+                                        if (hit !in mSelNow.value) vm.selectMarkers(mSelNow.value + hit)
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    }
+                                    startX = p.x; acc = 0f; mDrag = 0
+                                },
+                                onDragEnd = { if (active && mDrag != 0) vm.moveSelectedMarkers(mDrag); mDrag = 0; active = false },
+                                onDragCancel = { mDrag = 0; active = false }
+                            ) { change, d ->
+                                if (!active) return@detectDragGesturesAfterLongPress
+                                change.consume()
+                                acc += d.x
+                                val sel = mSelNow.value
+                                if (sel.isNotEmpty()) mDrag = (acc / frameWPx).roundToInt().coerceIn(-sel.min(), duration - 1 - sel.max())
+                            }
+                        }
+                ) {
+                    val purple = Color(0xFFAB47BC)
+                    val sorted = symMarkers.sortedBy { it.frame }
+                    val real = sorted.filter { !it.isAlias }
+                    // диапазон формы: от маркера до следующего (последний - до конца); чередование оттенков разделяет соседние формы.
+                    // Маркеры-ссылки (копии) своей формы не имеют - диапазон рисуется только у настоящих маркеров.
+                    real.forEachIndexed { i, mk ->
+                        val x0 = mk.frame * frameWPx
+                        val x1 = (real.getOrNull(i + 1)?.frame ?: duration) * frameWPx
+                        drawRect(purple.copy(alpha = if (i % 2 == 0) 0.16f else 0.08f), Offset(x0, size.height * 0.55f), androidx.compose.ui.geometry.Size((x1 - x0).coerceAtLeast(1f), size.height * 0.4f))
+                    }
+                    drawPlayhead(frame * frameWPx, playheadColor)
+                    val shortM = com.vibetoon.domain.project.SymbolForms.compactLabels(sorted.map { it.name })
+                    for ((mi, mk) in sorted.withIndex()) {
+                        val picked = mk.frame in markerSel
+                        val x = (mk.frame + if (picked) mDrag else 0) * frameWPx
+                        val c = if (picked) Color(0xFFFB8C00) else if (mk.isAlias) purple.copy(alpha = 0.55f) else purple
+                        if (picked) drawCircle(c.copy(alpha = 0.35f), size.height * 0.45f, Offset(x, size.height / 2f))
+                        drawMarkerTag(x, c, 5.dp.toPx(), 9.dp.toPx())
+                        val nm = shortM[mk.name] ?: mk.name
+                        // подпись не длиннее расстояния до следующего маркера (с многоточием), иначе текст наезжал на соседей
+                        val nextX = sorted.getOrNull(mi + 1)?.let { it.frame * frameWPx } ?: size.width
+                        val room = nextX - x - 6.dp.toPx()
+                        if (room > 10.dp.toPx()) drawText(measurer, if (mk.isAlias) "↪$nm" else nm, topLeft = Offset(x + 4.dp.toPx(), size.height * 0.45f),
+                            style = TextStyle(fontSize = 9.sp, color = textColor), maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            size = androidx.compose.ui.geometry.Size(room, size.height * 0.55f))
+                    }
                 }
             }
         }
@@ -445,6 +733,7 @@ fun TimelinePanel(
             Modifier
                 .fillMaxWidth()
                 .then(if (fill) Modifier.weight(1f) else Modifier.height(ROW_H * visibleRows))
+                .onSizeChanged { vViewportPx = it.height }
                 .verticalScroll(vScroll)
         ) {
             // Дерево слоёв: отступы по вложенности, группы сворачиваются тапом, длинные имена обрезаются
@@ -452,6 +741,8 @@ fun TimelinePanel(
                 // Drag-and-drop порядка слоёв: тянем за ручку ≡ в конце строки, бросок на слой ставит на его место, на группу - внутрь
                 var dragId by remember { mutableStateOf<Int?>(null) }
                 var dragDy by remember { mutableFloatStateOf(0f) }
+                val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+                val rowTapGuard = remember { longArrayOf(0L) }
                 val rowsForDrag = rememberUpdatedState(shownRows)
                 val rowPx = with(density) { ROW_H.toPx() }
                 for (r in shownRows) {
@@ -462,7 +753,9 @@ fun TimelinePanel(
                             .height(ROW_H)
                             .graphicsLayer { translationY = if (dragId == l.id) dragDy else 0f; alpha = if (dragId == l.id) 0.6f else 1f }
                             .background(if (l.id in selection) accent.copy(alpha = 0.25f) else Color.Transparent)
-                            .combinedClickable(onClick = { tapRow(l.id, r.isGroup) }, onLongClick = { longRow(l.id) })
+                            .combinedClickable(
+                                onClick = { if (android.os.SystemClock.uptimeMillis() >= rowTapGuard[0]) tapRow(l.id, r.isGroup) },
+                                onLongClick = { if (android.os.SystemClock.uptimeMillis() >= rowTapGuard[0]) longRow(l.id) })
                             .padding(start = (4 + INDENT_DP * r.depth).dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -493,24 +786,70 @@ fun TimelinePanel(
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                        // спринт 54: отступ между именем/миниатюрой и ручкой, узкая зона ручки
+                        androidx.compose.foundation.layout.Spacer(Modifier.width(com.vibetoon.domain.input.HandleDragGate.GAP_DP.dp))
                         Box(
-                            Modifier.width(36.dp).fillMaxHeight().pointerInput(l.id) {
-                                // нажатие на ручку забирается сразу: контекстное меню строки не открывается, порядок слоёв тянется с первого касания
+                            Modifier.width(com.vibetoon.domain.input.HandleDragGate.HANDLE_DP.dp).fillMaxHeight(0.8f)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                                .background(if (dragId == l.id) accent.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                                .pointerInput(l.id) {
+                                // спринт 54: слой берётся только после короткого удержания на месте (HandleDragGate); сдвиг пальца раньше -
+                                // это прокрутка таймлайна, жест отдаётся списку и порядок слоёв не меняется
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false)
-                                    down.consume()
-                                    dragId = l.id; dragDy = 0f
-                                    val lifted = drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() }
-                                    if (lifted) {
-                                        val list = rowsForDrag.value
-                                        val t = list.getOrNull(list.indexOfFirst { it.layer.id == l.id } + Math.round(dragDy / rowPx))
-                                        if (t != null && t.layer.id != l.id) vm.dropLayer(l.id, t.layer.id)
+                                    val slop = viewConfiguration.touchSlop
+                                    var decision = com.vibetoon.domain.input.HandleDragGate.Decision.WAIT
+                                    var now = down.uptimeMillis
+                                    while (decision == com.vibetoon.domain.input.HandleDragGate.Decision.WAIT) {
+                                        val left = com.vibetoon.domain.input.HandleDragGate.HOLD_MS - (now - down.uptimeMillis)
+                                        val ev = withTimeoutOrNull(left.coerceAtLeast(1L)) { awaitPointerEvent() }
+                                        decision = if (ev == null) com.vibetoon.domain.input.HandleDragGate.Decision.DRAG else {
+                                            val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                            now = ch.uptimeMillis
+                                            com.vibetoon.domain.input.HandleDragGate.decide(ch.uptimeMillis - down.uptimeMillis,
+                                                (ch.position - down.position).getDistance(), slop, ch.pressed, ch.isConsumed)
+                                        }
                                     }
-                                    dragId = null; dragDy = 0f
+                                    if (decision != com.vibetoon.domain.input.HandleDragGate.Decision.DRAG) return@awaitEachGesture
+                                    rowTapGuard[0] = Long.MAX_VALUE   // строка под ручкой не открывает меню и не выделяется, пока слой тащат
+                                    try {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        dragId = l.id; dragDy = 0f
+                                        val list = rowsForDrag.value
+                                        val start = list.indexOfFirst { it.layer.id == l.id }
+                                        val downY = down.position.y
+                                        // Пакет 8: палец у верхнего/нижнего края окна дорожек - список прокручивается сам
+                                        val auto = keyScope.dragEdgeAutoScroll(vScroll, { vViewportPx }, 40.dp.toPx(), 16.dp.toPx(),
+                                            { com.vibetoon.domain.input.EdgeAutoScroll.contentPos(start, rowPx, downY, dragDy) - vScroll.value }) { used -> dragDy += used }
+                                        val lifted = try { drag(down.id) { ch -> dragDy += ch.positionChange().y; ch.consume() } } finally { auto.cancel() }
+                                        if (lifted && start >= 0) {
+                                            val t = list.getOrNull(com.vibetoon.domain.input.EdgeAutoScroll.targetIndex(start, dragDy, rowPx, list.size))
+                                            if (t != null && t.layer.id != l.id) vm.dropLayer(l.id, t.layer.id)
+                                        }
+                                        dragId = null; dragDy = 0f
+                                    } finally {
+                                        dragId = null; dragDy = 0f
+                                        rowTapGuard[0] = android.os.SystemClock.uptimeMillis() + 300
+                                    }
                                 }
                             },
                             contentAlignment = Alignment.Center
                         ) { Text("≡", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)) }
+                    }
+                }
+                // Кости с ключами (в режиме «Кости» - все): имя кости и значок ◆
+                for (b in boneRows) {
+                    Row(
+                        Modifier
+                            .width(NAME_W).height(ROW_H)
+                            .background(if (b.id in selection) BONE_KEY_COLOR.copy(alpha = 0.25f) else Color.Transparent)
+                            .combinedClickable(onClick = { vm.selectBoneRow(b.id) })
+                            .padding(start = 4.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text("◆", fontSize = 12.sp, color = BONE_KEY_COLOR)
+                        Text(com.vibetoon.ui.i18n.boneDisplayName(b.name), fontSize = 12.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     }
                 }
                 // Аудио: невизуальные дорожки с именем файла (звук играет при Play)
@@ -530,9 +869,23 @@ fun TimelinePanel(
             }
             // Полосы слоёв с ромбами ключей; жест по ним листает таймлайн по горизонтали
             val marquee = remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
-            val rowsNow = rememberUpdatedState(shownRows)
             val animNow = rememberUpdatedState(animation)
             val keySelNow = rememberUpdatedState(keySel)
+            val timeKeysNow = rememberUpdatedState(timeKeyMap)
+            val layerRowIds = remember(shownRows) { shownRows.map { it.layer.id } }
+            val layerRowIdsNow = rememberUpdatedState(layerRowIds)
+            val boneRowIds = remember(boneRows) { boneRows.map { it.id } }
+            val boneRowIdsNow = rememberUpdatedState(boneRowIds)
+            // строка ключей по индексу: сначала слои и группы, затем кости
+            fun keyRowId(index: Int): Int? = com.vibetoon.domain.anim.BoneKeys.rowIdAt(index, layerRowIdsNow.value, boneRowIdsNow.value)
+            fun keyRowCount() = layerRowIdsNow.value.size + boneRowIdsNow.value.size
+            // ключи слоя + ключи времени экземпляра символа: оба вида выделяются, тянутся и копируются одинаково
+            fun rowKeyFrames(id: Int): Collection<Int> {
+                if (id >= com.vibetoon.domain.project.BONE_ID_BASE && id in boneRowIdsNow.value)
+                    return com.vibetoon.domain.anim.BoneKeys.frames(id, animNow.value.tracks)
+                val tk = timeKeysNow.value[id] ?: return TrackGroups.frames(id, animNow.value.tracks)
+                return TrackGroups.frames(id, animNow.value.tracks).toHashSet().apply { tk.forEach { add(it.frame) } }
+            }
             Box(Modifier.horizontalScroll(hScroll)) {
                 Column(
                     Modifier.then(
@@ -543,24 +896,41 @@ fun TimelinePanel(
                             val maxStep = 22.dp.toPx()
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                val row = rowsNow.value.getOrNull((down.position.y / rowH).toInt())?.takeIf { !it.isGroup }
-                                val frameHit = row?.let { TrackGroups.frames(it.layer.id, animNow.value.tracks)
+                                val rowId = keyRowId((down.position.y / rowH).toInt())
+                                val frameHit = rowId?.let { rowKeyFrames(it)
                                     .minByOrNull { f -> abs(f * frameWPx - down.position.x) }
                                     ?.takeIf { f -> abs(f * frameWPx - down.position.x) <= grab } }
-                                if (row == null || frameHit == null) return@awaitEachGesture
-                                val cancelled = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                // пакет 8: короткий тап по пустому месту дорожек снимает выделение ключей, по выделенному ключу -
+                                // снимает выделение с него; долгое нажатие, как раньше, добавляет ключ и тянет группу
+                                if ((rowId == null || frameHit == null) && keySelNow.value.isEmpty()) return@awaitEachGesture
+                                var tapUp: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                                val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
                                     while (true) {
                                         val ev = awaitPointerEvent(PointerEventPass.Initial)
                                         val c = ev.changes.firstOrNull { it.id == down.id }
+                                        if (c != null && !c.pressed && ev.changes.none { it.pressed }) { tapUp = c; return@withTimeoutOrNull TAP_UP }
                                         if (c == null || !c.pressed || ev.changes.count { it.pressed } != 1 ||
-                                            (c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull true
+                                            (c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull TAP_CANCEL
                                     }
-                                    @Suppress("UNREACHABLE_CODE") false
-                                } ?: false
-                                if (cancelled) return@awaitEachGesture
-                                val hit = row.layer.id to frameHit
+                                    @Suppress("UNREACHABLE_CODE") TAP_CANCEL
+                                } ?: TAP_LONG
+                                if (rowId == null || frameHit == null) {
+                                    // пустое место: только тап снимает выделение, обычное действие тапа (выбор слоя) остаётся
+                                    if (outcome == TAP_UP) com.vibetoon.domain.anim.QuickDeselect.afterTap(keySelNow.value, null)?.let { vm.selectKeys(it) }
+                                    return@awaitEachGesture
+                                }
+                                if (outcome == TAP_UP) {
+                                    val next = com.vibetoon.domain.anim.QuickDeselect.afterTap(keySelNow.value, rowId to frameHit)
+                                    if (next != null && (rowId to frameHit) in keySelNow.value) {
+                                        tapUp?.consume()   // строка не получает тап: ключ просто снят с выделения
+                                        vm.selectKeys(next)
+                                    }
+                                    return@awaitEachGesture
+                                }
+                                if (outcome != TAP_LONG) return@awaitEachGesture
+                                val hit = rowId to frameHit
                                 val group = keySelNow.value + hit
-                                vm.selectKeys(group)
+                                vm.selectKeysFocused(group)
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 val low = group.minOf { it.second }
                                 val high = group.maxOf { it.second }
@@ -592,12 +962,13 @@ fun TimelinePanel(
                             val grab = 14.dp.toPx()
                             fun keysIn(r: androidx.compose.ui.geometry.Rect): Set<Pair<Int, Int>> {
                                 val out = HashSet<Pair<Int, Int>>()
-                                rowsNow.value.forEachIndexed { i, row ->
+                                for (i in 0 until keyRowCount()) {
                                     val cy = (i + 0.5f) * rowH
-                                    if (row.isGroup || cy < r.top || cy > r.bottom) return@forEachIndexed
-                                    TrackGroups.frames(row.layer.id, animNow.value.tracks).forEach { f ->
+                                    val id = keyRowId(i)
+                                    if (id == null || cy < r.top || cy > r.bottom) continue
+                                    rowKeyFrames(id).forEach { f ->
                                         val kx = f * frameWPx
-                                        if (kx >= r.left && kx <= r.right) out += row.layer.id to f
+                                        if (kx >= r.left && kx <= r.right) out += id to f
                                     }
                                 }
                                 return out
@@ -605,14 +976,15 @@ fun TimelinePanel(
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                 val rowIdx = (down.position.y / rowH).toInt()
-                                val hit = rowsNow.value.getOrNull(rowIdx)?.takeIf { !it.isGroup }?.let { row ->
-                                    TrackGroups.frames(row.layer.id, animNow.value.tracks)
+                                val hit = keyRowId(rowIdx)?.let { rid ->
+                                    rowKeyFrames(rid)
                                         .minByOrNull { abs(it * frameWPx - down.position.x) }
                                         ?.takeIf { abs(it * frameWPx - down.position.x) <= grab }
-                                        ?.let { row.layer.id to it }
+                                        ?.let { rid to it }
                                 }
                                 val moving = hit != null
-                                if (hit != null && hit !in keySelNow.value) vm.selectKeys(setOf(hit))
+                                val wasPicked = hit != null && hit in keySelNow.value
+                                if (hit != null && hit !in keySelNow.value) vm.selectKeysFocused(setOf(hit))
                                 var applied = 0
                                 var dragged = false
                                 while (true) {
@@ -640,9 +1012,11 @@ fun TimelinePanel(
                                 }
                                 keyDragDelta = 0
                                 if (moving && dragged && applied != 0) vm.moveSelectedKeys(applied, singleGesture = true)
+                                // пакет 8: повторный тап по выделенному ключу снимает с него выделение
+                                if (moving && !dragged && wasPicked && hit != null) com.vibetoon.domain.anim.QuickDeselect.afterTap(keySelNow.value, hit)?.let { vm.selectKeys(it) }
                                 val m = marquee.value
                                 if (!moving) {
-                                    if (dragged && m != null) vm.selectKeys(keysIn(m)) else vm.clearKeySelection()
+                                    if (dragged && m != null) vm.selectKeysFocused(keysIn(m)) else vm.clearKeySelection()
                                 }
                                 marquee.value = null
                             }
@@ -651,10 +1025,11 @@ fun TimelinePanel(
                 ) {
                     for (r in shownRows) {
                         val l = r.layer
-                        val keys = if (r.isGroup) emptyList() else animation.tracks[l.id]?.keys.orEmpty()
-                        // ключи остальных дорожек слоя (Warp, вершины Mesh, пины, Perspective, Turbulent): бледные ромбы
-                        val groupFrames = if (r.isGroup) emptySet() else TrackGroups.frames(l.id, animation.tracks)
-                        val warpFrames = groupFrames - keys.mapTo(HashSet()) { it.frame }
+                        // у группы тоже видны её собственные ключи (трансформация и Вращение/Качание/Ось растяжения группы)
+                        val keys = animation.tracks[l.id]?.keys.orEmpty()
+                        // ключи остальных дорожек слоя (Warp, вершины Mesh, пины, Perspective, Turbulent, эффекты): бледные ромбы
+                        // пакет 8: считается при изменении анимации, а не при каждой перекомпоновке (60+ строк)
+                        val warpFrames = remember(animation, l.id) { TrackGroups.frames(l.id, animation.tracks) - keys.mapTo(HashSet()) { it.frame } }
                         val isSel = l.id in selection
                         val clip = clips[l.id] ?: vm.clipOf(l.id)
                         val clipNow = rememberUpdatedState(clip)
@@ -687,17 +1062,45 @@ fun TimelinePanel(
                                 size = androidx.compose.ui.geometry.Size((bx1 - bx0).coerceAtLeast(2f), size.height * 0.76f),
                                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
                             )
+                            // пакет 11: видео - плёнка кадров источника (декодируются в фоне) и волна его звука внизу полосы
+                            if (l.id in videoIds) {
+                                val top = size.height * 0.12f
+                                val bh = size.height * 0.76f
+                                val v0 = hScroll.value.toFloat()
+                                val v1 = v0 + viewportPx
+                                if (stripVer >= 0) clipRect(bx0, top, bx1, top + bh) {
+                                    val tileW = (bh * vm.videoAspect(l.id)).coerceIn(12.dp.toPx(), 140.dp.toPx())
+                                    for (t in vm.filmstripTiles(l.id, clip, frameWPx, tileW, v0, v1)) {
+                                        val img = vm.filmstripFrame(l.id, t.sourceMs) ?: continue
+                                        drawImage(img, dstOffset = IntOffset(t.x.toInt(), top.toInt()),
+                                            dstSize = IntSize(kotlin.math.ceil(tileW).toInt().coerceAtLeast(1), bh.toInt().coerceAtLeast(1)), alpha = if (isSel) 0.95f else 0.75f)
+                                    }
+                                    waves[l.id]?.let { pk ->
+                                        val step = 2.dp.toPx()
+                                        val base = top + bh
+                                        val hMax = bh * 0.35f
+                                        var x = max(bx0, v0)
+                                        val xe = kotlin.math.min(bx1, v1)
+                                        while (x < xe) {
+                                            val amp = com.vibetoon.domain.project.WaveformMath.amplitude(pk, clip, fps, x / frameWPx, (x + step) / frameWPx)
+                                            if (amp > 0f) drawLine(Color(0xFF26C6DA), Offset(x, base), Offset(x, base - max(1f, amp * hMax)), strokeWidth = step * 0.75f)
+                                            x += step
+                                        }
+                                    }
+                                }
+                            }
                             val hw = 5.dp.toPx()
                             drawRoundRect(accent, Offset(bx0, size.height * 0.12f), androidx.compose.ui.geometry.Size(hw, size.height * 0.76f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
                             drawRoundRect(accent, Offset(bx1 - hw, size.height * 0.12f), androidx.compose.ui.geometry.Size(hw, size.height * 0.76f), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
                             // засечки рисунков покадрового слоя: квадрат на каждом кадре, где начинается рисунок, и полоска экспозиции до следующего
-                            val cs = cellMap[l.id]
+                            val cs = cellSpans[l.id]
                             if (cs != null) {
-                                val sorted = cs.sorted()
+                                // спринт 51: у каждого рисунка своя полоска [начало, конец): длина рисунка, а не «до конца таймлайна»
                                 val cy = size.height * 0.3f
                                 val ch = size.height * 0.4f
-                                sorted.forEachIndexed { i, s ->
-                                    val end = (sorted.getOrNull(i + 1) ?: bx1.div(frameWPx).toInt()).toFloat()
+                                cs.forEach { sp ->
+                                    val s = sp[0]
+                                    val end = minOf(sp[1], bx1.div(frameWPx).toInt().coerceAtLeast(s + 1)).toFloat()
                                     val x0 = s * frameWPx
                                     val xe = (end * frameWPx).coerceAtLeast(x0 + frameWPx)
                                     drawRect(cellColor.copy(alpha = 0.25f), Offset(x0, cy), androidx.compose.ui.geometry.Size(xe - x0, ch))
@@ -720,12 +1123,80 @@ fun TimelinePanel(
                                 if (k.easing == EasingType.LINEAR) drawDiamond(x, size.height / 2f, size.height * 0.28f, kc)
                                 else drawCircle(kc, size.height * 0.26f, Offset(x, size.height / 2f))
                             }
-                            drawPlayhead(frame * frameWPx, playheadColor)
-                            // ключи времени символа: рисуются поверх плейхеда и сдвинуты вправо от своего кадра, чтобы на 0-м кадре не прятаться под ним
-                            timeKeyMap[l.id]?.forEach { tf ->
-                                val tx = tf * frameWPx + 3.dp.toPx()
-                                drawRoundRect(Color(0xFFAB47BC), Offset(tx, size.height * 0.15f), androidx.compose.ui.geometry.Size(4.dp.toPx(), size.height * 0.7f), androidx.compose.ui.geometry.CornerRadius(2f, 2f))
+                            // ключи времени символа: ровно на своём кадре (по центру, как ромбы ключей и плейхед).
+                            // Раньше засечка рисовалась со сдвигом +3dp вправо и выглядела «сбоку» от красной линии.
+                            timeKeyMap[l.id]?.let { tks ->
+                                val purple = Color(0xFFAB47BC)
+                                // отрезки одинаковой формы: сплошная полупрозрачная полоса + подпись; переход - клин к следующей форме
+                                val names = instMarkers[l.id].orEmpty()
+                                val short = instShort[l.id].orEmpty()
+                                for (run in com.vibetoon.domain.project.SymbolMath.formRuns(tks, duration)) {
+                                    val x0 = run.start * frameWPx
+                                    val x1 = run.end * frameWPx
+                                    val top = size.height * 0.62f
+                                    val h = size.height * 0.26f
+                                    if (run.hold) {
+                                        drawRoundRect(purple.copy(alpha = 0.22f), Offset(x0, top), androidx.compose.ui.geometry.Size((x1 - x0).coerceAtLeast(2f), h), androidx.compose.ui.geometry.CornerRadius(4f, 4f))
+                                        drawLine(purple.copy(alpha = 0.7f), Offset(x0, top + h / 2f), Offset(x1, top + h / 2f), strokeWidth = 1.5f)
+                                    } else {
+                                        val wedge = Path().apply { moveTo(x0, top + h); lineTo(x1, top); lineTo(x1, top + h); close() }
+                                        drawPath(wedge, purple.copy(alpha = 0.3f))
+                                    }
+                                    // подпись: короткое имя формы («30» вместо «Обычный слой 30»), не шире своего отрезка -
+                                    // соседние подписи больше не наезжают друг на друга
+                                    val full = com.vibetoon.domain.project.SymbolForms.labelFor(names, run.value)?.name
+                                    val label = full?.let { short[it] ?: it } ?: "${run.value + 1}"
+                                    val room = (x1 - x0) - 8.dp.toPx()
+                                    if (room > 12.dp.toPx()) drawText(measurer, label, topLeft = Offset(x0 + 5.dp.toPx(), top - 1.dp.toPx()),
+                                        style = TextStyle(fontSize = 8.sp, color = textColor.copy(alpha = 0.85f)), maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        size = androidx.compose.ui.geometry.Size(room, size.height * 0.4f))
+                                }
+                                for (tk in tks) {
+                                    val picked = (l.id to tk.frame) in keySel
+                                    val x = (tk.frame + if (picked) keyDragDelta else 0) * frameWPx
+                                    val c = if (picked) Color(0xFFFB8C00) else purple
+                                    if (picked) drawCircle(c.copy(alpha = 0.45f), size.height * 0.42f, Offset(x, size.height / 2f))
+                                    val w = 6.dp.toPx()
+                                    // песочные часы = ключ времени; Hold - сплошные, плавный переход - контур
+                                    val glass = Path().apply {
+                                        moveTo(x - w / 2f, size.height * 0.14f); lineTo(x + w / 2f, size.height * 0.14f); lineTo(x, size.height * 0.5f)
+                                        lineTo(x + w / 2f, size.height * 0.86f); lineTo(x - w / 2f, size.height * 0.86f); lineTo(x, size.height * 0.5f); close()
+                                    }
+                                    if (tk.ease == com.vibetoon.domain.project.TimeEase.HOLD) drawPath(glass, c)
+                                    else drawPath(glass, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+                                }
                             }
+                            drawPlayhead(frame * frameWPx, playheadColor)
+                        }
+                    }
+                    // Строки костей: ключи позы - ромбы ◆ с белой обводкой (отличаются от ключей слоёв); тап по ромбу
+                    // выбирает кость и ключ и переносит плейхед на кадр ключа, тап мимо - выбирает кость.
+                    for (b in boneRows) {
+                        val bFrames = remember(animation, b.id) { com.vibetoon.domain.anim.BoneKeys.frames(b.id, animation.tracks) }
+                        val bFramesNow = rememberUpdatedState(bFrames)
+                        val bSel = b.id in selection
+                        Canvas(
+                            Modifier
+                                .width(contentW).height(ROW_H)
+                                .background(if (bSel) BONE_KEY_COLOR.copy(alpha = 0.12f) else BONE_KEY_COLOR.copy(alpha = 0.04f))
+                                .pointerInput(b.id, frameWPx) {
+                                    detectTapGestures { pos ->
+                                        val hitF = com.vibetoon.domain.anim.BoneKeys.hit(bFramesNow.value, pos.x, frameWPx, 14.dp.toPx())
+                                        if (hitF != null) vm.selectBoneKey(b.id, hitF) else vm.selectBoneRow(b.id)
+                                    }
+                                }
+                        ) {
+                            drawLine(lineColor, Offset(0f, size.height), Offset(size.width, size.height))
+                            drawLine(BONE_KEY_COLOR.copy(alpha = 0.35f), Offset(0f, size.height / 2f), Offset(size.width, size.height / 2f), strokeWidth = 1f)
+                            for (m in markers) drawLine(markerColor.copy(alpha = 0.5f), Offset(m * frameWPx, 0f), Offset(m * frameWPx, size.height), strokeWidth = 1.5f)
+                            for (f in bFrames) {
+                                val picked = (b.id to f) in keySel
+                                val x = (f + if (picked) keyDragDelta else 0) * frameWPx
+                                if (picked) drawCircle(Color(0xFFFB8C00).copy(alpha = 0.45f), size.height * 0.42f, Offset(x, size.height / 2f))
+                                drawBoneKey(x, size.height / 2f, size.height * 0.3f, if (picked) Color(0xFFFB8C00) else BONE_KEY_COLOR)
+                            }
+                            drawPlayhead(frame * frameWPx, playheadColor)
                         }
                     }
                     // Полосы аудио: клип звука (по умолчанию длина файла), края и середина тянутся как у слоёв
@@ -814,12 +1285,20 @@ fun TimelinePanel(
         }
     }
     if (showSettings) TimelineSettingsDialog(duration, fps, vm::setTimeline) { showSettings = false }
+    if (showScenes) ScenesDialog(vm, scenes, activeSc ?: sceneNow, activeSc != null, fps, scenePlayOnly) { showScenes = false }
+    if (showHierarchy) TransformHierarchyDialog(vm, selected) { showHierarchy = false }
+    selected?.let { sid -> if (showKeyList) KeyListDialog(vm, sid) { showKeyList = false } }
 }
 
 /**
  * Автопрокрутка у края: пока позиция пальца [pos] (в координатах содержимого таймлайна) ближе [edgePx] к краю окна,
  * таймлайн прокручивается в эту сторону со скоростью до [maxStepPx] за тик; [onMoved] получает реально пройденный путь.
  */
+// исход ожидания долгого нажатия по дорожкам ключей
+private const val TAP_UP = 0
+private const val TAP_CANCEL = 1
+private const val TAP_LONG = 2
+
 private fun CoroutineScope.edgeScroll(
     hScroll: ScrollState, viewportPx: () -> Int, edgePx: Float, maxStepPx: Float, pos: () -> Float, onMoved: (Float) -> Unit
 ): Job = launch {
@@ -845,7 +1324,8 @@ private fun CoroutineScope.edgeScroll(
  */
 /** Поле времени читает кадр сам: пересоздаётся оно одно, а не вся панель. */
 @Composable
-private fun FrameFieldHost(frame: State<Int>, fps: Int, max: Int, onFrame: (Int) -> Unit) = FrameField(frame.value, fps, max, onFrame)
+private fun FrameFieldHost(frame: State<Int>, fps: Int, offset: Int, max: Int, onFrame: (Int) -> Unit) =
+    FrameField((frame.value - offset).coerceAtLeast(0), fps, max) { onFrame(it + offset) }
 
 @Composable
 private fun FrameField(frame: Int, fps: Int, max: Int, onFrame: (Int) -> Unit) {
@@ -869,47 +1349,111 @@ private fun FrameField(frame: Int, fps: Int, max: Int, onFrame: (Int) -> Unit) {
     )
 }
 
-/** Настройки таймлайна: общая длительность (кадры) и FPS. */
+/**
+ * Настройки таймлайна (спринт 41): длительность временем «ММ:СС» (или «ММ:СС:КК») и кадрами - поля связаны; FPS 1–120
+ * пресетами и вводом. Смена FPS сохраняет длительность по времени. Предел - [TimeFormat.MAX_DURATION_FRAMES] кадров
+ * (при 24 fps это 50 минут). Окно адаптивное: помещается на телефон и планшет, содержимое прокручивается.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun TimelineSettingsDialog(duration: Int, fps: Int, onApply: (Int, Int) -> Unit, onDismiss: () -> Unit) {
     var frames by remember { mutableStateOf(duration.toString()) }
     var rate by remember { mutableStateOf(fps.toString()) }
-    val d = frames.toIntOrNull()?.coerceIn(1, TimeFormat.MAX_DURATION_FRAMES)
-    val f = rate.toIntOrNull()?.coerceIn(1, TimeFormat.MAX_FPS)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Настройки таймлайна") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = frames, onValueChange = { frames = it.filter(Char::isDigit).take(5) },
-                    label = { Text("Всего кадров (до ${TimeFormat.MAX_DURATION_FRAMES})") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
-                OutlinedTextField(
-                    value = rate, onValueChange = { rate = it.filter(Char::isDigit).take(3) },
-                    label = { Text("FPS (1-${TimeFormat.MAX_FPS})") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (o in listOf(12, 24, 30, 60)) {
-                        FilterChip(selected = rate == o.toString(), onClick = { rate = o.toString() }, label = { Text("$o") })
-                    }
-                }
-                Text(
-                    if (d != null && f != null) "Длительность: ${TimeFormat.format(d, f)} (мин:сек:кадры)" else "Введите числа",
-                    fontSize = 12.sp
-                )
-                Text("Ключи остаются на своих номерах кадров.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    var time by remember { mutableStateOf(TimeFormat.durationText(duration, fps)) }
+    val f = com.vibetoon.domain.anim.FrameRates.parse(rate)
+    val d = frames.trim().toIntOrNull()?.takeIf { it in 1..TimeFormat.MAX_DURATION_FRAMES }
+    val timeOk = f != null && TimeFormat.parseDuration(time, f)?.let { it in 1..TimeFormat.MAX_DURATION_FRAMES } == true
+    // частота экрана: при fps выше неё просмотр пропускает кадры (воспроизведение идёт по времени), экспорт - нет
+    val view = androidx.compose.ui.platform.LocalView.current
+    val refresh = remember(view) { runCatching { view.display?.refreshRate }.getOrNull() ?: 60f }
+    fun setRate(text: String) {
+        val old = com.vibetoon.domain.anim.FrameRates.parse(rate)
+        rate = text
+        val now = com.vibetoon.domain.anim.FrameRates.parse(text) ?: return
+        // длительность по времени остаётся прежней: пересчитываем число кадров
+        val cur = frames.trim().toIntOrNull() ?: return
+        if (old != null && old != now) {
+            val n = TimeFormat.reframe(cur, old, now)
+            frames = n.toString(); time = TimeFormat.durationText(n, now)
+        }
+    }
+    com.vibetoon.ui.shell.AdaptiveDialog(
+        onDismissRequest = onDismiss, title = "Настройки таймлайна", maxWidth = 520.dp,
+        buttons = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+            TextButton(onClick = { if (d != null && f != null) { onApply(d, f); onDismiss() } }, enabled = d != null && f != null) { Text("Применить") }
+        }
+    ) {
+        OutlinedTextField(
+            value = time,
+            onValueChange = { t ->
+                time = t.filter { it.isDigit() || it == ':' || it == '.' || it == ',' }.take(12)
+                val n = f?.let { TimeFormat.parseDuration(time, it) }
+                if (n != null) frames = n.toString()
+            },
+            label = { Text("Длительность (мин:сек)") }, singleLine = true, isError = !timeOk,
+            supportingText = { Text("Например 1:30 или 0:05:12 (мин:сек:кадры)", fontSize = 11.sp) },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+        )
+        OutlinedTextField(
+            value = frames,
+            onValueChange = { t ->
+                frames = t.filter(Char::isDigit).take(6)
+                val n = frames.toIntOrNull()
+                if (n != null && f != null && n >= 1) time = TimeFormat.durationText(n, f)
+            },
+            label = { Text("Всего кадров") }, singleLine = true, isError = d == null,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        OutlinedTextField(
+            value = rate, onValueChange = { setRate(it.filter(Char::isDigit).take(3)) },
+            label = { Text("FPS (1-${TimeFormat.MAX_FPS})") }, singleLine = true,
+            isError = f == null, modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            for (o in com.vibetoon.domain.anim.FrameRates.PROJECT_PRESETS) {
+                FilterChip(selected = rate == o.toString(), onClick = { setRate(o.toString()) }, label = { Text("$o", maxLines = 1, softWrap = false) })
             }
-        },
-        confirmButton = { TextButton(onClick = { if (d != null && f != null) { onApply(d, f); onDismiss() } }, enabled = d != null && f != null) { Text("Применить") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
-    )
+        }
+        Text(
+            if (d != null && f != null) "Длительность: ${TimeFormat.format(d, f)} (мин:сек:кадры)" else "Введите числа",
+            fontSize = 12.sp
+        )
+        if (f != null) Text("Наибольшая длительность при этой частоте: {}".replace("{}", TimeFormat.formatDuration(TimeFormat.MAX_DURATION_FRAMES, f)),
+            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+        if (f != null && com.vibetoon.domain.anim.FrameRates.exceedsDisplay(f, refresh))
+            Text("Экран показывает до {} кадров в секунду: при просмотре часть кадров пропускается, в экспорт попадают все"
+                .replace("{}", com.vibetoon.domain.anim.FrameRates.shownPerSecond(f, refresh).toString()),
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+        Text("Ключи остаются на своих номерах кадров.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    }
+}
+
+/** Метка маркера: треугольник остриём вниз, центр ровно на кадре [x], и тонкая линия кадра поверх плейхеда. */
+private fun DrawScope.drawMarkerTag(x: Float, color: Color, halfW: Float, h: Float) {
+    drawLine(color, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.5f)
+    val tag = Path().apply { moveTo(x - halfW, 0f); lineTo(x + halfW, 0f); lineTo(x, h); close() }
+    drawPath(tag, color)
 }
 
 private fun DrawScope.drawPlayhead(x: Float, color: Color) {
     drawLine(color, Offset(x, 0f), Offset(x, size.height), strokeWidth = 3f)
+}
+
+/** Цвет ключей костей на таймлайне (голубой, как суставы костей на холсте). */
+private val BONE_KEY_COLOR = Color(0xFF26C6DA)
+
+/** Ключ кости: ромб ◆ с белой обводкой и тёмной сердцевиной - не путается с ромбами/кружками ключей слоёв. */
+private fun DrawScope.drawBoneKey(cx: Float, cy: Float, r: Float, color: Color) {
+    drawDiamond(cx, cy, r + 2.5f, Color.White)
+    drawDiamond(cx, cy, r, color)
+    drawDiamond(cx, cy, r * 0.38f, Color(0xFF102027))
 }
 
 private fun DrawScope.drawDiamond(cx: Float, cy: Float, r: Float, color: Color) {
@@ -959,14 +1503,75 @@ private fun Modifier.clipGestures(id: Int, frameWPx: Float, clip: State<Clip>, s
                 }
                 c.consume()
                 val f = (pos / frameWPx).roundToInt()
+                // спринт 51: магнит - края плашки прилипают к флажкам, плейхеду и краям соседних плашек
+                val th = (10.dp.toPx() / frameWPx).roundToInt().coerceAtLeast(1)
+                val len = clip.value.length
                 when (mode) {
-                    1 -> vm.setClip(id, f, clip.value.end)
-                    2 -> vm.setClip(id, clip.value.start, f)
-                    else -> vm.moveClipTo(id, f)
+                    1 -> vm.setClip(id, vm.snapClipDrag(id, 1, f, clip.value.end, th), clip.value.end)
+                    2 -> vm.setClip(id, clip.value.start, vm.snapClipDrag(id, 2, clip.value.start, f, th))
+                    else -> vm.moveClipTo(id, vm.snapClipDrag(id, 3, f, f + len, th))
                 }
             }
         }
     }
+
+/**
+ * Спринт 52: иконка «− / +» с удержанием: касание - один шаг; удержание дольше [StepGestures.FIRST_DELAY_MS] -
+ * автоповтор с ускорением (пауза короче, шаг 1 → 2 → 4). [onStep] получает размер шага.
+ */
+@Composable
+private fun RepeatIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, enabled: Boolean, onStep: (Int) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val step by rememberUpdatedState(onStep)
+    var pressed by remember { mutableStateOf(false) }
+    Box(
+        Modifier.size(36.dp).coachTarget(desc).clip(androidx.compose.foundation.shape.CircleShape)
+            .background(if (pressed) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent)
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false).consume()
+                    pressed = true
+                    step(1)
+                    val repeat = scope.launch {
+                        delay(com.vibetoon.domain.anim.StepGestures.FIRST_DELAY_MS)
+                        var n = 0
+                        while (true) {
+                            step(com.vibetoon.domain.anim.StepGestures.stepAfter(n))
+                            delay(com.vibetoon.domain.anim.StepGestures.delayAfter(n))
+                            n++
+                        }
+                    }
+                    try {
+                        // отпускание или уход пальца (прокрутка строки) останавливает повтор
+                        do {
+                            val e = awaitPointerEvent()
+                            e.changes.forEach { if (it.pressed) it.consume() }
+                        } while (e.changes.any { it.pressed })
+                    } finally {
+                        repeat.cancel(); pressed = false
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, com.vibetoon.ui.i18n.L(desc), modifier = Modifier.size(20.dp),
+            tint = LocalContentColor.current.copy(alpha = if (enabled) 1f else 0.38f))
+    }
+}
+
+/** Спринт 51: команды меню «Плашка» (перенос и обрезка к плейхеду и ближайшему флажку). */
+private val CLIP_OPS = listOf(
+    com.vibetoon.domain.anim.ClipTiming.Op.START_TO_PLAYHEAD to "Начало к плейхеду",
+    com.vibetoon.domain.anim.ClipTiming.Op.END_TO_PLAYHEAD to "Конец к плейхеду",
+    com.vibetoon.domain.anim.ClipTiming.Op.TRIM_START_TO_PLAYHEAD to "Обрезать слева до плейхеда",
+    com.vibetoon.domain.anim.ClipTiming.Op.TRIM_END_TO_PLAYHEAD to "Обрезать справа до плейхеда",
+    com.vibetoon.domain.anim.ClipTiming.Op.START_TO_MARKER to "Начало к флажку",
+    com.vibetoon.domain.anim.ClipTiming.Op.END_TO_MARKER to "Конец к флажку",
+    com.vibetoon.domain.anim.ClipTiming.Op.TRIM_START_TO_MARKER to "Обрезать слева до флажка",
+    com.vibetoon.domain.anim.ClipTiming.Op.TRIM_END_TO_MARKER to "Обрезать справа до флажка",
+    com.vibetoon.domain.anim.ClipTiming.Op.FIT_MARKERS to "Вписать между флажками"
+)
 
 /** Компактная иконка-кнопка панелей таймлайна; [active] подсвечивает включённый режим. */
 @Composable
@@ -981,7 +1586,7 @@ private fun TlIcon(
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            icon, desc, modifier = Modifier.size(20.dp),
+            icon, com.vibetoon.ui.i18n.L(desc), modifier = Modifier.size(20.dp),
             tint = (if (active) MaterialTheme.colorScheme.primary else LocalContentColor.current).copy(alpha = if (enabled) 1f else 0.38f)
         )
     }

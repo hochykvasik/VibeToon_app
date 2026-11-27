@@ -34,6 +34,22 @@ object MeshMath {
         return out
     }
 
+    /**
+     * Спринт 46: то же, что [offsets], но анимированная часть (дорожки вершин на кадре) берётся из [cache]: при ~100
+     * слоях с сеткой жест на одном слое перестраивает сцену на каждое движение пальца, и раньше каждый раз заново
+     * считались дорожки всех вершин всех сеток (до 1024 на слой). Ручные смещения ([base]) читаются всегда.
+     */
+    fun offsets(layerId: Int, mesh: Mesh, frame: Int, base: Map<Int, LayerTransform>, anim: Animation, fx: Boolean, cache: MeshTrackCache): FloatArray {
+        val out = FloatArray(mesh.count * 2)
+        val track = if (fx) cache.trackPart(layerId, mesh.count, frame, anim) else null
+        for (k in 0 until mesh.count) {
+            val b = base[vertexId(layerId, k)]
+            out[k * 2] = (b?.dx ?: 0f) + (track?.get(k * 2) ?: 0f)
+            out[k * 2 + 1] = (b?.dy ?: 0f) + (track?.get(k * 2 + 1) ?: 0f)
+        }
+        return out
+    }
+
     /** Все id вершин сетки слоя (для очистки данных). */
     fun ids(layerId: Int, mesh: Mesh): Set<Int> = (0 until mesh.count).mapTo(HashSet()) { vertexId(layerId, it) }
 
@@ -580,4 +596,31 @@ object MeshMath {
         }
         return out.toIntArray()
     }
+}
+
+/**
+ * Спринт 46: смещения вершин сеток из дорожек на кадре, по слою. Запись верна, пока тот же кадр, то же число вершин и
+ * тот же объект анимации (Animation неизменяема: любая правка ключей создаёт новый объект). Только главный поток.
+ */
+class MeshTrackCache {
+    private class Entry(val count: Int, val frame: Int, val anim: Animation, val v: FloatArray)
+    private val map = HashMap<Int, Entry>()
+
+    /** Смещения из дорожек (2 числа на вершину) - общий массив, не изменять. */
+    fun trackPart(layerId: Int, count: Int, frame: Int, anim: Animation): FloatArray {
+        map[layerId]?.let { e -> if (e.count == count && e.frame == frame && e.anim === anim) return e.v }
+        val v = FloatArray(count * 2)
+        for (k in 0 until count) {
+            anim.tracks[MeshMath.vertexId(layerId, k)]?.evaluate(frame)?.let { v[k * 2] = it.dx; v[k * 2 + 1] = it.dy }
+        }
+        map[layerId] = Entry(count, frame, anim, v)
+        return v
+    }
+
+    /** Оставить только слои [ids] (удалённые сетки не держат память). */
+    fun retain(ids: Set<Int>) { map.keys.retainAll(ids) }
+
+    fun size(): Int = map.size
+
+    fun clear() = map.clear()
 }

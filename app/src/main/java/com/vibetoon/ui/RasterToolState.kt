@@ -19,4 +19,5 @@ class SelOverlay(val bmp: ImageBitmap? = null, val corners: FloatArray = FloatAr
 
 /** Жест в процессе: 0 - прямоугольник, 1 - овал (2 точки), 2 - лассо (ломаная), 3 - контур пера (точки). Координаты - пиксели экрана. */
 /** kind 4 - узлы векторных примитивов (редактирование): [sel] - индекс выбранного узла в [pts]. */
-class ToolDrag(val kind: Int, val pts: FloatArray, val closed: Boolean = false, val sel: Int = -1)
+/** [freeHandles] (пакет 21): ручки узла независимы - по флагу на группу [handles]. [curve] (пакет 20): кривая контура пера в работе на экране, вместо прямых между точками. [handles] (пакет 19): ручки Безье выбранного контура на экране - по 6 чисел: узел x,y, вход x,y, выход x,y; [selHandle] - индекс ручки (узел*2+0/1). */
+class ToolDrag(val kind: Int, val pts: FloatArray, val closed: Boolean = false, val sel: Int = -1, val handles: FloatArray? = null, val selHandle: Int = -1, val curve: FloatArray? = null, val freeHandles: BooleanArray? = null)

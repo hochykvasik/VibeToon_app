@@ -5,6 +5,7 @@ import android.util.Log
 import com.vibetoon.domain.project.BackupMath
 import com.vibetoon.domain.project.NewProjectSpec
 import com.vibetoon.domain.project.ProjectData
+import com.vibetoon.domain.project.ProjectArchive
 import com.vibetoon.domain.project.ProjectJson
 import com.vibetoon.domain.project.ProjectMeta
 import java.io.File
@@ -32,14 +33,27 @@ class ProjectRepository(context: Context) {
     /** Файл по относительному пути из project.json (например assets/m100000.png). */
     fun fileOf(id: String, relative: String): File = File(dir(id), relative)
 
-    /** Все проекты, новые правки сверху. Повреждённые проекты пропускаются. */
+    /** Папка assets проекта (библиотека ассетов). */
+    fun mediaDir(id: String): File = File(dir(id), "assets").also { it.mkdirs() }
+
+    /**
+     * Все проекты, новые правки сверху. Повреждённые проекты пропускаются.
+     * Спринт 46: заголовок проекта кэшируется по времени изменения и размеру project.json - повторный вход на экран
+     * проектов не разбирает заново JSON всех проектов (раньше список и баннер урока пропадали на несколько секунд).
+     */
     fun list(): List<ProjectMeta> =
         (root.listFiles { f -> f.isDirectory }.orEmpty()).mapNotNull { d ->
             val f = File(d, "project.json")
             if (!f.exists()) return@mapNotNull null
-            ProjectJson.decode(f.readText()).onFailure { Log.w(TAG, "skip ${d.name}: ${it.message}") }
-                .getOrNull()?.meta
+            val stamp = f.lastModified() to f.length()
+            metaCache[d.name]?.takeIf { it.first == stamp }?.let { return@mapNotNull it.second }
+            // спринт 52: только заголовок (поля верхнего уровня), слои и ключи пропускаются без разбора
+            ProjectJson.decodeMeta(f.readText()).onFailure { Log.w(TAG, "skip ${d.name}: ${it.message}") }
+                .getOrNull()?.also { metaCache[d.name] = stamp to it }
         }.sortedByDescending { it.updatedAt }
+
+    /** Спринт 46: id папки проекта -> (время изменения и размер project.json, заголовок). */
+    private val metaCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Pair<Long, Long>, ProjectMeta>>()
 
     fun load(id: String): Result<ProjectData> = runCatching {
         val f = jsonFile(id)
@@ -51,10 +65,10 @@ class ProjectRepository(context: Context) {
         val now = System.currentTimeMillis()
         val meta = ProjectMeta(
             id = UUID.randomUUID().toString().take(8),
-            name = spec.name.ifBlank { "Новый проект" },
+            name = spec.name.ifBlank { com.vibetoon.ui.i18n.defaultName(appContext, "Новый проект") },
             width = spec.width,
             height = spec.height,
-            fps = spec.fps,
+            fps = com.vibetoon.domain.anim.FrameRates.clamp(spec.fps),
             background = spec.background,
             createdAt = now,
             updatedAt = now
@@ -93,15 +107,26 @@ class ProjectRepository(context: Context) {
         return data.meta
     }
 
-    fun save(data: ProjectData) {
-        dir(data.meta.id).mkdirs()
-        val tmp = File(dir(data.meta.id), "project.json.tmp")
+    fun save(data: ProjectData) = writeJson(data.meta.id, ProjectJson.encode(data))
+
+    /**
+     * Атомарная запись project.json. Спринт 52: под общей блокировкой - быстрый перенос в папку и обратно (или перенос
+     * во время автосохранения) больше не пишут один и тот же project.json.tmp одновременно.
+     */
+    private fun writeJson(id: String, text: String) = synchronized(writeLock) {
+        dir(id).mkdirs()
+        val tmp = File(dir(id), "project.json.tmp")
         tmp.outputStream().use { stream ->
-            stream.write(ProjectJson.encode(data).toByteArray(Charsets.UTF_8))
+            stream.write(text.toByteArray(Charsets.UTF_8))
             stream.fd.sync()
         }
         // На Android rename в одном каталоге атомарно заменяет цель. При ошибке не удаляем старый JSON.
-        check(tmp.renameTo(jsonFile(data.meta.id))) { "Не удалось сохранить проект" }
+        check(tmp.renameTo(jsonFile(id))) { "Не удалось сохранить проект" }
+    }
+
+    private companion object {
+        /** Одна блокировка на все экземпляры: экран проектов и редактор держат свои репозитории. */
+        val writeLock = Any()
     }
 
     /** Подготовленный API для copy-on-write: вызывающий сериализует доступ к проекту. */
@@ -118,8 +143,35 @@ class ProjectRepository(context: Context) {
     }
 
     fun rename(id: String, name: String) {
-        val data = load(id).getOrNull() ?: return
-        save(data.copy(meta = data.meta.copy(name = name.ifBlank { data.meta.name }, updatedAt = System.currentTimeMillis())))
+        if (name.isBlank()) return
+        patchMeta(id, mapOf("name" to name, "updatedAt" to System.currentTimeMillis())) { it.copy(name = name) }
+    }
+
+    /**
+     * Спринт 52: правка полей заголовка (папка, имя) прямо в тексте project.json: без разбора слоёв и ключей и без
+     * повторной сериализации всего проекта. Кэш заголовков и размеров обновляется сразу - следующий list() не читает
+     * этот проект заново. Если текст не распознан - прежний путь (полное чтение и запись). Возвращает новый заголовок.
+     */
+    private fun patchMeta(id: String, values: Map<String, Any?>, change: (ProjectMeta) -> ProjectMeta): ProjectMeta? = synchronized(writeLock) {
+        val f = jsonFile(id)
+        if (!f.exists()) return null
+        val text = f.readText()
+        val old = ProjectJson.decodeMeta(text).getOrNull() ?: return null
+        val now = (values["updatedAt"] as? Long)?.let { change(old).copy(updatedAt = it) } ?: change(old)
+        if (now == old) return old
+        val stamp0 = f.lastModified() to f.length()
+        val patched = ProjectJson.withTopLevel(text, values)
+        if (patched != null && ProjectJson.decodeMeta(patched).getOrNull() == now) writeJson(id, patched)
+        else {
+            Log.w(TAG, "meta patch fallback for $id")
+            val data = load(id).getOrNull() ?: return null
+            writeJson(id, ProjectJson.encode(data.copy(meta = now)))
+        }
+        val stamp1 = f.lastModified() to f.length()
+        metaCache[id] = stamp1 to now
+        val assets = File(dir(id), "assets").lastModified()
+        sizes.update(id, SizeStamp(stamp0.first, stamp0.second, assets), SizeStamp(stamp1.first, stamp1.second, assets)) { it - stamp0.second + stamp1.second }
+        now
     }
 
     /** Копия проекта целиком (файлы и project.json с новым id); возвращает id копии. */
@@ -131,26 +183,36 @@ class ProjectRepository(context: Context) {
         val now = System.currentTimeMillis()
         src.copyRecursively(dir(newId), overwrite = true)
         File(dir(newId), "project.json.tmp").delete()
-        save(data.copy(meta = data.meta.copy(id = newId, name = data.meta.name + " (копия)", createdAt = now, updatedAt = now)))
+        save(data.copy(meta = data.meta.copy(id = newId, name = com.vibetoon.ui.i18n.defaultName(appContext, "${data.meta.name} (копия)"), createdAt = now, updatedAt = now)))
         return newId
     }
 
     fun delete(id: String) {
         dir(id).deleteRecursively()
+        metaCache.remove(id)
+        sizes.remove(id)
     }
 
     /** Размер проекта на диске, байты. */
     /** Размер проекта без экспортов (готовые видео/GIF/PSD лежат отдельно и не должны раздувать карточку и сортировку по размеру). */
     fun sizeOf(id: String): Long {
         val root = dir(id)
-        val exports = java.io.File(root, "exports")
-        return root.walkTopDown().filter { it.isFile && !it.startsWith(exports) }.sumOf { it.length() }
+        val json = jsonFile(id)
+        // спринт 52: размер пересчитывается, только если project.json или состав assets поменялись (раньше - обход папок
+        // ВСЕХ проектов при каждом обновлении экрана проектов, в том числе после переноса одного проекта в папку)
+        val stamp = SizeStamp(json.lastModified(), json.length(), File(root, "assets").lastModified())
+        return sizes.get(id, stamp) {
+            val exports = java.io.File(root, "exports")
+            root.walkTopDown().filter { it.isFile && !it.startsWith(exports) }.sumOf { it.length() }
+        }
     }
 
-    fun moveToFolder(id: String, folder: String) {
-        val data = load(id).getOrNull() ?: return
-        save(data.copy(meta = data.meta.copy(folder = folder)))
-    }
+    private data class SizeStamp(val jsonTime: Long, val jsonLength: Long, val assetsTime: Long)
+    private val sizes = com.vibetoon.domain.perf.StampCache<String, SizeStamp, Long>()
+
+    /** Спринт 52: перенос в папку - правка одного поля заголовка, без разбора и перезаписи всего проекта. */
+    fun moveToFolder(id: String, folder: String): ProjectMeta? =
+        patchMeta(id, mapOf("folder" to folder.ifEmpty { null })) { it.copy(folder = folder) }
 
     /** Кэш, который пересоздаётся сам: волны звука (.wave) и миниатюра проекта. Возвращает освобождённые байты. */
     fun clearCache(): Long {
@@ -177,12 +239,21 @@ class ProjectRepository(context: Context) {
         return n to bytes
     }
 
-    /** Резервная копия: ZIP проекта (.tsproj) с манифестом; экспорты и временные файлы не входят. */
+    private val appContext = context.applicationContext
+    private val fontsDir get() = File(appContext.filesDir, "fonts")
+    private val importRoot get() = File(appContext.filesDir, "import_tmp")
+
+    /**
+     * Резервная копия: ZIP проекта (.tsproj) с манифестом; экспорты и временные файлы не входят.
+     * Пакет 13: формат 2 - в архив кладутся и импортированные шрифты, которые использует текст проекта (fonts/).
+     */
     fun exportBackup(id: String, out: java.io.OutputStream) {
         val src = dir(id)
+        val data = load(id).getOrNull()
         java.util.zip.ZipOutputStream(out.buffered()).use { z ->
             z.putNextEntry(java.util.zip.ZipEntry(BackupMath.MANIFEST))
-            z.write(BackupMath.manifest().toByteArray()); z.closeEntry()
+            val manifest = if (data != null) ProjectArchive.manifest(ProjectJson.VERSION, data.meta.name) else BackupMath.manifest()
+            z.write(manifest.toByteArray()); z.closeEntry()
             for (f in src.walkTopDown().filter { it.isFile }) {
                 val rel = f.relativeTo(src).invariantSeparatorsPath
                 if (!BackupMath.included(rel)) continue
@@ -190,35 +261,113 @@ class ProjectRepository(context: Context) {
                 f.inputStream().use { it.copyTo(z) }
                 z.closeEntry()
             }
+            if (data != null) for (name in ProjectArchive.usedFontFiles(data)) {
+                val f = File(fontsDir, name)
+                if (!f.isFile) continue
+                z.putNextEntry(java.util.zip.ZipEntry(ProjectArchive.FONTS_DIR + name))
+                f.inputStream().use { it.copyTo(z) }
+                z.closeEntry()
+            }
         }
     }
 
-    /** Импорт .tsproj: проект распаковывается в новую папку с новым id. Возвращает id или null, если файл не наш. */
-    fun importBackup(input: java.io.InputStream): String? {
-        val newId = UUID.randomUUID().toString().take(8)
-        val target = dir(newId)
-        var hasJson = false
-        try {
-            java.util.zip.ZipInputStream(input.buffered()).use { z ->
-                while (true) {
-                    val e = z.nextEntry ?: break
-                    if (e.isDirectory || e.name == BackupMath.MANIFEST) continue
-                    val rel = BackupMath.safePath(e.name) ?: continue   // защита от ../ в именах
-                    val f = File(target, rel)
-                    f.parentFile?.mkdirs()
-                    f.outputStream().use { z.copyTo(it) }
-                    if (rel == "project.json") hasJson = true
+    /** Результат импорта: готовый проект или PSD, для которого вызывающий создаёт новый проект. */
+    sealed interface Imported {
+        data class Project(val report: ProjectArchive.Report) : Imported
+        data class Psd(val width: Int, val height: Int) : Imported
+    }
+
+    /** Остатки прерванного импорта (приложение закрыли посреди распаковки). */
+    fun cleanStaleImports() { runCatching { importRoot.deleteRecursively() } }
+
+    /**
+     * Пакет 13: импорт проекта (.tsproj / .zip / project.json; PSD - распознаётся). Проект распаковывается во временную
+     * папку, проверяется (версия, project.json, отсутствующие файлы), получает новый id и неповторяющееся имя и только
+     * потом целиком появляется в списке. Существующие проекты не меняются. Ошибки - [ProjectArchive.ImportException].
+     */
+    fun importProject(open: () -> java.io.InputStream, existingNames: Collection<String>, fileName: String = ""): Imported {
+        val head = ByteArray(32)
+        val n = try {
+            open().use { s -> var r = 0; while (r < head.size) { val k = s.read(head, r, head.size - r); if (k < 0) break; r += k }; r }
+        } catch (e: java.io.IOException) { throw ProjectArchive.ImportException(ProjectArchive.Reason.READ_FAILED, e) }
+        val kind = ProjectArchive.detect(head, n)
+        if (kind == ProjectArchive.Kind.PSD) {
+            val (w, h) = ProjectArchive.psdSize(head) ?: throw ProjectArchive.ImportException(ProjectArchive.Reason.DAMAGED)
+            return Imported.Psd(w, h)
+        }
+        if (kind == ProjectArchive.Kind.UNKNOWN) throw ProjectArchive.ImportException(ProjectArchive.Reason.NOT_PROJECT, null,
+            com.vibetoon.domain.project.foreign.ForeignImport.unknownMessage(fileName))
+        val staging = File(importRoot, UUID.randomUUID().toString().take(12))
+        val converted = File(importRoot, staging.name + "-p")
+        return try {
+            staging.mkdirs()
+            val input = try { open() } catch (e: Exception) { throw ProjectArchive.ImportException(ProjectArchive.Reason.READ_FAILED, e) }
+            var foreign: com.vibetoon.domain.project.foreign.ForeignImport.Result? = null
+            input.use { s ->
+                if (kind == ProjectArchive.Kind.ZIP) {
+                    // пакет 28: ZIP сначала во временный файл - центральный каталог читает и ZIP64, и записи Procreate
+                    val zip = File(importRoot, staging.name + ".zip")
+                    try {
+                        zip.outputStream().use { s.copyTo(it, 64 * 1024) }
+                        try { ProjectArchive.unzipFile(zip, staging) } catch (e: ProjectArchive.ImportException) {
+                            if (e.reason != ProjectArchive.Reason.DAMAGED) throw e
+                            staging.deleteRecursively(); staging.mkdirs()
+                            zip.inputStream().use { z -> ProjectArchive.unzip(z, staging) }
+                        }
+                    } finally { zip.delete() }
+                } else {
+                    val bytes = s.readBytes()
+                    if (bytes.size > 64 * 1024 * 1024) throw ProjectArchive.ImportException(ProjectArchive.Reason.TOO_LARGE)
+                    val text = bytes.toString(Charsets.UTF_8)
+                    if (kind == ProjectArchive.Kind.XML) {
+                        // спринт 36: SVG - векторный проект; другой XML - понятный отказ
+                        if (!com.vibetoon.domain.vector.SvgImport.looksLike(text)) throw ProjectArchive.ImportException(ProjectArchive.Reason.NOT_PROJECT, null,
+                            com.vibetoon.domain.project.foreign.ForeignImport.unknownMessage(fileName))
+                        val name = fileName.ifBlank { "drawing.svg" }.substringAfterLast('/').let { if (it.lowercase().endsWith(".svg")) it else "$it.svg" }
+                        File(staging, name).writeBytes(bytes)
+                    } else if (com.vibetoon.domain.project.foreign.LottieImport.looksLike(text.trimStart('\uFEFF'))) {
+                        val name = fileName.ifBlank { "animation.json" }.let { if (it.lowercase().endsWith(".json")) it else "$it.json" }
+                        File(staging, name.substringAfterLast('/')).writeBytes(bytes)
+                    } else File(staging, "project.json").writeBytes(bytes)
                 }
             }
-            if (!hasJson) { target.deleteRecursively(); return null }
-            val data = load(newId).getOrNull() ?: run { target.deleteRecursively(); return null }
-            val now = System.currentTimeMillis()
-            save(data.copy(meta = data.meta.copy(id = newId, updatedAt = now)))
-            return newId
-        } catch (t: Throwable) {
-            Log.w(TAG, "import failed: ${t.message}")
-            target.deleteRecursively()
-            return null
+            val root = ProjectArchive.locateRoot(staging) ?: run {
+                // пакет 28: не проект VibeToon - пробуем форматы других приложений (Procreate, Lottie, ORA, кадры...)
+                foreign = com.vibetoon.domain.project.foreign.ForeignImport.toProjectDir(
+                    com.vibetoon.domain.project.foreign.ForeignImport.DirSource(staging), converted, fileName)
+                staging.deleteRecursively()
+                converted
+            }
+            var newId: String
+            do { newId = UUID.randomUUID().toString().take(8) } while (dir(newId).exists())
+            val report0 = ProjectArchive.prepare(root, newId, System.currentTimeMillis(), existingNames)
+                .let { r -> foreign?.let { f -> r.copy(app = f.app, notes = f.notes) } ?: r }
+            val archiveFonts = File(root, "fonts").takeIf { it.isDirectory } ?: File(staging, "fonts").takeIf { it.isDirectory }
+            val (restored, fontsMissing) = ProjectArchive.restoreFonts(archiveFonts, fontsDir, ProjectArchive.usedFontFiles(report0.data))
+            File(root, "fonts").deleteRecursively()
+            File(root, BackupMath.MANIFEST).delete()
+            File(root, "project.json.tmp").delete()
+            // project.json переписывается текущим форматом (новый id, имя, время), затем папка целиком встаёт на место
+            val json = File(root, "project.json")
+            val tmp = File(root, "project.json.new")
+            tmp.writeText(ProjectJson.encode(report0.data))
+            check(tmp.renameTo(json) || run { tmp.copyTo(json, overwrite = true); tmp.delete() }) { "project.json" }
+            val target = dir(newId)
+            if (!root.renameTo(target)) {
+                root.copyRecursively(target, overwrite = false)
+            }
+            check(File(target, "project.json").isFile) { "project.json" }
+            Log.i(TAG, "imported ${report0.data.meta.name} as $newId (v${report0.sourceVersion}, missing ${report0.missing.size}, fonts +$restored)")
+            Imported.Project(report0.copy(fontsRestored = restored, fontsMissing = fontsMissing))
+        } catch (e: ProjectArchive.ImportException) {
+            throw e
+        } catch (e: java.io.IOException) {
+            throw ProjectArchive.ImportException(if (ProjectArchive.isNoSpace(e)) ProjectArchive.Reason.NO_SPACE else ProjectArchive.Reason.READ_FAILED, e)
+        } catch (e: OutOfMemoryError) {
+            throw ProjectArchive.ImportException(ProjectArchive.Reason.TOO_LARGE, e)
+        } finally {
+            runCatching { staging.deleteRecursively() }
+            runCatching { converted.deleteRecursively() }
         }
     }
 }

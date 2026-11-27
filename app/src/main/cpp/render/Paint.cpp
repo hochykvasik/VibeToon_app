@@ -4,6 +4,7 @@
 
 #include "common/Log.h"
 #include "render/GlUtil.h"
+#include "render/GlState.h"
 #include "render/GradientMath.h"
 #include "render/Renderer.h"
 
@@ -21,11 +22,13 @@ out vec2 vLocal;
 out vec2 vWorld;
 out float vOpacity;
 out float vRadius;
+out float vAngle;
 void main() {
     vec2 local = aQuad * 2.0 - 1.0;
     vLocal = local;
     vOpacity = aDab.w;
     vRadius = aDab.z;
+    vAngle = aRot;
     float cs = cos(aRot), sn = sin(aRot);
     vec2 off = local * (aDab.z + 1.5);
     vec2 p = aDab.xy + vec2(cs * off.x - sn * off.y, sn * off.x + cs * off.y);   // квад поворачивается, vLocal остаётся в осях штампа
@@ -46,6 +49,7 @@ in vec2 vLocal;
 in vec2 vWorld;
 in float vOpacity;
 in float vRadius;
+in float vAngle;
 uniform vec3 uColor;
 uniform float uHardness;
 uniform int uShape;
@@ -71,8 +75,14 @@ void main() {
         if (uCurve == 1) a = a * a * (3.0 - 2.0 * a);
     }
     if (uGrainMode != 0) {
-        // MOVING: зерно в пикселях штампа (едет и поворачивается вместе с ним); CANVAS: в координатах слоя
-        vec2 uv = uGrainMode == 1 ? vLocal * (vRadius + 1.5) / (uGrainSize * uGrainScale) + 0.5 : vWorld / (uGrainSize * uGrainScale);
+        // MOVING: зерно в пикселях штампа (едет и поворачивается вместе с ним);
+        // CANVAS: зерно на холсте, но штрихи идут вдоль направления (поворот UV на угол штампа).
+        vec2 guv = vWorld;
+        if (uGrainMode == 2) {
+            float cs = cos(vAngle), sn = sin(vAngle);
+            guv = vec2(cs * vWorld.x - sn * vWorld.y, sn * vWorld.x + cs * vWorld.y);
+        }
+        vec2 uv = uGrainMode == 1 ? vLocal * (vRadius + 1.5) / (uGrainSize * uGrainScale) + 0.5 : guv / (uGrainSize * uGrainScale);
         float g = texture(uGrain, uv).r;
         g = clamp((g - 0.5) * uGrainContrast + 0.5, 0.0, 1.0);
         a *= g;
@@ -128,28 +138,7 @@ GLuint makeFbo(GLuint tex) {
 }
 
 // Сохраняет и возвращает привязки GL, которые меняет рисование.
-struct GlSave {
-    GLint fbo = 0, vp[4] = {0, 0, 0, 0}, vao = 0, prog = 0;
-    GLboolean scissor = GL_FALSE, blend = GL_FALSE;
-    GlSave() {
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
-        glGetIntegerv(GL_VIEWPORT, vp);
-        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
-        glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
-        scissor = glIsEnabled(GL_SCISSOR_TEST);
-        blend = glIsEnabled(GL_BLEND);
-    }
-    ~GlSave() {
-        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(fbo));
-        glViewport(vp[0], vp[1], vp[2], vp[3]);
-        glBindVertexArray(static_cast<GLuint>(vao));
-        glUseProgram(static_cast<GLuint>(prog));
-        if (scissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
-        if (blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
-        glBlendEquation(GL_FUNC_ADD);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    }
-};
+using GlSave = GlState;
 
 }  // namespace
 
@@ -272,6 +261,9 @@ void Renderer::paintDrawDabs(int mode, const float color[3], const BrushPreset& 
 }
 
 bool Renderer::paintBegin(int layerId, int mode, float opacity, bool alphaLock, float r, float g, float b, const BrushPreset& preset, const uint8_t* grain) {
+    bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
+    markModified(layerId);   // пакет 29: содержимое теперь только в GPU - текстуру не вытеснять
     const auto t = textures_.find(layerId);
     if (t == textures_.end() || t->second.w <= 0 || t->second.h <= 0 || !vbo_) return false;
     if (paintActive_) {  // прерванный штрих (потеря касания и т.п.): слой возвращается к состоянию до него
@@ -351,6 +343,8 @@ void Renderer::paintBake(int x, int y, int w, int h) {
 }
 
 void Renderer::paintDabs(const float* dabs, int count) {
+    bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(paintLayer_);   // пакет 27: и кэш групп с этим слоем
     if (!paintActive_ || !dabs || count <= 0) return;
     GlSave save;
     glBindFramebuffer(GL_FRAMEBUFFER, strokeFbo_);
@@ -374,6 +368,8 @@ void Renderer::paintDabs(const float* dabs, int count) {
 }
 
 bool Renderer::paintGradient(int layerId, const float* g) {
+    bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
     if (!paintActive_ || layerId != paintLayer_ || !g || paintMode_ == 2) return false;
     for (int i = 0; i < 10; ++i) if (!std::isfinite(g[i])) return false;
     if (!validGradientGesture(g[6], g[7], g[8], g[9])) return false;
@@ -401,6 +397,8 @@ bool Renderer::paintGradient(int layerId, const float* g) {
 }
 
 bool Renderer::paintEnd(bool commit, std::vector<uint8_t>& out) {
+    bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(paintLayer_);   // пакет 27: и кэш групп с этим слоем
     if (!paintActive_) return false;
     paintActive_ = false;
     const int x = pbx0_, y = pby0_, w = pbx1_ - pbx0_, h = pby1_ - pby0_;
@@ -437,6 +435,8 @@ bool Renderer::paintEnd(bool commit, std::vector<uint8_t>& out) {
 }
 
 bool Renderer::paintEndAsync(int layerId) {
+    bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
     if (!paintActive_) return false;
     paintActive_ = false;
     const int x = pbx0_, y = pby0_, w = pbx1_ - pbx0_, h = pby1_ - pby0_;
@@ -500,6 +500,9 @@ int Renderer::paintPoll(std::vector<uint8_t>& out) {
 }
 
 bool Renderer::paintRestore(int layerId, int x, int y, int w, int h, const uint8_t* rgba) {
+    bumpEpoch();   // текстура слоя меняется на месте: кэш эффектов устарел
+    touchTex(layerId);   // пакет 27: и кэш групп с этим слоем
+    markModified(layerId);   // пакет 29
     const auto t = textures_.find(layerId);
     if (t == textures_.end() || !rgba) return false;
     Tex& tex = t->second;

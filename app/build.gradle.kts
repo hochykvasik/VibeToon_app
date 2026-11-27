@@ -18,6 +18,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1"
+        // пакет 14: короткий хеш коммита сборки (в CI - GITHUB_SHA) - виден в окне экспорта, чтобы проверять, какая сборка установлена
+        buildConfigField("String", "BUILD_ID", "\"" + (System.getenv("GITHUB_SHA")?.take(7) ?: "local") + "\"")
 
         externalNativeBuild {
             cmake {
@@ -51,6 +53,14 @@ android {
     }
 
     buildTypes {
+        // Спринт 59: тестовая сборка, которую ставят на телефон и планшет, - не debuggable. В debuggable-сборке ART
+        // не оптимизирует код, а Compose собирает отладочные данные для каждого модификатора - отсюда рывки при
+        // прокрутке списков. Ключ подписи и имя файла (vibetoon-debug.apk) прежние, установка поверх старой версии
+        // работает. Профилировать можно и так (<profileable> в манифесте); для пошаговой отладки в Android Studio
+        // временно верните isDebuggable = true.
+        debug {
+            isDebuggable = false
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -62,7 +72,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
 }
 
 dependencies {

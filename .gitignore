@@ -7,3 +7,4 @@ local.properties
 app/src/main/cpp/third_party/psd_sdk/bin/
 app/src/main/cpp/third_party/psd_sdk/build/
 .claude/
+__pycache__/

@@ -12,7 +12,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.projects.coachSession
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import com.vibetoon.ui.i18n.Text
 import com.vibetoon.ui.theme.AppSettings
@@ -44,6 +45,8 @@ class MainActivity : ComponentActivity() {
     private val app: AppViewModel by viewModels()
     private val editor: MainViewModel by viewModels()
     private lateinit var settings: AppSettings
+    /** Спринт 41: разрешение на уведомление о фоновом импорте/экспорте (Android 13+); без него работа всё равно идёт. */
+    private val notifPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
 
     /** Физическая клавиатура: срабатывает, только если клавишу не взял сам экран (поле ввода, кнопка). */
     override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
@@ -56,6 +59,65 @@ class MainActivity : ComponentActivity() {
 
     private fun hideSystemBars() {
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Пакет 27: экспорт идёт по задаче GL-потока на кадр - пауза поверхности ждёт не дольше одного кадра,
+        // экспорт останавливается на текущем кадре и продолжается после возврата (раньше он отменялся).
+        com.vibetoon.render.RenderHost.view?.onPause()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        com.vibetoon.work.BackgroundWork.setAppVisible(this, true)   // спринт 56: итог в шторке снимается, «ждёт» - тоже
+    }
+
+    override fun onStop() {
+        com.vibetoon.work.BackgroundWork.setAppVisible(this, false)
+        super.onStop()
+    }
+
+    /**
+     * Спринт 56: нажатие на уведомление экспорта приходит сюда (singleTask) - в то же окно с тем же редактором, а не во
+     * второй экземпляр приложения с экраном проектов.
+     */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleWorkIntent(intent)
+    }
+
+    /** Спринт 56: из уведомления: если редактор этого проекта уже закрыт, открыть проект (там же окно итога). */
+    private fun handleWorkIntent(intent: android.content.Intent?) {
+        if (intent?.action != com.vibetoon.work.BackgroundWorkService.ACTION_OPEN) return
+        com.vibetoon.work.BackgroundWork.clearResult(this)
+        val pid = intent.getStringExtra(com.vibetoon.work.BackgroundWorkService.EXTRA_PROJECT) ?: return
+        if (app.screen.value is Screen.Projects) app.openIfExists(pid)
+    }
+
+    /** Спринт 56: смена размера окна, темы, клавиатуры больше не пересоздаёт экран (и не обрывает экспорт). */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        hideSystemBars()
+    }
+
+    override fun onDestroy() {
+        com.vibetoon.work.BackgroundWork.requestNotificationPermission = null   // спринт 41: без утечки Activity
+        super.onDestroy()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        editor.onTrimMemory(level)   // спринт 31: кэш рисунков покадровых слоёв отдаёт память
+        app.onTrimMemory(level)      // спринт 52: и превью экрана проектов
+    }
+
+    override fun onResume() {
+        super.onResume()
+        com.vibetoon.render.RenderHost.view?.onResume()
+        editor.restoreCaches()
+        app.restoreCaches()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -86,12 +148,21 @@ class MainActivity : ComponentActivity() {
             // панель показалась (свайп): через ~1.5 с прячем снова
             if (vis and android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION == 0) window.decorView.postDelayed({ hideSystemBars() }, 1500)
         }
+        if (android.os.Build.VERSION.SDK_INT >= 33)
+            com.vibetoon.work.BackgroundWork.requestNotificationPermission = { runCatching { notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) } }
         CrashReporter.install(applicationContext)
         val lastCrash = CrashReporter.take(applicationContext)
         settings = AppSettings(this)
+        // спринт 56: прошлый запуск закончился посреди экспорта (процесс убит) - сказать об этом; уведомление - открыть проект
+        com.vibetoon.work.ExportNotices.recoverAfterRestart(applicationContext)
+        if (savedInstanceState == null) handleWorkIntent(intent)
         setContent {
-            val locCtx = remember(settings.effectiveLang) { localizedContext(this@MainActivity, settings.effectiveLang) }
-            CompositionLocalProvider(LocalContext provides locCtx, LocalConfiguration provides locCtx.resources.configuration, LocalAppSettings provides settings) {
+            // спринт 56: экран больше не пересоздаётся при смене конфигурации - контекст языка пересобирается с ней
+            val sysConfig = LocalConfiguration.current
+            val locCtx = remember(settings.effectiveLang, sysConfig) { localizedContext(this@MainActivity, settings.effectiveLang) }
+            // Спринт 31: анимации панелей и окон - настройка приложения + системный масштаб анимаций
+            val motion = com.vibetoon.ui.motion.rememberMotion(settings.uiAnimations)
+            CompositionLocalProvider(LocalContext provides locCtx, LocalConfiguration provides locCtx.resources.configuration, LocalAppSettings provides settings, com.vibetoon.ui.motion.LocalMotion provides motion) {
             VibeTheme(settings) {
                 androidx.compose.runtime.LaunchedEffect(Unit) {
                     if (!settings.onboarded || app.needsStarterRecovery) app.ensureStarterProject()
@@ -106,13 +177,18 @@ class MainActivity : ComponentActivity() {
                 when (val s = screen) {
                     // Сначала список проектов; рабочий экран открывается для выбранного проекта
                     Screen.Projects -> ProjectsScreen(app)
-                    is Screen.Editor -> MainScreen(editor, s.id) {
+                    is Screen.Editor -> MainScreen(editor, s.id, s.psd) {
                         // выход: сохранить проект, снять миниатюру, вернуться к списку
                         editor.closeProject { app.goProjects() }
                     }
                 }
                 }
-                if (!settings.onboarded) WelcomeDialog(settings)
+                if (!settings.onboarded) WelcomeDialog(settings, onTour = {
+                    app.startLesson(com.vibetoon.ui.projects.WELCOME_TOUR.coachSession())   // спринт 45: вводный тур
+                })
+                // спринт 56: экспорт прерван, а окна экспорта уже нет (экран был закрыт) - итог окном поверх любого экрана
+                val screenNow by app.screen.collectAsStateWithLifecycle()
+                com.vibetoon.ui.ExportNoticeDialog(onOpenProject = { id -> app.openIfExists(id) }, canOpen = screenNow is Screen.Projects)
                 // Прошлый запуск закончился падением: показываем причину
                 var report by remember { mutableStateOf(lastCrash) }
                 report?.let { text ->

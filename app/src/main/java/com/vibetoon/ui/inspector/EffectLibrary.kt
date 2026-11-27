@@ -1,5 +1,6 @@
 package com.vibetoon.ui.inspector
 
+import com.vibetoon.ui.motion.motionAppear
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,6 +13,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -41,6 +44,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,11 +66,12 @@ private val Pink = Color(0xFFE8658A)
 @Composable
 fun EffectLibraryDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
     var cat by remember { mutableStateOf<EffectCategory?>(null) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = Navy) {
-            Column(Modifier.fillMaxSize()) {
+    Dialog(onDismissRequest = onDismiss, properties = com.vibetoon.ui.shell.fullWindowDialogProperties()) {
+        com.vibetoon.ui.shell.FullWindowDialogSetup()   // спринт 41: окно ровно по экрану, отступы - от вставок
+        Surface(Modifier.fillMaxSize().motionAppear(), color = Navy) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.ArrowBack, "Назад", tint = Color.White) }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.ArrowBack, com.vibetoon.ui.i18n.L("Назад"), tint = Color.White) }
                     Text("Библиотека эффектов", color = Color.White, fontSize = 19.sp, modifier = Modifier.padding(start = 4.dp))
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -74,8 +79,9 @@ fun EffectLibraryDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
                     for (c in EffectCategory.values()) FilterChip(selected = cat == c, onClick = { cat = c }, label = { Text(c.title) })
                 }
                 val items = EffectMath.DEFS.filter { cat == null || it.category == cat }
+                // спринт 41: колонки по реальной ширине окна - на телефоне 2-3 карточки, на планшете больше, без обрезки
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(118.dp),
+                    columns = GridCells.Adaptive(104.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize()
@@ -174,6 +180,21 @@ private fun DrawScope.preview(type: Int) {
             drawLine(Pink, Offset(w * 0.2f, h * 0.8f), Offset(w * 0.8f, h * 0.2f), strokeWidth = 12f)
             drawCircle(Orange.copy(alpha = 0.5f), w * 0.32f, c, style = Stroke(3f))
         }
+        EffectMath.STRETCH_AXIS -> {
+            // круг, растянутый вдоль диагональной оси
+            drawLine(Color(0xFFE8E0F0), Offset(w * 0.1f, h * 0.9f), Offset(w * 0.9f, h * 0.1f), strokeWidth = 2f)
+            rotate(-45f, c) { drawOval(Pink, Offset(c.x - r * 1.5f, c.y - r * 0.75f), Size(r * 3f, r * 1.5f)) }
+        }
+        EffectMath.SWING -> {
+            // маятник: два крайних положения и текущее
+            val top = Offset(w * 0.5f, h * 0.12f)
+            for ((a, alpha) in listOf(-30f to 0.3f, 30f to 0.3f, 12f to 1f)) {
+                val rad = Math.toRadians(a.toDouble())
+                val end = top + Offset(kotlin.math.sin(rad).toFloat(), kotlin.math.cos(rad).toFloat()) * h * 0.62f
+                drawLine(Orange.copy(alpha = alpha), top, end, strokeWidth = 5f)
+                disc(end, r * 0.42f, Pink.copy(alpha = alpha))
+            }
+        }
         EffectMath.MOTION -> {
             for (i in 0 until 6) disc(Offset(w * (0.25f + i * 0.1f), h * 0.5f), r * 0.7f, Pink.copy(alpha = 0.12f + i * 0.1f))
         }
@@ -183,6 +204,33 @@ private fun DrawScope.preview(type: Int) {
                 drawLine(Orange.copy(alpha = 0.6f), c + Offset(kotlin.math.cos(a), kotlin.math.sin(a)) * r * 0.4f, c + Offset(kotlin.math.cos(a), kotlin.math.sin(a)) * w * 0.45f, strokeWidth = 4f)
             }
             disc(c, r * 0.5f, Pink)
+        }
+        // Спринт 35
+        EffectMath.INNER_GLOW -> {
+            disc(c, r * 1.2f, Pink)
+            for (i in 1..5) drawCircle(Color(0xFFFFE0B0).copy(alpha = 0.18f * i), r * 1.2f - (5 - i) * r * 0.08f, c, style = Stroke(r * 0.09f))
+        }
+        EffectMath.HALFTONE -> {
+            val n = 7; val s = w / n
+            for (i in 0 until n) for (j in 0 until n) {
+                val o = Offset(i * s + s / 2, j * s + s / 2)
+                val ink = (1f - (o - c).getDistance() / (w * 0.55f)).coerceIn(0f, 1f)
+                if (ink > 0.02f) disc(o, s * 0.7072f * kotlin.math.sqrt(ink), Navy)
+            }
+        }
+        EffectMath.LINE_BOIL -> {
+            for ((k, alpha) in listOf(0 to 0.25f, 1 to 0.45f, 2 to 1f)) {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    for (x in 0..24) {
+                        val a = x / 24f * 6.2832f
+                        val rr = r * (1.25f + 0.07f * kotlin.math.sin(a * 5f + k * 2.1f) + 0.05f * kotlin.math.cos(a * 3f - k))
+                        val p = c + Offset(kotlin.math.cos(a), kotlin.math.sin(a)) * rr
+                        if (x == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y)
+                    }
+                    close()
+                }
+                drawPath(path, Navy.copy(alpha = alpha), style = Stroke(5f))
+            }
         }
         else -> disc(c, r, Orange)
     }

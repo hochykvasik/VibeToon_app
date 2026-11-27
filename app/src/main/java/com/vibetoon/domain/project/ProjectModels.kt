@@ -47,13 +47,19 @@ data class Bone(
     /** Независимый поворот: кость наследует от родителя позицию и масштаб, но не угол поворота. */
     val independentRot: Boolean = false,
     /** Strength 0..1: множитель веса этой кости при скининге Mesh. */
-    val strength: Float = 1f
+    val strength: Float = 1f,
+    /** Спринт 38: слой костей (MediaKind.BONES), которому принадлежит кость; 0 - свободная кость (как раньше). */
+    val layer: Int = 0
 ) {
     val length get() = kotlin.math.hypot(tx - hx, ty - hy)
 }
 
-/** CAMERA - невидимый слой-камера: его трансформация двигает и масштабирует весь холст (Pan & Zoom). */
-enum class MediaKind { IMAGE, VIDEO, AUDIO, TEXT, CAMERA, GROUP, SYMBOL, NULLOBJ }
+/**
+ * CAMERA - невидимый слой-камера: его трансформация двигает и масштабирует весь холст (Pan & Zoom).
+ * Спринт 38: PATH - слой-путь (кривая в [MediaItem.vectors], по ней едут прикреплённые слои), BONES - слой костей
+ * (хозяин скелета: его кости в [Bone.layer], трансформация слоя двигает весь скелет). Оба не рисуются и не экспортируются.
+ */
+enum class MediaKind { IMAGE, VIDEO, AUDIO, TEXT, CAMERA, GROUP, SYMBOL, NULLOBJ, PATH, BONES }
 
 /**
  * Медиа-слой проекта. Файл лежит в папке проекта (assets/...). Для картинки и видео (первый кадр)
@@ -90,6 +96,8 @@ data class MediaItem(
     val textAlign: Int = 0,
     val lineSpacing: Float = 1f,
     val letterSpacing: Float = 0f,
+    /** Спринт 39: направление письма (TextBidi: 0 - авто по первой букве, 1 - слева направо, 2 - справа налево). */
+    val textDir: Int = 0,
     /** Покадровый слой (только IMAGE): рисунки-экспозиции; пусто - обычная картинка. */
     val cells: List<FrameCell> = emptyList(),
     /** GROUP: длительность > 0 делает группу определением символа (вложенной сцены) с таким числом кадров. */
@@ -100,16 +108,26 @@ data class MediaItem(
     val markers: List<FrameMarker> = emptyList(),
     /** SYMBOL (экземпляр): ключи времени (Time Remapping) - какой внутренний кадр символа показывать, Hold. */
     val timeKeys: List<TimeKey> = emptyList(),
+    /** SYMBOL (экземпляр): без ключей времени крутить внутреннюю анимацию по кругу. false (по умолчанию) - Hold на первом кадре. */
+    val symLoop: Boolean = false,
+    /** Спринт 37: SYMBOL (экземпляр) без ключей времени проигрывает символ один раз от начала плашки и держит последний кадр (Play Once). */
+    val symOnce: Boolean = false,
     /** IMAGE: векторный слой - контур/примитивы [vectors] перерисовываются в картинку слоя при каждой правке. */
     val vector: Boolean = false,
     val vectors: List<com.vibetoon.domain.vector.VectorShape> = emptyList(),
     /** IMAGE: слой «Фон» - всегда в самом низу стопки, под слоями PSD. */
     val background: Boolean = false,
     /** AUDIO: ключи громкости (кадр проекта -> 0..1). */
-    val volKeys: List<VolKey> = emptyList()
+    val volKeys: List<VolKey> = emptyList(),
+    /** AUDIO / VIDEO (пакет 11): звук слоя выключен - не звучит при воспроизведении, на линейке и в WAV. */
+    val muted: Boolean = false
 ) {
     val isVisual get() = kind != MediaKind.AUDIO
+    /** Слой со звуком: аудио-дорожка или видео (его звуковая дорожка). Ключи громкости [volKeys] - у обоих. */
+    val hasSoundTrack get() = kind == MediaKind.AUDIO || kind == MediaKind.VIDEO
     val isText get() = kind == MediaKind.TEXT
+    /** Спринт 38: служебный слой без картинки (Transform Layer, путь, кости): не рисуется, только передаёт трансформацию. */
+    val isRig get() = kind == MediaKind.NULLOBJ || kind == MediaKind.PATH || kind == MediaKind.BONES
 
     /** Название строки в списке слоёв: у текста это его первая строка. */
     val label: String
@@ -152,11 +170,33 @@ data class Clip(
     /** Смещение в источнике (кадры проекта при скорости 1x) на первом кадре клипа: нужно после разрезания. */
     val offset: Int = 0,
     /** Зацикливание: после конца клип начинается заново и виден до конца проекта. */
-    val loop: Boolean = false
+    val loop: Boolean = false,
+    /**
+     * Спринт 54: скорость, уже применённая к ключам и рисункам анимированного слоя ([com.vibetoon.domain.anim.ClipSpeed]).
+     * Только для показа и следующего пересчёта: [animFrame] её НЕ использует (время ключей уже пересчитано).
+     */
+    val keySpeed: Float = 1f
 ) {
     val length get() = end - start
 
     fun visibleAt(frame: Int) = if (loop) frame >= start else frame in start until end
+
+    /**
+     * Пакет 15: момент источника звука/видео (в кадрах проекта при 1x, считая смещение) в момент [time] проекта
+     * или null - клип молчит (до начала, после конца без цикла, стоп-кадр). Цикл повторяет клип с его начала
+     * (как ключи анимации в [animFrame]); реверс - с конца отрезка источника.
+     */
+    fun sourceAt(time: Double): Double? {
+        if (freeze || length <= 0) return null
+        var rel = time - start
+        if (rel < 0) return null
+        if (loop) rel %= length.toDouble() else if (rel >= length) return null
+        return if (!reverse) offset + rel * speed else offset + length * speed - rel * speed
+    }
+
+    /** Клип звучит хоть где-то в отрезке [from, from + frames): с циклом - до конца отрезка. */
+    fun soundsIn(from: Int, frames: Int): Boolean =
+        !freeze && length > 0 && start < from + frames && (loop || end > from)
 
     /**
      * Кадр анимации слоя (ключи лежат на кадрах проекта) для кадра проекта [frame]:
@@ -173,7 +213,7 @@ data class Clip(
 
     companion object {
         const val MIN_LENGTH = 1
-        val SPEEDS = listOf(0.25f, 0.5f, 1f, 2f, 4f)
+        val SPEEDS = com.vibetoon.domain.anim.ClipSpeed.PRESETS   // спринт 54: 0.10x–3.0x
 
         /** Клип в границах проекта: start >= 0, end <= duration, длина не меньше MIN_LENGTH. */
         fun clamped(start: Int, end: Int, duration: Int, old: Clip? = null): Clip {
@@ -232,7 +272,13 @@ data class ProjectData(
     val groupDeformationAnchors: Map<Int, GroupDeformationAnchor> = emptyMap(),
     /** Only non-default 2..4-point grids; v1/v2 always mean 4x4. */
     val warpGridSizes: Map<Int, com.vibetoon.domain.anim.CubicWarpGrid.Size> = emptyMap(),
-    val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap()
+    val denseWarps: Map<Int, com.vibetoon.domain.anim.DenseWarpGrid> = emptyMap(),
+    /** Переопределения опорных точек (пивотов) узлов: id -> (x, y) в координатах холста. */
+    val pivots: Map<Int, Pair<Float, Float>> = emptyMap(),
+    /** Сцены: именованные части таймлайна (пакет 9). */
+    val scenes: List<com.vibetoon.domain.anim.SceneRange> = emptyList(),
+    /** Пакет 25: явный порядок детей групп (id родителя, -1 - корень -> дети снизу вверх) - смешанный порядок PSD и медиа. */
+    val stackOrder: Map<Int, List<Int>> = emptyMap()
 ) {
     fun animation() = Animation(ProjectSettings(meta.fps, meta.durationFrames), tracks)
 }
@@ -256,7 +302,8 @@ object ProjectMath {
         AspectPreset("1:1", 1, 1),
         AspectPreset("4:3", 4, 3)
     )
-    val FPS_OPTIONS = listOf(24, 30, 60)
+    /** Спринт 32: пресеты частоты нового проекта; можно ввести любое значение 1–120. */
+    val FPS_OPTIONS = com.vibetoon.domain.anim.FrameRates.PROJECT_PRESETS
     const val DEFAULT_SHORT_SIDE = 1080
     const val MIN_SIZE = 64
     const val MAX_SIZE = 4096

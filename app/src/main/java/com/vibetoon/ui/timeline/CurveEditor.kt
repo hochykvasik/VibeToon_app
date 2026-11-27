@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +41,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vibetoon.domain.anim.Curve
+import com.vibetoon.domain.anim.UserCurves
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 
 private const val Y_MIN = -0.6f
 private const val Y_MAX = 1.6f
@@ -54,10 +61,19 @@ private const val HIT_DP = 26f
  * кривую и признак «начало жеста» (точка отмены).
  */
 @Composable
-fun CurveEditorDialog(initial: Curve, onChange: (Curve, Boolean) -> Unit, onDismiss: () -> Unit) {
+fun CurveEditorDialog(
+    initial: Curve, onChange: (Curve, Boolean) -> Unit, title: String = "Кривая плавности", note: String? = null,
+    // спринт 49: буфер обмена кривой и свои кривые (общие для всех проектов)
+    clipboard: List<Float>? = null, onCopy: ((Curve) -> Unit)? = null,
+    userCurves: List<UserCurves.Saved> = emptyList(), onSaveUser: ((String, Curve) -> Unit)? = null, onDeleteUser: ((String) -> Unit)? = null,
+    onDismiss: () -> Unit
+) {
     var curve by remember { mutableStateOf(initial) }
     var sel by remember { mutableIntStateOf(0) }
     var menu by remember { mutableStateOf(false) }
+    var saveOpen by remember { mutableStateOf(false) }
+    var deleteName by remember { mutableStateOf<String?>(null) }
+    val pasted = remember(clipboard) { com.vibetoon.domain.anim.CurveClipboard.valid(clipboard) }
     val curveNow = rememberUpdatedState(curve)
     val selNow = rememberUpdatedState(sel)
     val line = MaterialTheme.colorScheme.primary
@@ -69,9 +85,11 @@ fun CurveEditorDialog(initial: Curve, onChange: (Curve, Boolean) -> Unit, onDism
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
-        title = { Text("Кривая плавности") },
+        title = { Text(title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // спринт 44: «Кривая ключа» - какой ключ правится (остальные не меняются)
+                if (note != null) Text(note, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box {
                         OutlinedButton(onClick = { menu = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp), modifier = Modifier.height(34.dp)) {
@@ -79,9 +97,37 @@ fun CurveEditorDialog(initial: Curve, onChange: (Curve, Boolean) -> Unit, onDism
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             for ((title, make) in Curve.PRESETS) DropdownMenuItem(text = { Text(title) }, onClick = { menu = false; sel = 0; push(make(), true) })
+                            // спринт 49: свои кривые - выбрать заново или удалить
+                            if (userCurves.isNotEmpty()) {
+                                HorizontalDivider()
+                                Text("Мои кривые", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                                for (u in userCurves) {
+                                    val c = u.curve
+                                    if (c != null) DropdownMenuItem(
+                                        // имя пользователя показывается как есть (без перевода)
+                                        text = { androidx.compose.material3.Text(u.name, maxLines = 1) },
+                                        leadingIcon = { CurvePreview(c, line) },
+                                        trailingIcon = {
+                                            if (onDeleteUser != null) IconButton(onClick = { menu = false; deleteName = u.name }, modifier = Modifier.size(32.dp)) {
+                                                Icon(Icons.Default.Delete, com.vibetoon.ui.i18n.L("Удалить"), Modifier.size(18.dp))
+                                            }
+                                        },
+                                        onClick = { menu = false; sel = 0; push(c, true) }
+                                    )
+                                }
+                            }
                         }
                     }
                     Text("Узлов: ${curve.nodes.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                }
+                // спринт 49: копировать / вставить кривую (в другой ключ или набор ключей), сохранить свою кривую
+                if (onCopy != null || onSaveUser != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val small = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    if (onCopy != null) {
+                        OutlinedButton(onClick = { onCopy(curve) }, contentPadding = small, modifier = Modifier.height(32.dp)) { Text("Копировать", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                        OutlinedButton(onClick = { pasted?.let { sel = 0; push(it, true) } }, enabled = pasted != null, contentPadding = small, modifier = Modifier.height(32.dp)) { Text("Вставить", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                    }
+                    if (onSaveUser != null) OutlinedButton(onClick = { saveOpen = true }, contentPadding = small, modifier = Modifier.height(32.dp)) { Text("Сохранить…", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 }
                 Canvas(
                     Modifier.size(width = 330.dp, height = 140.dp)
@@ -149,7 +195,8 @@ fun CurveEditorDialog(initial: Curve, onChange: (Curve, Boolean) -> Unit, onDism
                                 if (target < 0) return@detectDragGestures
                                 change.consume()
                                 val c = curveNow.value
-                                val n = c.nodes[idx]
+                                // спринт 54: кривую могли заменить во время жеста (пресет, Undo) - узла с этим номером уже нет
+                                val n = c.nodes.getOrNull(idx) ?: run { target = -1; return@detectDragGestures }
                                 val x = ((change.position.x - pad) / (size.width - pad * 2)).coerceIn(0f, 1f)
                                 val y = (Y_MIN + (1f - (change.position.y - pad) / (size.height - pad * 2)) * (Y_MAX - Y_MIN)).coerceIn(-1f, 2f)
                                 val nn = when (target) {
@@ -227,6 +274,58 @@ fun CurveEditorDialog(initial: Curve, onChange: (Curve, Boolean) -> Unit, onDism
             }
         }
     )
+    if (saveOpen && onSaveUser != null) SaveCurveDialog(userCurves, onDismiss = { saveOpen = false }) { name -> saveOpen = false; onSaveUser(name, curve) }
+    deleteName?.let { name ->
+        AlertDialog(
+            onDismissRequest = { deleteName = null },
+            confirmButton = { TextButton(onClick = { deleteName = null; onDeleteUser?.invoke(name) }) { Text("Удалить") } },
+            dismissButton = { TextButton(onClick = { deleteName = null }) { Text("Отмена") } },
+            title = { Text("Удалить кривую «$name»?") },
+            text = { Text("Кривая пропадёт из «Моих кривых». Ключи, которым она уже назначена, не изменятся.") }
+        )
+    }
+}
+
+/** Спринт 49: имя своей кривой; такое же имя перезаписывает прежнюю кривую (с предупреждением). */
+@Composable
+private fun SaveCurveDialog(list: List<UserCurves.Saved>, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    val base = com.vibetoon.ui.i18n.L(UserCurves.DEFAULT_NAME)
+    var name by remember { mutableStateOf(UserCurves.uniqueName(list, base)) }
+    val clean = UserCurves.sanitize(name)
+    val overwrite = clean != null && UserCurves.exists(list, clean)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = { clean?.let(onSave) }, enabled = clean != null) { Text(if (overwrite) "Перезаписать" else "Сохранить") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+        title = { Text("Сохранить кривую") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it.take(UserCurves.NAME_MAX) }, singleLine = true,
+                    label = { Text("Название", fontSize = 11.sp) }
+                )
+                Text(
+                    if (overwrite) "Кривая с таким названием уже есть - она будет перезаписана" else "Кривая появится в «Пресетах» → «Мои кривые» во всех проектах",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+            }
+        }
+    )
+}
+
+/** Маленький график кривой для списка «Мои кривые». */
+@Composable
+private fun CurvePreview(c: Curve, color: Color) {
+    Canvas(Modifier.size(width = 34.dp, height = 22.dp)) {
+        val path = Path()
+        for (i in 0..32) {
+            val t = i / 32f
+            val x = t * size.width
+            val y = size.height * (1f - (c.eval(t) - Y_MIN) / (Y_MAX - Y_MIN))
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(path, color, style = Stroke(2.dp.toPx()))
+    }
 }
 
 @Composable

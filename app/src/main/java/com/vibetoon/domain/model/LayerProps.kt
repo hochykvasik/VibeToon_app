@@ -22,14 +22,28 @@ data class LayerProps(
     /** Своё имя слоя (null - имя из файла). */
     val name: String? = null,
     /** Глубина для параллакса камеры: 0 - на плоскости камеры (двигается 1:1), больше - дальше (смещается и увеличивается медленнее), меньше нуля - ближе. */
-    val depth: Float = 0f
+    val depth: Float = 0f,
+    /**
+     * Спринт 38: маска слоя - id слоя-маски (-1 - нет). Альфа маски = видимость слоя (непрозрачное видно, стёртое скрыто),
+     * [maskInvert] - наоборот, [maskOff] - маска временно выключена (слой виден целиком, сама маска по-прежнему не рисуется).
+     */
+    val mask: Int = -1,
+    val maskInvert: Boolean = false,
+    val maskOff: Boolean = false,
+    /** Спринт 38: слой прикреплён к слою-пути (id, -1 - нет); [pathOrient] - поворачивается по направлению пути. */
+    val path: Int = -1,
+    val pathOrient: Boolean = false,
+    /** Спринт 45: обрезка (вкладка «Обрезка») - l, t, r, b в долях картинки слоя; null - картинка целиком (см. LayerCrop). */
+    val crop: List<Float>? = null
 ) {
     private fun c(v: Float) = if (v.isFinite()) v.coerceIn(-100f, 100f) else 0f
     fun normalized() = copy(
         opacity = if (opacity.isFinite()) opacity.coerceIn(0f, 1f) else 1f, blend = if (blend in LayerBlend.keys) blend else "norm",
         exposure = c(exposure), contrast = c(contrast), saturation = c(saturation), hue = c(hue),
         name = name?.trim()?.take(80)?.ifEmpty { null },
-        depth = if (depth.isFinite()) depth.coerceIn(-0.5f, 5f) else 0f
+        depth = if (depth.isFinite()) depth.coerceIn(-0.5f, 5f) else 0f,
+        mask = if (mask < 0) -1 else mask, path = if (path < 0) -1 else path,
+        crop = LayerCrop.of(crop)?.toList()
     )
     val hasColor get() = exposure != 0f || contrast != 0f || saturation != 0f || hue != 0f
 }

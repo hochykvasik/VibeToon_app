@@ -39,6 +39,20 @@ object SkinMath {
     }
 
     /**
+     * Спринт 49: смешанная дельта костей для веса [w] (sum w_i * D_i как одна аффинная матрица). Так как сумма весов = 1,
+     * результат применяется к точке так же, как [skin]: B(p) = sum(w_i * D_i(p)). Пустые веса - единичная матрица.
+     */
+    fun blend(w: List<Pair<Int, Float>>, deltas: List<Affine2D>): Affine2D {
+        if (w.isEmpty()) return Affine2D.IDENTITY
+        var a = 0f; var b = 0f; var c = 0f; var d = 0f; var tx = 0f; var ty = 0f
+        for ((i, wi) in w) {
+            val m = deltas[i]
+            a += wi * m.a; b += wi * m.b; c += wi * m.c; d += wi * m.d; tx += wi * m.tx; ty += wi * m.ty
+        }
+        return Affine2D(a, b, c, d, tx, ty)
+    }
+
+    /**
      * Позиция точки после скининга: sum(w_i * D_i(p)), где D_i - дельта позы кости (оси холста).
      * Без костей и без весов точка остаётся на месте.
      */

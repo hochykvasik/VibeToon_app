@@ -1,6 +1,7 @@
 package com.vibetoon.ui.inspector
 
 import androidx.compose.material.icons.filled.Colorize
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -20,7 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,12 +40,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.vibetoon.domain.paint.ColorPalette
+import com.vibetoon.domain.paint.ColorModels
+import com.vibetoon.domain.paint.PaletteExchange
+import com.vibetoon.domain.paint.UserPalette
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.rememberUpdatedState
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.min
@@ -63,23 +70,66 @@ fun ColorPickerDialog(
     onEyedropper: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val hsv = remember {
-        val a = FloatArray(3)
-        android.graphics.Color.colorToHSV(initial.toInt(), a)
-        a
-    }
-    var hue by remember { mutableFloatStateOf(hsv[0]) }
-    var sat by remember { mutableFloatStateOf(hsv[1]) }
-    var value by remember { mutableFloatStateOf(hsv[2]) }
+    val hsv = remember { ColorModels.hsbOf(initial) }
+    var hue by remember { mutableFloatStateOf(hsv.h) }
+    var sat by remember { mutableFloatStateOf(hsv.s) }
+    var value by remember { mutableFloatStateOf(hsv.v) }
     var hex by remember { mutableStateOf(hexOf(initial)) }
-    val prefs = androidx.compose.ui.platform.LocalContext.current.getSharedPreferences("vt_colors", android.content.Context.MODE_PRIVATE)
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val prefs = ctx.getSharedPreferences("vt_colors", android.content.Context.MODE_PRIVATE)
+    // Спринт 37: режим «Круг / RGB / HSB» запоминается между открытиями окна
+    var mode by remember { mutableStateOf(prefs.getInt("mode", ColorModels.MODE_WHEEL).takeIf { it in ColorModels.MODES } ?: ColorModels.MODE_WHEEL) }
     var palette by remember { mutableStateOf(ColorPalette.decode(prefs.getString("recent", null))) }
     fun saveColor(c: Long) {
         palette = ColorPalette.add(palette, c)
         prefs.edit().putString("recent", ColorPalette.encode(palette)).apply()
     }
+    // Спринт 39: свои палитры (в «vt_app» - попадают в резервную копию настроек), импорт/экспорт файлом
+    val appPrefs = ctx.getSharedPreferences("vt_app", android.content.Context.MODE_PRIVATE)
+    var palettes by remember { mutableStateOf(PaletteExchange.load(appPrefs.getString(PaletteExchange.PREF_KEY, null))) }
+    var palIndex by remember { mutableStateOf(-1) }   // -1 - последние цвета
+    var palMenu by remember { mutableStateOf(false) }
+    var palMore by remember { mutableStateOf(false) }
+    val appSt = com.vibetoon.ui.theme.LocalAppSettings.current
+    fun notify(ru: String) {
+        android.widget.Toast.makeText(ctx, com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, ru), android.widget.Toast.LENGTH_LONG).show()
+    }
+    fun storePalettes(list: List<UserPalette>) {
+        palettes = list
+        appPrefs.edit().putString(PaletteExchange.PREF_KEY, PaletteExchange.encode(list)).apply()
+    }
+    val palOut = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            val list = palettes.ifEmpty { listOf(UserPalette(com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, "Последние цвета"), palette)) }
+            val ok = list.any { it.colors.isNotEmpty() } && runCatching { ctx.contentResolver.openOutputStream(uri, "wt")?.use { it.write(PaletteExchange.encode(list).toByteArray()) } != null }.getOrDefault(false)
+            notify(if (ok) "Палитры экспортированы: ${list.size}" else "Не удалось сохранить файл палитры")
+        }
+    }
+    val palIn = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val text = runCatching { ctx.contentResolver.openInputStream(uri)?.use { com.vibetoon.domain.paint.BrushExchange.readLimited(it) ?: "\u0000too-big" } }.getOrNull()
+            when {
+                text == null -> notify("Не удалось открыть файл")
+                text == "\u0000too-big" -> notify(com.vibetoon.domain.paint.ExchangeError.TOO_BIG.ru)
+                else -> {
+                    val r = PaletteExchange.decode(text, com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, "Палитра"))
+                    if (r.ok) {
+                        val before = palettes.size
+                        val merged = PaletteExchange.merge(palettes, r.items)
+                        storePalettes(merged)
+                        if (merged.size > before) palIndex = before   // сразу показываем первую импортированную палитру
+                        val added = merged.size - before
+                        notify(if (added < r.items.size) "Импортировано палитр: $added, не поместилось: ${r.items.size - added} (не больше 50)" else PaletteExchange.report(r))
+                    } else notify(PaletteExchange.report(r))
+                }
+            }
+        }
+    }
+    val shownColors = palettes.getOrNull(palIndex)?.colors ?: palette
 
-    fun current(): Long = (Color.hsv(hue.coerceIn(0f, 360f), sat.coerceIn(0f, 1f), value.coerceIn(0f, 1f)).toArgb().toLong() and 0xFFFFFFFFL)
+    fun current(): Long = ColorModels.argb(hue.coerceIn(0f, 360f), sat.coerceIn(0f, 1f), value.coerceIn(0f, 1f))
+    /** Готовый цвет (палитра, HEX, RGB): оттенок серого/чёрного не сбрасывается в 0. */
+    fun setArgb(c: Long) { val h = ColorModels.hsbOf(c, hue, sat); hue = h.h; sat = h.s; value = h.v }
     fun push() {
         val c = current()
         hex = hexOf(c)
@@ -143,7 +193,26 @@ fun ColorPickerDialog(
                     drawCircle(Color.Black, 9.dp.toPx() + 1.5.dp.toPx(), p, style = Stroke(1.dp.toPx()))
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ScrubSlider("Яркость", value, 0f..1f, "${(value * 100).toInt()}%") { value = it; push() }
+                    // Спринт 37: точные ползунки RGB (0-255) и HSB (H 0-360°, S/B 0-100 %) рядом с кругом
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (m in ColorModels.MODES) FilterChip(selected = mode == m, onClick = { mode = m; prefs.edit().putInt("mode", m).apply() },
+                            label = { Text(ColorModels.modeLabel(m), fontSize = 12.sp) })
+                    }
+                    when (mode) {
+                        ColorModels.MODE_RGB -> {
+                            val rgb = ColorModels.rgbOf(current())
+                            ChannelSlider("R", rgb.r, 255, "", listOf(Color(0, rgb.g, rgb.b), Color(255, rgb.g, rgb.b))) { setArgb(ColorModels.argb(rgb.copy(r = it))); push() }
+                            ChannelSlider("G", rgb.g, 255, "", listOf(Color(rgb.r, 0, rgb.b), Color(rgb.r, 255, rgb.b))) { setArgb(ColorModels.argb(rgb.copy(g = it))); push() }
+                            ChannelSlider("B", rgb.b, 255, "", listOf(Color(rgb.r, rgb.g, 0), Color(rgb.r, rgb.g, 255))) { setArgb(ColorModels.argb(rgb.copy(b = it))); push() }
+                        }
+                        ColorModels.MODE_HSB -> {
+                            val (hi, si, bi) = ColorModels.hsbInts(ColorModels.Hsb(hue, sat, value))
+                            ChannelSlider("H", hi, 360, "°", (0..6).map { Color.hsv((it * 60f) % 360f, 1f, 1f) }) { hue = it.toFloat().coerceIn(0f, 360f); if (value < 0.05f && sat > 0f) value = 1f; push() }
+                            ChannelSlider("S", si, 100, "%", listOf(Color.hsv(hue % 360f, 0f, value), Color.hsv(hue % 360f, 1f, value))) { sat = it / 100f; push() }
+                            ChannelSlider("B", bi, 100, "%", listOf(Color.Black, Color.hsv(hue % 360f, sat, 1f))) { value = it / 100f; push() }
+                        }
+                        else -> ScrubSlider("Яркость", value, 0f..1f, "${(value * 100).toInt()}%") { value = it; push() }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         // превью: слева старый цвет, справа новый
                         Row(Modifier.clip(RoundedCornerShape(10.dp)).border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), RoundedCornerShape(10.dp))) {
@@ -155,12 +224,10 @@ fun ColorPickerDialog(
                             onValueChange = { v ->
                                 val clean = v.uppercase().filter { it.isDigit() || it in 'A'..'F' || it == '#' }.take(7)
                                 hex = clean
-                                val digits = clean.removePrefix("#")
-                                if (digits.length == 6) {
-                                    val argb = 0xFF000000L or digits.toLong(16)
-                                    val a = FloatArray(3)
-                                    android.graphics.Color.colorToHSV(argb.toInt(), a)
-                                    hue = a[0]; sat = a[1]; value = a[2]
+                                // 6 знаков или короткая запись #RGB (спринт 37)
+                                val argb = if (clean.removePrefix("#").length == 6 || clean.removePrefix("#").length == 3) ColorModels.parseHex(clean) else null
+                                if (argb != null) {
+                                    setArgb(argb)
                                     onColor(argb)
                                 }
                             },
@@ -169,18 +236,54 @@ fun ColorPickerDialog(
                             modifier = Modifier.weight(1f)
                         )
                     }
+                    // спринт 39: выбор палитры (последние цвета или своя) и меню «Импорт / Экспорт»
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.weight(1f)) {
+                            OutlinedButton(onClick = { palMenu = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(30.dp)) {
+                                com.vibetoon.ui.DropText(palettes.getOrNull(palIndex)?.name ?: "Последние цвета", 12.sp)
+                            }
+                            androidx.compose.material3.DropdownMenu(expanded = palMenu, onDismissRequest = { palMenu = false }) {
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Последние цвета") }, onClick = { palMenu = false; palIndex = -1 })
+                                for ((i, pal) in palettes.withIndex())
+                                    androidx.compose.material3.DropdownMenuItem(text = { Text("${pal.name} (${pal.colors.size})") }, onClick = { palMenu = false; palIndex = i })
+                            }
+                        }
+                        Box {
+                            androidx.compose.material3.IconButton(onClick = { palMore = true }, modifier = Modifier.size(30.dp)) {
+                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.MoreVert, com.vibetoon.ui.i18n.L("Палитры"))
+                            }
+                            androidx.compose.material3.DropdownMenu(expanded = palMore, onDismissRequest = { palMore = false }) {
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Новая палитра из последних цветов") }, enabled = palette.isNotEmpty() && palettes.size < PaletteExchange.MAX_PALETTES, onClick = {
+                                    palMore = false
+                                    val name = com.vibetoon.ui.i18n.translate(ctx, appSt?.effectiveLang, "Палитра") + " ${palettes.size + 1}"
+                                    storePalettes(PaletteExchange.merge(palettes, listOf(UserPalette(name, palette))))
+                                    palIndex = palettes.size - 1
+                                    notify("Палитра сохранена")
+                                })
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Импорт палитры…") }, onClick = { palMore = false; palIn.launch(arrayOf("*/*")) })
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Экспорт палитр…") }, onClick = { palMore = false; palOut.launch("vibetoon-palettes.json") })
+                                if (palIndex >= 0) androidx.compose.material3.DropdownMenuItem(text = { Text("Удалить палитру") }, onClick = {
+                                    palMore = false
+                                    storePalettes(palettes.filterIndexed { i, _ -> i != palIndex })
+                                    palIndex = -1
+                                    notify("Палитра удалена")
+                                })
+                            }
+                        }
+                    }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(onClick = { saveColor(current()) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("+") }
-                        for (c in palette) {
+                        OutlinedButton(onClick = {
+                            val pal = palettes.getOrNull(palIndex)
+                            if (pal == null) saveColor(current())
+                            else if (pal.colors.size >= PaletteExchange.MAX_COLORS) notify("В палитре уже 64 цвета")
+                            else storePalettes(palettes.mapIndexed { i, p -> if (i == palIndex) p.copy(colors = (p.colors + (current() and 0xFFFFFFFFL)).distinct()) else p })
+                        }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("+") }
+                        for (c in shownColors) {
                             Box(
                                 Modifier.size(28.dp).clip(CircleShape).background(Color(c.toInt() or 0xFF000000.toInt()))
                                     .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), CircleShape)
                                     .pointerInput(c) {
-                                        detectTapGestures {
-                                            val a = FloatArray(3)
-                                            android.graphics.Color.colorToHSV(c.toInt(), a)
-                                            hue = a[0]; sat = a[1]; value = a[2]; push()
-                                        }
+                                        detectTapGestures { setArgb(c); push() }
                                     }
                             )
                         }
@@ -195,4 +298,48 @@ fun ColorPickerDialog(
     )
 }
 
-private fun hexOf(argb: Long) = "#%06X".format(argb and 0xFFFFFFL)
+private fun hexOf(argb: Long) = ColorModels.hex(argb)
+
+/**
+ * Спринт 37: ползунок канала цвета - подпись, полоса-градиент (касание и протяжка ставят значение там, где палец) и
+ * поле для точного числа 0..[max]. Ввод больше [max] обрезается, пустое поле значение не меняет.
+ */
+@Composable
+private fun ChannelSlider(label: String, value: Int, max: Int, suffix: String, track: List<Color>, onValue: (Int) -> Unit) {
+    val out by rememberUpdatedState(onValue)
+    var text by remember(value) { mutableStateOf(value.toString()) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 13.sp, modifier = Modifier.width(16.dp))
+        Canvas(
+            Modifier.weight(1f).height(26.dp)
+                .pointerInput(max) {
+                    detectTapGestures { o -> out(Math.round(o.x / size.width.coerceAtLeast(1) * max).coerceIn(0, max)) }
+                }
+                .pointerInput(max) {
+                    detectDragGestures(onDragStart = { o -> out(Math.round(o.x / size.width.coerceAtLeast(1) * max).coerceIn(0, max)) }) { change, _ ->
+                        change.consume(); out(Math.round(change.position.x / size.width.coerceAtLeast(1) * max).coerceIn(0, max))
+                    }
+                }
+        ) {
+            val h = size.height
+            val r = androidx.compose.ui.geometry.CornerRadius(h / 2f, h / 2f)
+            drawRoundRect(Brush.horizontalGradient(track), topLeft = Offset(0f, h * 0.2f), size = androidx.compose.ui.geometry.Size(size.width, h * 0.6f), cornerRadius = r)
+            val x = (value.toFloat() / max).coerceIn(0f, 1f) * size.width
+            drawCircle(Color.White, h * 0.42f, Offset(x, h / 2f), style = Stroke(3.dp.toPx()))
+            drawCircle(Color.Black, h * 0.42f + 1.5.dp.toPx(), Offset(x, h / 2f), style = Stroke(1.dp.toPx()))
+        }
+        OutlinedTextField(
+            value = text,
+            onValueChange = { v ->
+                val digits = v.filter { it.isDigit() }.take(3)
+                text = digits
+                ColorModels.parseChannel(digits, max)?.let { out(it) }
+            },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodySmall,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+            modifier = Modifier.width(72.dp)
+        )
+        Text(suffix, fontSize = 12.sp, modifier = Modifier.width(14.dp))
+    }
+}

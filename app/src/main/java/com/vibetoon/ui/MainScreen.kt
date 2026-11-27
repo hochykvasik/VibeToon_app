@@ -12,6 +12,8 @@ import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,7 +33,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilterChip
@@ -64,8 +66,10 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.motionEventSpy
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -102,9 +106,10 @@ private fun axisRatios(a: PointerInputChange, b: PointerInputChange): Pair<Float
 }
 
 @Composable
-fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
+fun MainScreen(vm: MainViewModel, projectId: String, pendingPsd: android.net.Uri? = null, onBack: () -> Unit) {
     // Открываем проект при входе на экран; системная кнопка "назад" возвращает к списку проектов
-    LaunchedEffect(projectId) { vm.openProject(projectId) }
+    // (пакет 13: PSD, выбранный в «Импорте» на экране проектов, загружается сразу после открытия нового проекта)
+    LaunchedEffect(projectId) { vm.openProject(projectId, pendingPsd) }
     // системная «Назад» требует двойного нажатия, чтобы случайно не выйти из редактора (стрелка в шапке выходит сразу)
     var backAt by remember { mutableLongStateOf(0L) }
     val selectionExtractInProgress by vm.selectionExtractBusy.collectAsStateWithLifecycle()
@@ -116,7 +121,14 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
     // Автосохранение при сворачивании приложения
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) vm.flushSave() }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> vm.onAppPaused()
+                Lifecycle.Event.ON_RESUME -> vm.onAppResumed()
+                Lifecycle.Event.ON_STOP -> vm.flushSave()
+                else -> Unit
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
@@ -128,25 +140,68 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
     var showTextDialog by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     // Меню "+": картинка, видео, аудио - тот же системный диалог, разные типы файлов
+    val importSettings = com.vibetoon.ui.theme.LocalAppSettings.current
     val openImage = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) vm.importMedia(MediaKind.IMAGE, uri)
+        // «Import Images as Symbols» (пакет 10): картинка сразу становится символом
+        if (uri != null) { if (importSettings?.importImagesAsSymbols == true) vm.importMediaAsSymbol(uri) else vm.importMedia(MediaKind.IMAGE, uri) }
+    }
+    val openImageAsSymbol = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importMediaAsSymbol(uri)
+    }
+    // пакет 11: секвенция картинок - покадровый слой или символ
+    var sequenceAsSymbol by remember { mutableStateOf(false) }
+    val openSequence = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.importImageSequence(uris, sequenceAsSymbol)
     }
     val openVideo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.VIDEO, uri)
     }
+    val openPsdInsert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.insertPsdFromUri(uri)   // пакет 23
+    }
+    val openSvgInsert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.insertSvg(uri)   // спринт 36
+    }
+    val openVideoAsSymbol = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importVideoAsSymbol(uri)   // пакет 22
+    }
     val openAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importMedia(MediaKind.AUDIO, uri)
+    }
+    // спринт 56: картинка для плавающего окна референса (в проект не добавляется)
+    val openReference = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.loadReference(uri)
     }
     val addActions = AddActions(
         psd = { openPsd.launch(arrayOf("*/*")) },
         image = { openImage.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
         video = { openVideo.launch(arrayOf("video/mp4", "video/*")) },
         audio = { openAudio.launch(arrayOf("audio/mpeg", "audio/wav", "audio/x-wav", "audio/*")) },
-        text = { showTextDialog = true }
+        text = { showTextDialog = true },
+        imageAsSymbol = { openImageAsSymbol.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
+        sequence = { asSymbol -> sequenceAsSymbol = asSymbol; openSequence.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) },
+        videoAsSymbol = { openVideoAsSymbol.launch(arrayOf("video/mp4", "video/*")) },
+        psdInsert = { openPsdInsert.launch(arrayOf("*/*")) },
+        svgInsert = { openSvgInsert.launch(arrayOf("image/svg+xml", "text/xml", "application/xml", "*/*")) },
+        reference = { openReference.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/*")) }
     )
 
     com.vibetoon.ui.shell.EditorShell(vm, onBack, addActions) { showExport = true }
+    // спринт 56: плавающее окно референса - над редактором, под окнами и подсказками
+    ReferenceWindowOverlay(vm, onReplace = addActions.reference)
     com.vibetoon.ui.shell.CoachOverlay()
+    // спринт 36: итог вставки SVG - что не перенесено
+    val svgNotes by vm.svgNotes.collectAsStateWithLifecycle()
+    if (svgNotes.isNotEmpty()) AlertDialog(
+        onDismissRequest = vm::dismissSvgNotes,
+        title = { Text("Импорт SVG: что не перенесено") },
+        text = {
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (note in svgNotes) Text("• " + com.vibetoon.ui.i18n.L(note), fontSize = 13.sp)
+            }
+        },
+        confirmButton = { TextButton(vm::dismissSvgNotes) { Text("Понятно") } }
+    )
     val extracting by vm.selectionExtractBusy.collectAsStateWithLifecycle()
     if (extracting) AlertDialog(
         onDismissRequest = {},
@@ -155,7 +210,22 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
         confirmButton = {}
     )
     val curveOpen by vm.curveEditor.collectAsStateWithLifecycle()
-    if (curveOpen) com.vibetoon.ui.timeline.CurveEditorDialog(vm.currentCurve(), onChange = { c, first -> vm.setCurve(c, first) }) { vm.openCurveEditor(false) }
+    val curveTitle by vm.curveTitle.collectAsStateWithLifecycle()
+    val curveNote by vm.curveNote.collectAsStateWithLifecycle()
+    val curveClip by vm.curveClipboard.collectAsStateWithLifecycle()
+    val curveSettings = com.vibetoon.ui.theme.LocalAppSettings.current
+    // спринт 49: «Копировать»/«Вставить» и свои кривые («Сохранить…», «Пресеты» → «Мои кривые», удаление)
+    if (curveOpen) com.vibetoon.ui.timeline.CurveEditorDialog(
+        vm.currentCurve(), onChange = { c, first -> vm.setCurve(c, first) }, title = curveTitle, note = curveNote,
+        clipboard = curveClip, onCopy = vm::copyCurve,
+        userCurves = curveSettings?.userCurves.orEmpty(),
+        onSaveUser = curveSettings?.let { st -> { name: String, c: com.vibetoon.domain.anim.Curve ->
+            val had = com.vibetoon.domain.anim.UserCurves.exists(st.userCurves, name)
+            st.saveUserCurves(com.vibetoon.domain.anim.UserCurves.save(st.userCurves, name, c))
+            vm.showMessage(if (had) "Кривая перезаписана: $name" else "Кривая сохранена: $name")
+        } },
+        onDeleteUser = curveSettings?.let { st -> { name: String -> st.saveUserCurves(com.vibetoon.domain.anim.UserCurves.delete(st.userCurves, name)) } }
+    ) { vm.openCurveEditor(false) }
 
     ExportDialog(vm, showExport) { showExport = false }
 
@@ -187,7 +257,18 @@ fun MainScreen(vm: MainViewModel, projectId: String, onBack: () -> Unit) {
 /** Что запускает меню "+" (системные диалоги выбора файла). */
 class AddActions(
     val psd: () -> Unit, val image: () -> Unit, val video: () -> Unit, val audio: () -> Unit,
-    val text: () -> Unit
+    val text: () -> Unit,
+    val imageAsSymbol: () -> Unit = {},
+    /** Пакет 11: секвенция картинок (true - как символ). */
+    val sequence: (Boolean) -> Unit = {},
+    /** Пакет 22: видео как символ (кадры - покадровый слой внутри символа). */
+    val videoAsSymbol: () -> Unit = {},
+    /** Пакет 23: другой PSD в текущий проект (по PSD Import Mode). */
+    val psdInsert: () -> Unit = {},
+    /** Спринт 36: фигуры SVG - векторными слоями текущего проекта. */
+    val svgInsert: () -> Unit = {},
+    /** Спринт 56: картинка в плавающее окно референса (не в проект). */
+    val reference: () -> Unit = {}
 )
 
 @Composable
@@ -212,8 +293,11 @@ fun StatusLine(vm: MainViewModel) {
     }
     val errorTemplate = com.vibetoon.ui.i18n.L("Ошибка: {}")
     val errorMessage = (state as? UiState.Error)?.message?.let { com.vibetoon.ui.i18n.localizeDiagnostic(it) }
-    val text = if (audioReadiness is com.vibetoon.domain.project.AudioReadiness.Preparing) "Подготовка аудио…" else when (val s = state) {
-        UiState.Idle -> if (!vm.hasLayers) "Нажмите «＋ Добавить», чтобы импортировать PSD, изображение, видео или аудио" else ""
+    val opening by vm.opening.collectAsStateWithLifecycle()
+    val text = if (audioReadiness is com.vibetoon.domain.project.AudioReadiness.Preparing) "Подготовка аудио…"
+        else if (opening && state !is UiState.Error) "Загрузка проекта…"   // спринт 47: не «пустой проект», пока данные не загружены
+        else when (val s = state) {
+        UiState.Idle -> if (!vm.hasLayers) "Импорт PSD, изображения, видео или аудио - в «Действиях» (сверху слева); рисовать можно сразу кистью" else ""
         is UiState.Message -> com.vibetoon.ui.i18n.boneStatusMessage(s.text)
         UiState.Loading -> "Загрузка…"
         is UiState.Rendering -> "Загрузка слоёв: ${s.done}/${s.total}"
@@ -221,10 +305,52 @@ fun StatusLine(vm: MainViewModel) {
         is UiState.Error -> errorTemplate.replace("{}", errorMessage ?: s.message)
     }
     // на очень низком холсте (поднятый таймлайн) плашка только мешает
-    if (text.isEmpty() || (vm.canvasHeightPx < 300f && state !is UiState.Error && state != UiState.Loading && audioReadiness !is com.vibetoon.domain.project.AudioReadiness.Preparing)) return
+    if (text.isEmpty() || (vm.canvasHeightPx < 300f && !opening && state !is UiState.Error && state != UiState.Loading && audioReadiness !is com.vibetoon.domain.project.AudioReadiness.Preparing)) return
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), shape = RoundedCornerShape(6.dp)) {
         Box(Modifier.widthIn(max = 460.dp).padding(horizontal = 8.dp, vertical = 2.dp)) {
             Text(text, maxLines = 2, fontSize = 13.sp)
+        }
+    }
+}
+
+/**
+ * Спринт 47: пока проект открывается, холст закрыт плашкой с индикатором (доля загруженных текстур, если уже
+ * известна). Касания холста в это время не доходят до инструментов.
+ */
+@Composable
+private fun ProjectOpeningOverlay(vm: MainViewModel) {
+    val opening by vm.opening.collectAsStateWithLifecycle()
+    if (!opening) return
+    val progress by vm.openProgress.collectAsStateWithLifecycle()
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(Modifier.widthIn(max = 260.dp).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Загрузка проекта…", fontSize = 14.sp)
+            if (progress >= 0f) androidx.compose.material3.LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+            else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/** Пакет 19-20: ручки Безье (линии от узла и квадратики) - выбранный контур и контур пера в работе. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBezierHandles(d: com.vibetoon.ui.ToolDrag, dark: Color) {
+    d.handles?.let { h ->
+        val hl = 5.dp.toPx()
+        for (k in 0 until h.size / 6) {
+            val n = Offset(h[k * 6], h[k * 6 + 1])
+            for (w in 0..1) {
+                val e = Offset(h[k * 6 + 2 + w * 2], h[k * 6 + 3 + w * 2])
+                if (e == n) continue
+                // пакет 21: независимые ручки - сиреневые
+                val tint = if (d.freeHandles?.getOrNull(k) == true) Color(0xFFCE93D8) else Color(0xFF26C6DA)
+                drawLine(dark, n, e, 3.dp.toPx()); drawLine(tint, n, e, 1.5f.dp.toPx())
+                val on = k * 2 + w == d.selHandle
+                drawRect(dark, Offset(e.x - hl - 1.5f, e.y - hl - 1.5f), androidx.compose.ui.geometry.Size(hl * 2 + 3f, hl * 2 + 3f))
+                drawRect(if (on) Color(0xFFFFB300) else tint, Offset(e.x - hl, e.y - hl), androidx.compose.ui.geometry.Size(hl * 2, hl * 2))
+            }
         }
     }
 }
@@ -254,16 +380,21 @@ private fun RasterOverlayLayer(vm: MainViewModel) {
                     if (d.kind == 0) { drawRect(dark, tl, sz, style = androidx.compose.ui.graphics.drawscope.Stroke(4.dp.toPx())); drawRect(white, tl, sz, style = st) }
                     else { drawOval(dark, tl, sz, style = androidx.compose.ui.graphics.drawscope.Stroke(4.dp.toPx())); drawOval(white, tl, sz, style = st) }
                 }
-                4 -> for (i in 0 until p.size / 2) {
-                    val on = i == d.sel
-                    drawCircle(dark, (if (on) 9 else 6).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
-                    drawCircle(if (on) Color(0xFFFFB300) else white, (if (on) 7 else 4).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
+                4 -> {
+                    drawBezierHandles(d, dark)
+                    for (i in 0 until p.size / 2) {
+                        val on = i == d.sel
+                        drawCircle(dark, (if (on) 9 else 6).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
+                        drawCircle(if (on) Color(0xFFFFB300) else white, (if (on) 7 else 4).dp.toPx(), Offset(p[i * 2], p[i * 2 + 1]))
+                    }
                 }
                 2, 3, 5 -> {
-                    for (i in 0 until p.size / 2 - 1) {
-                        val a = Offset(p[i * 2], p[i * 2 + 1]); val b = Offset(p[i * 2 + 2], p[i * 2 + 3])
+                    val line = d.curve ?: p   // пакет 20: контур пера с ручками - кривая
+                    for (i in 0 until line.size / 2 - 1) {
+                        val a = Offset(line[i * 2], line[i * 2 + 1]); val b = Offset(line[i * 2 + 2], line[i * 2 + 3])
                         drawLine(dark, a, b, 4.dp.toPx()); drawLine(white, a, b, 2.dp.toPx())
                     }
+                    if (d.kind == 3) drawBezierHandles(d, dark)
                     if (d.kind == 5 && p.size >= 2) {
                         drawCircle(Color(0xFF26C6DA).copy(alpha = .3f), 24.dp.toPx(), Offset(p[0], p[1]))
                         drawCircle(Color(0xFF26C6DA), 5.dp.toPx(), Offset(p[0], p[1]))
@@ -276,7 +407,91 @@ private fun RasterOverlayLayer(vm: MainViewModel) {
     }
 }
 
-/** Холст OpenGL с прозрачным слоем жестов поверх него. */
+/** Касание пера (TOOL_TYPE_STYLUS / TOOL_TYPE_ERASER). */
+private fun PointerInputChange.isPen(): Boolean = type == PointerType.Stylus || type == PointerType.Eraser
+
+/** Спринт 58: новое касание пера в событии, которое должно забрать жест, начатый ладонью ([StylusTakeover]). */
+private fun penTakeover(vm: MainViewModel, ev: PointerEvent, gestureByTouch: Boolean): PointerInputChange? =
+    ev.changes.firstOrNull { it.isPen() && com.vibetoon.domain.input.StylusTakeover.shouldTakeOver(gestureByTouch, it.pressed, it.previousPressed, vm.paintToolActive()) }
+
+/**
+ * Спринт 58: остаток жеста после перехвата пером. Перо рисует штрих (те же правила, что у обычного штриха пером:
+ * обратный конец и кнопка, нажим с историей, наклон, отмена системой, фантом на отпускании), касания пальцем
+ * поглощаются. Пока ладонь лежит, каждое новое касание пера - новый штрих. Возвращается, когда отпущены все указатели.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)   // PointerInputChange.historical
+private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.penStrokesAfterTakeover(
+    vm: MainViewModel, first: PointerInputChange, tracker: StylusTracker, density: Float
+) {
+    var pen: PointerInputChange? = first
+    while (true) {
+        val down = pen
+        if (down != null && vm.paintToolActive()) {
+            vm.paintStylus(true)
+            val draws = vm.stylusStart(down.type == PointerType.Eraser || tracker.eraserTip, tracker.barrelPressed, down.position.x, down.position.y)
+            var lastP = com.vibetoon.domain.input.StylusSample.pressure(down.pressure, true)
+            var lastPos = down.position
+            if (draws) vm.paintTilt(tracker.tiltRadians, tracker.orientationRadians, first = true)
+            if (draws && vm.paintDown(down.position.x, down.position.y, lastP, true)) {
+                down.consume()
+                var cancelled = false
+                while (true) {
+                    val ev = try { awaitPointerEvent() } catch (e: kotlinx.coroutines.CancellationException) {
+                        vm.paintCancel(); vm.paintStylus(false); vm.stylusTipEnd(); throw e
+                    }
+                    ev.changes.filter { !it.isPen() }.forEach { it.consume() }   // ладонь не участвует
+                    val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!c.pressed && com.vibetoon.domain.input.StylusSample.release(c.isConsumed, c.uptimeMillis, c.previousUptimeMillis,
+                            tracker.canceled(c.uptimeMillis)) == com.vibetoon.domain.input.StylusSample.Release.CANCEL) {
+                        vm.paintCancel(); cancelled = true; break
+                    }
+                    if (!c.pressed) {
+                        if (com.vibetoon.domain.input.StylusSample.keepReleasePoint(lastPos.x, lastPos.y, c.position.x, c.position.y, density))
+                            vm.paintMove(c.position.x, c.position.y, com.vibetoon.domain.input.StylusSample.releasePressure(c.pressure, true, lastP))
+                        break
+                    }
+                    val pm = com.vibetoon.domain.input.StylusSample.pressure(c.pressure, true, lastP)
+                    vm.paintTilt(tracker.tiltRadians, tracker.orientationRadians)
+                    val hp = com.vibetoon.domain.input.StylusSample.historical(tracker.historyFor(c.uptimeMillis), lastP, pm, c.historical.size, true)
+                    c.historical.forEachIndexed { i, h -> vm.paintMove(h.position.x, h.position.y, hp[i]) }
+                    vm.paintMove(c.position.x, c.position.y, pm)
+                    lastP = pm; lastPos = c.position
+                    c.consume()
+                }
+                if (!cancelled) vm.paintUp()
+            }
+            vm.stylusTipEnd()
+            vm.paintStylus(false)
+        }
+        pen = null
+        // ладонь ещё лежит: ждём следующего касания пера или отпускания всех указателей
+        var any = false
+        while (pen == null) {
+            val ev = awaitPointerEvent()
+            any = ev.changes.any { it.pressed }
+            pen = penTakeover(vm, ev, gestureByTouch = true)
+            ev.changes.filter { it !== pen }.forEach { it.consume() }
+            if (!any) break
+        }
+        if (pen == null && !any) return
+    }
+}
+
+/**
+ * Спринт 42: поверхность OpenGL на всё окно редактора. Её размер не зависит от панелей (таймлайн, правая панель,
+ * полный экран) - они непрозрачно лежат поверх, а холст вписывается в видимую область (RenderHost.setViewRect).
+ * Поэтому при движении панелей буфер не растягивается и холст не сплющивается.
+ */
+@Composable
+fun EditorSurface(vm: MainViewModel, modifier: Modifier) {
+    AndroidView(
+        factory = { ctx -> VtGLSurfaceView(ctx).also { it.onContextRecreated = { vm.onGlContextRecreated() }; it.onTextureEvents = { ev -> vm.onTextureEvents(ev) }; it.onExportParked = { on -> vm.onExportParked(on) }; RenderHost.view = it } },
+        onRelease = { it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
+        modifier = modifier
+    )
+}
+
+/** Прозрачный слой жестов и наложений над видимой областью холста (сама поверхность - [EditorSurface]). */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
@@ -284,30 +499,36 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
     val slop = config.touchSlop
     val longPressMillis = config.longPressTimeoutMillis
     Box(modifier) {
-        AndroidView(
-            factory = { ctx -> VtGLSurfaceView(ctx).also { RenderHost.view = it } },
-            onRelease = { it.releaseNative(); if (RenderHost.view === it) RenderHost.view = null },
-            modifier = Modifier.matchParentSize()
-        )
         if (com.vibetoon.ui.theme.LocalAppSettings.current?.showGrid == true) CanvasGridLayer(vm)
         MotionPathLayer(vm)
         BoneOverlayLayer(vm)
+        PathOverlayLayer(vm)   // спринт 38: путь слоя-пути
         WarpOverlayLayer(vm)
         MeshOverlayLayer(vm)
         PinOverlayLayer(vm)
         BrushCircleLayer(vm)
+        CameraAngleBadge(vm)
+        PerfHudLayer(vm)
+        PivotOverlay(vm)
         RulerGuideLayer(vm)
+        DrawingGuideLayer(vm)
         PaintCursorLayer(vm)
+        PressureHudLayer(vm)
         PerspOverlayLayer(vm)
+        ProjectOpeningOverlay(vm)   // спринт 47: индикатор открытия проекта сразу, без пустого холста
         RasterOverlayLayer(vm)
+        SelectionTransformLayer(vm)
         MarqueeOverlay(vm)
         val gs = com.vibetoon.ui.theme.LocalAppSettings.current
         val hoverEnabled = gs?.cursorHoverPreview == true && gs.cursorEnabled
         val longPressEnabled = gs?.longPressPicker == true
         val touchFilter = remember { com.vibetoon.domain.input.StylusTouchFilter() }
+        val stylusTracker = remember { StylusTracker() }
         LaunchedEffect(hoverEnabled) { if (!hoverEnabled) vm.clearPaintHover() }
         Box(
             modifier = Modifier.matchParentSize().onSizeChanged { vm.onViewSize(it.width.toFloat(), it.height.toFloat()) }
+            // Stylus sprint: только наблюдение MotionEvent - нажим исторических точек, наклон, TOOL_TYPE_ERASER
+            .motionEventSpy { stylusTracker.onEvent(it) }
             .pointerInput(hoverEnabled) {
                 awaitPointerEventScope {
                     while (true) {
@@ -327,6 +548,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                         val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                         val pens = event.changes.filter { it.type == PointerType.Stylus || it.type == PointerType.Eraser }
                         if (pens.isNotEmpty()) touchFilter.observePen(pens.any { it.pressed }, pens.maxOf { it.uptimeMillis })
+                        // спринт 44: защита от ладони у рисующих инструментов - от любого контакта пера (не только штриха кистью)
+                        if (pens.any { it.pressed || it.previousPressed }) vm.paintStylus(pens.any { it.pressed })
                     }
                 }
             }
@@ -364,7 +587,8 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                     var lastUp = t0
                     while (true) {
                         val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                        if (gs?.touchDetection == true && ev.changes.any { (it.type == PointerType.Stylus || it.type == PointerType.Eraser) && (it.pressed || it.previousPressed) }) validTouch = false
+                        // спринт 58: жест с пером - не «касание 2/3 пальцами» (ладонь + точка пером не делают Undo), при любой настройке
+                        if (ev.changes.any { it.isPen() && (it.pressed || it.previousPressed) }) validTouch = false
                         for (c in ev.changes) {
                             if (c.pressed && c.id !in start) start[c.id] = c.position
                             start[c.id]?.let { s -> maxMove = maxOf(maxMove, (c.position - s).getDistance()) }
@@ -387,7 +611,13 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                     if (touchFilter.blockTouch(gs?.touchDetection == true, down.type == PointerType.Touch, down.uptimeMillis)) {
                         tapUp = -1L
                         down.consume()
-                        do { val ev = awaitPointerEvent(); ev.changes.filter { it.type == PointerType.Touch }.forEach { it.consume() } } while (ev.changes.any { it.pressed })
+                        do {
+                            val ev = awaitPointerEvent()
+                            // спринт 58: перо коснулось при лежащей ладони - рисует (а не ждёт, пока ладонь поднимут)
+                            val pen = penTakeover(vm, ev, gestureByTouch = true)
+                            if (pen != null) { penStrokesAfterTakeover(vm, pen, stylusTracker, density); break }
+                            ev.changes.filter { it.type == PointerType.Touch }.forEach { it.consume() }
+                        } while (ev.changes.any { it.pressed })
                         vm.finishCanvasGesture()
                         return@awaitEachGesture
                     }
@@ -426,13 +656,24 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                     // Рисование (Кисть / Ластик): штрих идёт сразу, без порога сдвига. Перо: давление и исторические точки;
                     // касания пальцем рядом с пером игнорируются (ладонь). Второй палец при рисовании пальцем отменяет штрих
                     // и превращается в жест камеры (щипок/сдвиг).
+                    if (vm.rasterToolActive() && down.type == PointerType.Touch && vm.paintPalmBlocked()) {
+                        // спринт 44: ладонь рядом с пером не запускает растровый инструмент (как у кисти)
+                        down.consume()
+                        do { val e = awaitPointerEvent(); e.changes.forEach { it.consume() } } while (e.changes.any { it.pressed })
+                        vm.finishCanvasGesture()
+                        return@awaitEachGesture
+                    }
                     if (vm.rasterToolActive()) {
                         if (vm.rasterDown(down.position.x, down.position.y)) {
                             down.consume()
                             var cancelled = false
                             while (true) {
-                                val ev = awaitPointerEvent()
+                                val ev = try { awaitPointerEvent() } catch (e: kotlinx.coroutines.CancellationException) { vm.rasterCancel(); throw e }
                                 val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!c.pressed && com.vibetoon.domain.input.StylusSample.release(c.isConsumed, c.uptimeMillis, c.previousUptimeMillis,
+                                        stylusTracker.canceled(c.uptimeMillis)) == com.vibetoon.domain.input.StylusSample.Release.CANCEL) {
+                                    vm.rasterCancel(); cancelled = true; break
+                                }
                                 val secondFinger = ev.changes.firstOrNull { it.id != down.id && it.pressed && !(gs?.touchDetection == true && (down.type == PointerType.Stylus || down.type == PointerType.Eraser) && it.type == PointerType.Touch) }
                                 if (secondFinger != null) {
                                     if (c.pressed && vm.beginSelectionGesture(c.position.x, c.position.y, secondFinger.position.x, secondFinger.position.y)) {
@@ -470,31 +711,75 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                             down.consume()
                             do {
                                 val e = awaitPointerEvent()
+                                // спринт 58: ладонь легла сразу после штриха, перо снова коснулось - новый штрих
+                                val pen = penTakeover(vm, e, gestureByTouch = true)
+                                if (pen != null) { penStrokesAfterTakeover(vm, pen, stylusTracker, density); break }
                                 e.changes.forEach { it.consume() }
                             } while (e.changes.any { it.pressed })
+                            vm.finishCanvasGesture()
                             return@awaitEachGesture
                         }
                         if (stylus) vm.paintStylus(true)
-                        val firstP = if (stylus) down.pressure.coerceIn(0.05f, 1f) else 1f
-                        if (vm.paintDown(down.position.x, down.position.y, firstP)) {
+                        // Stylus sprint: обратный конец пера - ластик; нажим 1.0 для пальца и пера без датчика;
+                        // исторические точки получают свой нажим (MotionEvent или интерполяция), фантом на отпускании отбрасывается.
+                        // Спринт 44: кнопка на корпусе пера - ластик, пока зажата, или пипетка (настройка «Кнопка пера»)
+                        if (stylus && !vm.stylusStart(down.type == PointerType.Eraser || stylusTracker.eraserTip, stylusTracker.barrelPressed, down.position.x, down.position.y)) {
+                            down.consume()
+                            do { val e = awaitPointerEvent(); e.changes.forEach { it.consume() } } while (e.changes.any { it.pressed })
+                            vm.paintStylus(false)
+                            vm.finishCanvasGesture()
+                            return@awaitEachGesture
+                        }
+                        var lastP = com.vibetoon.domain.input.StylusSample.pressure(down.pressure, stylus)
+                        var lastPos = down.position
+                        val screenDensity = this@pointerInput.density
+                        // спринт 40: наклон и направление пера идут в кисть (режим наклона в настройках «Стилус»)
+                        if (stylus) vm.paintTilt(stylusTracker.tiltRadians, stylusTracker.orientationRadians, first = true)
+                        if (vm.paintDown(down.position.x, down.position.y, lastP, stylus)) {
                             down.consume()
                             var cancelled = false
                             while (true) {
-                                val ev = awaitPointerEvent()
+                                // спринт 44: жест прерван (холст ушёл из композиции) - штрих отменяется, перо, ладонь и
+                                // ластик обратного конца не «залипают» до следующего штриха
+                                val ev = try { awaitPointerEvent() } catch (e: kotlinx.coroutines.CancellationException) {
+                                    vm.paintCancel(); vm.paintStylus(false); vm.stylusTipEnd(); throw e
+                                }
                                 val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                // спринт 58: перо коснулось во время штриха пальцем (это была ладонь) - след ладони отменяется, рисует перо
+                                val takeover = if (stylus) null else penTakeover(vm, ev, gestureByTouch = true)
+                                if (takeover != null) {
+                                    vm.paintCancel()
+                                    penStrokesAfterTakeover(vm, takeover, stylusTracker, screenDensity)
+                                    vm.finishCanvasGesture()
+                                    return@awaitEachGesture
+                                }
                                 if (!stylus && ev.changes.any { it.id != down.id && it.pressed }) { vm.paintCancel(); cancelled = true; break }
-                                if (!c.pressed) { vm.paintMove(c.position.x, c.position.y, if (stylus) c.pressure.coerceIn(0.05f, 1f) else 1f); break }
-                                val pm = if (stylus) c.pressure.coerceIn(0.05f, 1f) else 1f
-                                for (h in c.historical) vm.paintMove(h.position.x, h.position.y, pm)
+                                // спринт 44: ACTION_CANCEL / FLAG_CANCELED (жест «Назад», системная защита от ладони) - штрих отменяется, а не запекается
+                                if (!c.pressed && com.vibetoon.domain.input.StylusSample.release(c.isConsumed, c.uptimeMillis, c.previousUptimeMillis,
+                                        stylusTracker.canceled(c.uptimeMillis)) == com.vibetoon.domain.input.StylusSample.Release.CANCEL) {
+                                    vm.paintCancel(); vm.paintStylus(false); vm.stylusTipEnd(); vm.finishCanvasGesture(); return@awaitEachGesture
+                                }
+                                if (!c.pressed) {
+                                    if (com.vibetoon.domain.input.StylusSample.keepReleasePoint(lastPos.x, lastPos.y, c.position.x, c.position.y, screenDensity))
+                                        vm.paintMove(c.position.x, c.position.y, com.vibetoon.domain.input.StylusSample.releasePressure(c.pressure, stylus, lastP))
+                                    break
+                                }
+                                val pm = com.vibetoon.domain.input.StylusSample.pressure(c.pressure, stylus, lastP)
+                                if (stylus) vm.paintTilt(stylusTracker.tiltRadians, stylusTracker.orientationRadians)
+                                val hp = com.vibetoon.domain.input.StylusSample.historical(stylusTracker.historyFor(c.uptimeMillis), lastP, pm, c.historical.size, stylus)
+                                c.historical.forEachIndexed { i, h -> vm.paintMove(h.position.x, h.position.y, hp[i]) }
                                 vm.paintMove(c.position.x, c.position.y, pm)
+                                lastP = pm; lastPos = c.position
                                 ev.changes.forEach { it.consume() }
                             }
                             if (stylus) vm.paintStylus(false)
-                            if (!cancelled) { vm.paintUp(); return@awaitEachGesture }
+                            if (!cancelled) { vm.paintUp(); vm.stylusTipEnd(); return@awaitEachGesture }
+                            vm.stylusTipEnd()
                             multi = true
                         } else if (stylus) vm.paintStylus(false)
                     }
-                    var capture = if (multi) false else vm.boneDown(down.position.x, down.position.y)   // режим костей: жест забирает кость
+                    var pivotCapture = if (multi) false else vm.pivotDown(down.position.x, down.position.y)   // пивот: жест забирает пивот
+                    var capture = if (multi || pivotCapture) false else vm.boneDown(down.position.x, down.position.y)   // режим костей: жест забирает кость
                     var total = Offset.Zero
                     var moved = false
                     var lastUptime = down.uptimeMillis
@@ -502,6 +787,17 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                         val event: PointerEvent = awaitPointerEvent()
                         lastUptime = event.changes.maxOfOrNull { it.uptimeMillis } ?: lastUptime
                         val now = event.changes.maxOfOrNull { it.uptimeMillis } ?: android.os.SystemClock.uptimeMillis()
+                        // спринт 58: ладонь начала жест (камера, слой, кость), перо коснулось при активной кисти - жест забирает перо
+                        val takeover = if (down.type == PointerType.Touch) penTakeover(vm, event, gestureByTouch = true) else null
+                        if (takeover != null) {
+                            if (pivotCapture) { vm.pivotUp(); pivotCapture = false }
+                            if (capture) { vm.boneCancel(); capture = false }
+                            if (multi) vm.snapCameraRotation()
+                            penStrokesAfterTakeover(vm, takeover, stylusTracker, density)
+                            vm.finishCanvasGesture()
+                            tapUp = -1L
+                            return@awaitEachGesture
+                        }
                         val pressed = event.changes.filter { it.pressed && !touchFilter.blockTouch(gs?.touchDetection == true, it.type == PointerType.Touch, now) }
                         // Если перо появилось после пальца, не передаём его координаты захваченному пальцем инструменту.
                         if (touchFilter.blockTouch(gs?.touchDetection == true, down.type == PointerType.Touch, now)) {
@@ -530,14 +826,17 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                             } else {
                                 // Ничего не выделено: двигаем камеру
                                 val c = event.calculateCentroid()
-                                vm.onTransform(c.x, c.y, event.calculateZoom(), pan.x, pan.y)
+                                vm.onTransform(c.x, c.y, event.calculateZoom(), pan.x, pan.y, event.calculateRotation())
                             }
                             event.changes.forEach { it.consume() }
                         } else if (pressed.size == 1 && !multi) {
                             val d = pressed[0].positionChange()
                             total += d
                             if (!moved && total.getDistance() > slop) moved = true
-                            if (moved && capture) {
+                            if (moved && pivotCapture) {
+                                vm.pivotMove(pressed[0].position.x, pressed[0].position.y)
+                                pressed[0].consume()
+                            } else if (moved && capture) {
                                 vm.boneMove(pressed[0].position.x, pressed[0].position.y)
                                 pressed[0].consume()
                             } else if (moved) {
@@ -547,7 +846,9 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
                             }
                         }
                     } while (event.changes.any { it.pressed })
+                    if (pivotCapture) vm.pivotUp()
                     if (capture) vm.boneUp()
+                    if (multi) vm.snapCameraRotation()
                     val longPressClaimed = vm.finishCanvasGesture()
                     if (!longPressClaimed && !moved && !multi && !(vm.paintToolActive() && down.type == PointerType.Touch && gs?.fingerDrawing == false)) {
                         vm.onTap(down.position.x, down.position.y, gs?.selectLayersOnCanvas != false)
@@ -589,10 +890,10 @@ private fun MotionPathLayer(vm: MainViewModel) {
         ?: return
     Canvas(Modifier.fillMaxSize().clipToBounds()) {
         if (view.width <= 0f || view.height <= 0f || view.canvasWidth <= 0 || view.canvasHeight <= 0) return@Canvas
-        val scale = com.vibetoon.domain.render.Camera.fitScale(view.width, view.height, view.canvasWidth, view.canvasHeight) * view.camera.zoom
-        fun screen(p: com.vibetoon.domain.anim.PathPoint): Offset = Offset(
-            view.width / 2f + (p.x - view.canvasWidth / 2f) * scale + view.camera.panX,
-            view.height / 2f + (p.y - view.canvasHeight / 2f) * scale + view.camera.panY)
+        fun screen(p: com.vibetoon.domain.anim.PathPoint): Offset {
+            val (sx, sy) = view.camera.toScreen(p.x, p.y, view.width, view.height, view.canvasWidth, view.canvasHeight)
+            return Offset(sx, sy)
+        }
         for (segment in path.segments) for ((a, b) in segment.zipWithNext()) {
             drawLine(Color.Black.copy(alpha = .55f), screen(a), screen(b), 4.dp.toPx())
             drawLine(Color(0xFF26C6DA), screen(a), screen(b), 2.dp.toPx())
@@ -610,11 +911,56 @@ private fun CanvasGridLayer(vm: MainViewModel) {
     val view by vm.gridView.collectAsStateWithLifecycle()
     val cells = com.vibetoon.ui.theme.LocalAppSettings.current?.gridCells ?: 16
     Canvas(Modifier.fillMaxSize().clipToBounds()) {
-        val grid = com.vibetoon.domain.render.CanvasGrid.lines(view.width, view.height, view.canvasWidth, view.canvasHeight, view.camera, cells) ?: return@Canvas
         val color = Color.Black.copy(alpha = 0.28f)
         val width = 1.dp.toPx()
+        val cam = view.camera
+        if (cam.rotDeg != 0f || cam.flipX || cam.flipY) {
+            // Повёрнутый/отражённый вид: линии строятся в координатах холста и переводятся камерой.
+            if (view.width <= 0f || view.height <= 0f || view.canvasWidth <= 0 || view.canvasHeight <= 0) return@Canvas
+            val cw = view.canvasWidth.toFloat(); val ch = view.canvasHeight.toFloat()
+            val step = cw / com.vibetoon.domain.render.CanvasGrid.density(cells)
+            fun pt(x: Float, y: Float): Offset { val (sx, sy) = cam.toScreen(x, y, view.width, view.height, view.canvasWidth, view.canvasHeight); return Offset(sx, sy) }
+            var x = step
+            while (x < cw - 0.5f) { drawLine(color, pt(x, 0f), pt(x, ch), width); x += step }
+            var y = step
+            while (y < ch - 0.5f) { drawLine(color, pt(0f, y), pt(cw, y), width); y += step }
+            return@Canvas
+        }
+        val grid = com.vibetoon.domain.render.CanvasGrid.lines(view.width, view.height, view.canvasWidth, view.canvasHeight, view.camera, cells) ?: return@Canvas
         for (x in grid.vertical) drawLine(color, Offset(x, grid.top), Offset(x, grid.bottom), width)
         for (y in grid.horizontal) drawLine(color, Offset(grid.left, y), Offset(grid.right, y), width)
+    }
+}
+
+/** Спринт 38: путь слоя-пути поверх холста (сплошной - выбран слой-путь, пунктир - путь выбранного слоя) и рисуемый жест. */
+@Composable
+private fun PathOverlayLayer(vm: MainViewModel) {
+    val overlay by vm.pathOverlay.collectAsStateWithLifecycle()
+    if (overlay.pts.size < 4 && overlay.draft.size < 4) return
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        val accent = Color(0xFFAB47BC)
+        fun poly(p: List<Float>, closed: Boolean, color: Color, width: Float, dashed: Boolean) {
+            if (p.size < 4) return
+            val path = Path().apply {
+                moveTo(p[0], p[1])
+                for (i in 1 until p.size / 2) lineTo(p[i * 2], p[i * 2 + 1])
+                if (closed) close()
+            }
+            drawPath(path, Color.Black.copy(alpha = 0.5f), style = Stroke(width + 2.dp.toPx()))
+            drawPath(path, color, style = Stroke(width, pathEffect = if (dashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10.dp.toPx(), 6.dp.toPx())) else null))
+        }
+        val p = overlay.pts
+        poly(p, overlay.closed, if (overlay.own) accent else accent.copy(alpha = 0.7f), (if (overlay.own) 2.5f else 1.5f).dp.toPx(), !overlay.own)
+        if (p.size >= 4) {
+            // начало пути (0 %) - кружок, конец (100 %) - стрелка-квадрат
+            drawCircle(accent, 5.dp.toPx(), Offset(p[0], p[1]))
+            drawCircle(Color.Black.copy(alpha = 0.7f), 5.dp.toPx(), Offset(p[0], p[1]), style = Stroke(1.dp.toPx()))
+            if (!overlay.closed) {
+                val s = 4.dp.toPx()
+                drawRect(accent, Offset(p[p.size - 2] - s, p[p.size - 1] - s), androidx.compose.ui.geometry.Size(s * 2, s * 2))
+            }
+        }
+        poly(overlay.draft, false, Color.White, 2.dp.toPx(), false)
     }
 }
 
@@ -726,11 +1072,13 @@ private fun PinOverlayLayer(vm: MainViewModel) {
             val c = Offset(p[i * 2], p[i * 2 + 1])
             val sel = i == ov.selected
             if (sel) {
-                drawCircle(green.copy(alpha = 0.10f), ov.radius[i], c)
-                drawCircle(green.copy(alpha = 0.7f), ov.radius[i], c, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+                // спринт 55: массивы оверлея читаются с проверкой границ (пины удаляются/добавляются между кадрами)
+                val rad = ov.radius.getOrElse(i) { 0f }
+                drawCircle(green.copy(alpha = 0.10f), rad, c)
+                drawCircle(green.copy(alpha = 0.7f), rad, c, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
             }
             val r = (if (sel) 11f else 8f).dp.toPx()
-            if (ov.stiff[i]) {
+            if (ov.stiff.getOrElse(i) { false }) {
                 drawRect(Color.White, Offset(c.x - r, c.y - r), androidx.compose.ui.geometry.Size(r * 2, r * 2))
                 drawRect(green, Offset(c.x - r * 0.72f, c.y - r * 0.72f), androidx.compose.ui.geometry.Size(r * 1.44f, r * 1.44f))
             } else {
@@ -760,6 +1108,156 @@ private fun RulerGuideLayer(vm: MainViewModel) {
             drawLine(Color.Black, a, b, strokeWidth = 4.dp.toPx())
             drawLine(color, a, b, strokeWidth = 2.dp.toPx())
         }
+    }
+}
+
+/** Sprint 33: направляющие (изометрия, перспектива, эллипс) и оси симметрии - в координатах холста, только редактор. */
+@Composable
+private fun DrawingGuideLayer(vm: MainViewModel) {
+    val g by vm.guides.collectAsStateWithLifecycle()
+    val edit by vm.guideEdit.collectAsStateWithLifecycle()
+    val tool by vm.paintTool.collectAsStateWithLifecycle()
+    val view by vm.gridView.collectAsStateWithLifecycle()
+    if (!g.active || tool == null) return
+    val guideLines = remember(g, view.canvasWidth, view.canvasHeight) {
+        com.vibetoon.domain.paint.DrawingGuides.overlay(g.copy(symmetry = com.vibetoon.domain.paint.DrawingGuides.Symmetry.OFF), view.canvasWidth, view.canvasHeight)
+    }
+    val symmetryLines = remember(g, view.canvasWidth, view.canvasHeight) {
+        com.vibetoon.domain.paint.DrawingGuides.overlay(g.copy(kind = com.vibetoon.domain.paint.DrawingGuides.Kind.OFF), view.canvasWidth, view.canvasHeight)
+    }
+    val handles = remember(g) { com.vibetoon.domain.paint.DrawingGuides.handles(g) }
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        if (view.width <= 0f || view.height <= 0f || view.canvasWidth <= 0 || view.canvasHeight <= 0) return@Canvas
+        fun pt(x: Float, y: Float): Offset {
+            val (sx, sy) = view.camera.toScreen(x, y, view.width, view.height, view.canvasWidth, view.canvasHeight)
+            return Offset(sx, sy)
+        }
+        fun polyline(line: FloatArray, color: Color, width: Float) {
+            for (i in 0 until line.size / 2 - 1) drawLine(color, pt(line[i * 2], line[i * 2 + 1]), pt(line[i * 2 + 2], line[i * 2 + 3]), width)
+        }
+        val guideColor = Color(0xFF7C4DFF).copy(alpha = .55f)
+        val symmetryColor = Color(0xFF00B8D4).copy(alpha = .85f)
+        for (line in guideLines) polyline(line, guideColor, 1.dp.toPx())
+        for (line in symmetryLines) { polyline(line, Color.Black.copy(alpha = .4f), 3.dp.toPx()); polyline(line, symmetryColor, 1.5f.dp.toPx()) }
+        for ((_, p) in handles) {
+            val c = pt(p.x, p.y)
+            drawCircle(Color.Black.copy(alpha = .6f), (if (edit) 10 else 6).dp.toPx(), c)
+            drawCircle(if (edit) Color(0xFFFFB300) else Color.White, (if (edit) 8 else 4).dp.toPx(), c)
+        }
+    }
+}
+
+/** Sprint 33: рамка свободной трансформации выделения - углы, середины сторон и опорная точка. */
+@Composable
+private fun SelectionTransformLayer(vm: MainViewModel) {
+    val box by vm.selTransform.collectAsStateWithLifecycle()
+    val vecBox by vm.vecTransform.collectAsStateWithLifecycle()   // спринт 36: та же рамка для векторных фигур
+    val p = box ?: vecBox ?: return
+    if (p.size < 10) return
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        val dark = Color.Black.copy(alpha = .7f)
+        val accent = Color(0xFFFFB300)
+        fun corner(i: Int) = Offset(p[i * 2], p[i * 2 + 1])
+        for (i in 0..3) {
+            val a = corner(i); val b = corner((i + 1) % 4)
+            drawLine(dark, a, b, 4.dp.toPx()); drawLine(accent, a, b, 2.dp.toPx())
+            val m = Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+            drawCircle(dark, 7.dp.toPx(), m); drawCircle(Color.White, 5.dp.toPx(), m)
+        }
+        val half = 7.dp.toPx()
+        for (i in 0..3) {
+            val c = corner(i)
+            drawRect(dark, Offset(c.x - half - 1.dp.toPx(), c.y - half - 1.dp.toPx()), androidx.compose.ui.geometry.Size(2 * half + 2.dp.toPx(), 2 * half + 2.dp.toPx()))
+            drawRect(Color.White, Offset(c.x - half, c.y - half), androidx.compose.ui.geometry.Size(2 * half, 2 * half))
+        }
+        val pivot = corner(4)
+        drawCircle(dark, 9.dp.toPx(), pivot, style = Stroke(4.dp.toPx()))
+        drawCircle(accent, 9.dp.toPx(), pivot, style = Stroke(2.dp.toPx()))
+        drawLine(accent, Offset(pivot.x - 12.dp.toPx(), pivot.y), Offset(pivot.x + 12.dp.toPx(), pivot.y), 1.5f.dp.toPx())
+        drawLine(accent, Offset(pivot.x, pivot.y - 12.dp.toPx()), Offset(pivot.x, pivot.y + 12.dp.toPx()), 1.5f.dp.toPx())
+    }
+}
+
+/** Панель метрик производительности (Настройки -> General): только в редакторе, не попадает в экспорт. */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.PerfHudLayer(vm: MainViewModel) {
+    val hud by vm.perfHud.collectAsStateWithLifecycle()
+    val text = hud ?: return
+    Box(
+        Modifier.align(Alignment.BottomStart).padding(6.dp).clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF101418).copy(alpha = 0.78f)).padding(horizontal = 8.dp, vertical = 4.dp)
+    ) { Text(text, color = Color(0xFFB2FF59), fontSize = 10.sp, lineHeight = 12.sp) }
+}
+
+/** Бейдж угла поворота холста: виден при ненулевом повороте; тап сбрасывает в 0°, долгий тап — поворот на 90°. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.CameraAngleBadge(vm: MainViewModel) {
+    val view by vm.gridView.collectAsStateWithLifecycle()
+    val rot = view.camera.rotDeg
+    if (kotlin.math.abs(rot) < 0.5f) return
+    val shown = ((rot % 360f) + 360f) % 360f
+    Box(
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF20242B).copy(alpha = 0.85f))
+            .combinedClickable(onClick = { vm.resetCameraRotation() }, onLongClick = { vm.rotateCamera90() })
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("${shown.toInt()}°", color = Color.White, fontSize = 13.sp)
+    }
+}
+
+/** Маркер пивота выделенного узла: перетаскивается пальцем/пером, снап к центру и углам рамки. */
+@Composable
+private fun PivotOverlay(vm: MainViewModel) {
+    val id by vm.selected.collectAsStateWithLifecycle()
+    val inspector by vm.inspector.collectAsStateWithLifecycle()
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val view by vm.gridView.collectAsStateWithLifecycle()   // перерисовка при сдвиге/повороте вида
+    val frame by vm.frame.collectAsStateWithLifecycle()
+    val paintTool by vm.paintTool.collectAsStateWithLifecycle()
+    val rasterTool by vm.rasterTool.collectAsStateWithLifecycle()
+    val boneMode by vm.boneMode.collectAsStateWithLifecycle()
+    val warpTool by vm.warpTool.collectAsStateWithLifecycle()
+    // спринт 55: во время Play - выход ДО чтения кадра: иначе оверлей подписан на кадр и перекомпонуется 24-60 раз в секунду впустую
+    if (playing) return
+    val sel = id ?: return
+    if (paintTool != null || rasterTool != null || boneMode || warpTool) return
+    val info = inspector ?: return
+    if (view.width <= 0f || frame < 0) return
+    val p = vm.pivotScreen(sel) ?: return
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        val c = Offset(p.first, p.second)
+        // Центр задаётся явно: без center drawCircle рисует в центре Canvas (то есть экрана), и раньше кольцо с точкой
+        // «отрывалось» от крестика пивота и висело посреди холста.
+        val shadow = Color.Black.copy(alpha = 0.45f)
+        val col = Color(0xFFFFC107)
+        val arm = 14.dp.toPx()
+        drawCircle(shadow, radius = 9.dp.toPx(), center = c, style = Stroke(3.5.dp.toPx()))
+        drawLine(shadow, c + Offset(-arm, 0f), c + Offset(arm, 0f), 3.dp.toPx())
+        drawLine(shadow, c + Offset(0f, -arm), c + Offset(0f, arm), 3.dp.toPx())
+        drawCircle(col, radius = 9.dp.toPx(), center = c, style = Stroke(2.dp.toPx()))
+        drawCircle(col, radius = 2.5.dp.toPx(), center = c)
+        drawLine(col, c + Offset(-arm, 0f), c + Offset(arm, 0f), 1.5.dp.toPx())
+        drawLine(col, c + Offset(0f, -arm), c + Offset(0f, arm), 1.5.dp.toPx())
+    }
+}
+
+/** Stylus sprint: индикатор нажима (кривая и точка текущего нажима) в углу холста, пока рисуют пером. */
+@Composable
+private fun PressureHudLayer(vm: MainViewModel) {
+    val st = com.vibetoon.ui.theme.LocalAppSettings.current ?: return
+    if (!st.pressureHud) return
+    val live by vm.livePressure.collectAsStateWithLifecycle()
+    val curve = remember(st.pressureCurve) { com.vibetoon.domain.input.PressureCurve.decode(st.pressureCurve) }
+    val v = live ?: return
+    // спринт 44: индикатор - в верхнем углу со стороны, противоположной рисующей руке и панели слоёв (у правши
+    // правая рука и выдвижная панель закрывали правый угол); режим левши - зеркально
+    val atStart = com.vibetoon.domain.input.EditorInputPolicy.hudAtStart(st.leftHanded)
+    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = if (atStart) Alignment.TopStart else Alignment.TopEnd) {
+        com.vibetoon.ui.shell.PressureCurveGraph(curve, v[0], Modifier.width(88.dp).heightIn(min = 62.dp, max = 62.dp))
     }
 }
 

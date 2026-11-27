@@ -27,7 +27,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.AlertDialog
+import com.vibetoon.ui.motion.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,7 +75,7 @@ fun MarkerEditDialog(vm: MainViewModel, onDismiss: () -> Unit) {
                 OutlinedButton(onClick = { vm.addFrameMarker(name); name = "" }, enabled = name.isNotBlank()) { Text("Поставить на текущий кадр") }
                 if (markers.isEmpty()) Text("Маркеров пока нет. Перейдите на нужный кадр символа и выберите имя.", fontSize = 11.sp)
                 for (m in markers) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${m.frame + 1}: ${m.name}", Modifier.width(140.dp), fontSize = 13.sp)
+                    Text(if (m.isAlias) "${m.frame + 1}: ${m.name} → ${m.form + 1}" else "${m.frame + 1}: ${m.name}", Modifier.width(140.dp), fontSize = 13.sp)
                     TextButton(onClick = { vm.setFrame(m.frame) }) { Text("Перейти") }
                     TextButton(onClick = { vm.removeFrameMarker(m.frame) }) { Text("Удалить") }
                 }
@@ -97,7 +97,11 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
     val frame by vm.frame.collectAsStateWithLifecycle()
     val markers = vm.markersOfInstance(instId)
     val defId = vm.symbolRefOf(instId)
-    val active = if (keys.containsKey(instId)) vm.timeValueAt(instId, frame) else null
+    // Подсветка - форма, которую экземпляр РЕАЛЬНО показывает на этом кадре (та же функция, что у холста),
+    // а не сырое значение ключа: при Play/скраббинге рамка и картинка больше не расходятся.
+    val active = remember(keys, frame, markers) { vm.shownMarkerAt(instId, frame)?.frame }
+    val short = remember(markers) { com.vibetoon.domain.project.SymbolForms.compactLabels(markers.map { it.name }) }
+    val twins = remember(keys, instId) { vm.overlappingInstances(instId) }
     LaunchedEffect(instId) { vm.loadMarkerThumbs(instId) }
     val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -126,16 +130,18 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
                     },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.DragHandle, "Двигать", Modifier.size(20.dp))
+                    Icon(Icons.Default.DragHandle, com.vibetoon.ui.i18n.L("Двигать"), Modifier.size(20.dp))
                     Text("  Маркеры  кадр ${frame + 1}", fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1)
-                    IconButton({ hidden = true }, Modifier.size(32.dp)) { Icon(Icons.Default.VisibilityOff, "Спрятать к краю", Modifier.size(18.dp)) }
-                    IconButton(onClose, Modifier.size(32.dp)) { Icon(Icons.Default.Close, "Закрыть", Modifier.size(18.dp)) }
+                    IconButton({ hidden = true }, Modifier.size(32.dp)) { Icon(Icons.Default.VisibilityOff, com.vibetoon.ui.i18n.L("Спрятать к краю"), Modifier.size(18.dp)) }
+                    IconButton(onClose, Modifier.size(32.dp)) { Icon(Icons.Default.Close, com.vibetoon.ui.i18n.L("Закрыть"), Modifier.size(18.dp)) }
                 }
                 Column(Modifier.heightIn(max = 250.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (markers.isEmpty()) Text("У символа нет маркеров", fontSize = 12.sp)
+                    if (twins > 0) Text("На том же месте ещё экземпляров этого символа: $twins. Каждый показывает свою форму - лишний удалите или скройте, иначе видны две формы сразу.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
                     for (rowItems in markers.chunked(3)) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (m in rowItems) {
-                            val isActive = active == m.frame
+                            val isActive = active == m.target
                             Column(
                                 Modifier.width(84.dp).clip(RoundedCornerShape(8.dp))
                                     .border(if (isActive) 3.dp else 1.dp, if (isActive) Color(0xFF7E57C2) else MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
@@ -144,9 +150,9 @@ fun MarkerPanel(vm: MainViewModel, instId: Int, onClose: () -> Unit) {
                             ) {
                                 val img = thumbs["$defId:${m.frame}"]
                                 Box(Modifier.size(72.dp).background(Color(0xFFEFEFEF)).thumbnailChecker(com.vibetoon.ui.theme.LocalAppSettings.current?.checkerThumbnails == true), contentAlignment = Alignment.Center) {
-                                    if (img != null) Image(img, m.name, Modifier.size(72.dp)) else Text("…", fontSize = 12.sp)
+                                    if (img != null) Image(img, com.vibetoon.ui.i18n.L(m.name), Modifier.size(72.dp)) else Text("…", fontSize = 12.sp)
                                 }
-                                Text(m.name, fontSize = 12.sp, maxLines = 1)
+                                Text(short[m.name] ?: m.name, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -171,18 +177,47 @@ fun SymbolTimeTab(vm: MainViewModel, instId: Int) {
     val keys by vm.timeKeys.collectAsStateWithLifecycle()
     val markers = vm.markersOfInstance(instId)
     val cur = if (keys.containsKey(instId)) vm.currentMarkerName(instId, frame) else null
+    var playMode by remember(instId) { mutableStateOf(vm.symbolPlayback(instId)) }
+    val ease = if (keys.containsKey(instId)) vm.timeKeyEaseAt(instId, frame) else null
     Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Символ: ${vm.symbolName(vm.symbolRefOf(instId))}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Время:", fontSize = 13.sp)
-            Text(cur ?: "по кругу", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+            Text(cur ?: when (playMode) { com.vibetoon.domain.project.SymbolPlayback.LOOP -> "по кругу (цикл)"; com.vibetoon.domain.project.SymbolPlayback.ONCE -> "один раз, затем последний кадр"; else -> "кадр 1 (Hold)" },
+                fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton({ vm.openMarkerPanel(instId) }, enabled = markers.isNotEmpty()) { Text("Выбрать маркер", fontSize = 12.sp) }
-            OutlinedButton({ vm.addTimeKeyHere(instId) }) { Icon(Icons.Default.Key, "Добавить ключ времени", Modifier.size(16.dp)) }
+            OutlinedButton({ vm.addTimeKeyHere(instId) }) { Icon(Icons.Default.Key, com.vibetoon.ui.i18n.L("Добавить ключ времени"), Modifier.size(16.dp)) }
         }
         if (markers.isEmpty()) Text("У символа нет маркеров. Двойной тап по символу открывает его: кнопка «Маркеры» ставит имя на кадр.", fontSize = 11.sp)
-        Text("Ключей: ${keys[instId]?.size ?: 0}. Ключ времени всегда Hold: символ мгновенно переключается на кадр маркера и держит его до следующего ключа.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        Text("Ключей: ${keys[instId]?.size ?: 0}. Новый ключ из маркера - Hold: символ мгновенно переключается на форму и держит её до следующего ключа. Без ключей символ стоит на первом кадре.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        if (ease != null) {
+            Text("Переход к следующему ключу: ${vm.timeEaseName(ease)}", fontSize = 12.sp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (e in listOf(com.vibetoon.domain.project.TimeEase.HOLD, com.vibetoon.domain.project.TimeEase.SMOOTH, com.vibetoon.domain.project.TimeEase.LINEAR,
+                        com.vibetoon.domain.project.TimeEase.EASE_IN, com.vibetoon.domain.project.TimeEase.EASE_OUT))
+                    AssistChip(onClick = { vm.setTimeKeyEase(instId, e) }, label = { Text(vm.timeEaseName(e), fontSize = 11.sp) },
+                        border = if (e == ease) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF7E57C2)) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline))
+                // спринт 46: своя кривая (редактор f(x)), как у обычных ключей
+                AssistChip(onClick = { vm.openTimeKeysCurveEditor(instId) }, label = { Text("График…", fontSize = 11.sp) },
+                    border = if (ease == com.vibetoon.domain.project.TimeEase.CUSTOM) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF7E57C2)) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline))
+            }
+            Text("Hold - резкая смена формы. Остальные переходы и своя кривая плавно растворяют форму в форму следующего ключа (чужие формы не появляются); внутри одной формы ведут её кадры.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        }
+        // Спринт 37: режим без ключей времени - Hold / Цикл / Один раз (Play Once)
+        Text("Без ключей времени:", fontSize = 12.sp)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (mode in com.vibetoon.domain.project.SymbolPlayback.ALL)
+                AssistChip(onClick = { playMode = mode; vm.setSymbolPlayback(instId, mode) },
+                    label = { Text(com.vibetoon.domain.project.SymbolPlayback.label(mode), fontSize = 11.sp) },
+                    border = if (mode == playMode) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF7E57C2)) else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline))
+        }
+        Text(when (playMode) {
+            com.vibetoon.domain.project.SymbolPlayback.LOOP -> "Цикл: внутренняя анимация символа повторяется по кругу."
+            com.vibetoon.domain.project.SymbolPlayback.ONCE -> "Один раз: анимация символа идёт с начала его плашки на таймлайне и замирает на последнем кадре - на холсте, при Play и в экспорте."
+            else -> "Hold: символ стоит на первом кадре."
+        }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton({ vm.removeTimeKey(instId) }) { Text("Убрать ключ", fontSize = 12.sp) }
             TextButton({ vm.clearTimeKeys(instId) }) { Text("Очистить", fontSize = 12.sp) }

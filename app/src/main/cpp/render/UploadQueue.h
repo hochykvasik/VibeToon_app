@@ -34,7 +34,18 @@ bool pushIfCurrent(PendingUpload&& item, uint64_t ticket);
 void push(PendingUpload&& item);
 bool pop(PendingUpload& out);   // false, если очередь пуста
 bool empty();
+// Отдельная очередь «теневых» текстур снимка символа: они не заменяют текстуры слоёв редактора,
+// а живут только на время одного снимка (см. Renderer::captureFrame с kCaptureShadow).
+void pushShadow(PendingUpload&& item);
+bool popShadow(PendingUpload& out);
 size_t bytes();
+// Спринт 31: пул CPU-буферов. acquireBuffer отдаёт вектор ровно нужного размера (повторно используя
+// подходящий из пула), recycleBuffer возвращает буфер после загрузки в GL. Содержимое не обнуляется.
+std::vector<uint8_t> acquireBuffer(size_t bytes);
+void recycleBuffer(std::vector<uint8_t>&& buffer);
+size_t poolCount();
+size_t poolBytes();
+void clearPool();
 void clear();     // выбросить все ожидающие загрузки (при смене проекта id слоёв пересекаются)   // суммарный размер буферов в очереди (для backpressure)
 }  // namespace uploadQueue
 

@@ -41,10 +41,11 @@ class GroupDeformationMeshTest {
         assertNull(GroupDeformationMesh.build(bounds, Affine2D.scale(0f, 1f), null, null))
         assertNull(GroupDeformationMesh.build(bounds, Affine2D.translate(1000f, 0f), null, null))
         val n = LeafNode(1, "a", true, 1f, "norm", false, 10, 20, 200, 100)
-        try {
-            SceneBuilder.buildTree(listOf(n), 100, 100, warps = mapOf(1 to FloatArray(32)), preparedGroupMeshes = mapOf(1 to m))
-            fail("conflicting leaf warp must be rejected")
-        } catch (_: IllegalArgumentException) { }
+        // спринт 43: готовая групповая сетка и Warp самого слоя складываются, а не отклоняют сцену
+        val sc = SceneBuilder.buildTree(listOf(n), 100, 100, warps = mapOf(1 to FloatArray(32)), preparedGroupMeshes = mapOf(1 to m))
+        assertArrayEquals(intArrayOf(1), sc.meshIds)
+        assertEquals(0, sc.warpIds.size)
+        assertEquals(m.mesh.count, sc.meshCounts[0])
     }
     @Test fun projectivePoleBetweenSampledVerticesIsRejected() {
         val bounds = GroupDeformationMesh.Bounds(0f, 0f, 100f, 100f)

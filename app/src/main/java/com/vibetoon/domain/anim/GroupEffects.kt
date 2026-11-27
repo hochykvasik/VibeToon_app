@@ -43,6 +43,33 @@ object GroupEffects {
         return Plan(leaves, common)
     }
 
+    // ---- Пакет 7: собственные эффекты-трансформации группы (Вращение, Качание, Ось растяжения).
+    // Они хранятся под id САМОЙ группы и меняют её локальную матрицу вокруг пивота группы (SceneBuilder):
+    // дети наследуют поворот/растяжение целиком, рисунок не разрывается на куски. Шейдерные эффекты группы
+    // по-прежнему раздаются вложенным слоям (plan/apply выше). В инспекторе группы список = свои
+    // трансформации (сверху) + общая цепочка вложенных слоёв.
+
+    /** Собственные эффекты группы (туда добавляются только трансформации, см. [addsToGroupItself]). */
+    fun own(fx: Map<Int, List<Effect>>, group: Int): List<Effect> = fx[group].orEmpty()
+
+    /**
+     * Куда идёт новый эффект группы. Спринт 50: любой эффект - на саму группу: трансформации меняют её матрицу, шейдерные
+     * эффекты рендерер применяет к буферу группы целиком (холст, Play и экспорт), независимо от состава группы
+     * (слои PSD, картинки, ключи, трансформации, обтравка). Прежняя общая цепочка вложенных слоёв остаётся редактируемой.
+     */
+    fun addsToGroupItself(type: Int): Boolean = EffectMath.isTransform(type) || EffectMath.def(type) != null
+
+    /** Строка инспектора группы [index] -> (свой эффект?, индекс внутри своей части списка). */
+    fun route(index: Int, ownCount: Int): Pair<Boolean, Int> =
+        if (index < ownCount) true to index else false to (index - ownCount)
+
+    /** Перестановка вверх/вниз возможна только внутри одной части списка (свои / вложенные). */
+    fun canMove(index: Int, dir: Int, ownCount: Int, total: Int): Boolean {
+        val j = index + dir
+        if (index !in 0 until total || j !in 0 until total) return false
+        return (index < ownCount) == (j < ownCount)
+    }
+
     fun apply(fx: Map<Int, List<Effect>>, ids: List<Int>, effects: List<Effect>): Map<Int, List<Effect>> {
         val out = fx.toMutableMap()
         ids.forEach { if (effects.isEmpty()) out.remove(it) else out[it] = effects.toList() }

@@ -4,7 +4,6 @@ PAIRS2 = """
 Обычная линейка|Straight ruler
 Циркуль|Compass
 Линейка и циркуль работают только на растровом слое|Ruler and compass work only on raster layers
-Градиент|Gradient
 По альфе рисунка|Existing alpha
 Направляющие и градиент работают только на растровом слое|Guides and gradient work only on raster layers
 Градиент недоступен для деформированного слоя или текстуры больше 4 Мп|Gradient is unavailable on deformed layers or textures over 4 MP
@@ -95,8 +94,8 @@ Transform Layer «Transform {}»: привяжите к нему слои чер
 Цвет и толщина контура обновлены|Path color and width updated
 Подготовить область|Prepare bounds
 Включить для группы|Enable for group
-Деформация пропущена: неподдерживаемое содержимое или область|Deformation skipped: unsupported content or bounds
-Экспорт остановлен: неподдерживаемая деформация или область|Export stopped: unsupported deformation or bounds
+Кадр не обновлён: ошибка построения сцены|Frame not updated: scene build error
+Экспорт остановлен: ошибка построения кадра {}|Export stopped: frame {} could not be built
 Раздел X|X divisions
 Плотный Warp: статический, FX выкл|Dense Warp: static, FX off
 Плотный Warp: только обычный слой и FX выкл|Dense Warp requires a regular layer and FX off
@@ -198,9 +197,7 @@ GIF {}×{}, {} кадров|GIF {}×{}, {} frames
 Слой растрирован|Layer rasterized
 Не удалось снять кадр|Could not capture the frame
 Не удалось снять кадр {}|Could not capture frame {}
-Не удалось записать GIF|Could not write the GIF
-Не удалось записать видео|Could not write the video
-FX вкл: правки точек пишутся в ключевые кадры|FX on: point edits go to keyframes
+FX вкл: правки точек пишутся в ключевые кадры|FX on: point edits go to keys
 FX выкл (Bind Pose): правки меняют базовую форму|FX off (Bind Pose): edits change the base shape
 Warp слоя сброшен|Layer warp reset
 Перспектива слоя сброшена|Layer perspective reset
@@ -222,7 +219,6 @@ Liquify: выберите один слой (картинка или слой PS
 Векторный слой «{}»: рисуйте кистью (путь, линия, прямоугольник, эллипс) или добавляйте «Фигуры»|Vector layer “{}”: draw with the brush (path, line, rectangle, ellipse) or add “Shapes”
 Анимационный слой «{}»: рисуйте, «Добавить пустой кадр» ставит следующий рисунок|Animation layer “{}”: draw, “Add empty frame” creates the next drawing
 Фон «{}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв)|Background “{}” is filled with the project color and locked (unlock it in the layer list)
-Фон «{}» залит цветом фона проекта и заблокирован (замок снимается в списке слоёв). В проекте с PSD он ложится над слоями PSD|Background “{}” is filled with the project color and locked (unlock it in the layer list). In a PSD project it sits above the PSD layers
 Новый слой «{}»|New layer “{}”
 Пустая группа «Группа {}»: перетащите в неё слои ручкой ≡|Empty group “Group {}”: drag layers into it with the ≡ handle
 Фигура «{}» добавлена в векторный слой|Shape “{}” added to the vector layer
@@ -280,7 +276,6 @@ Animation: кость двигает привязанные слои|Animation: 
 Сначала создайте кости|Create bones first
 Нет свободных слоёв, которые пересекают кости|No free layers intersect the bones
 Автопривязка: слоёв привязано {}|Auto bind: layers bound {}
-Кость {}|Bone {}
 Символ|Symbol
 Пиксели|Pixels
 Нельзя: родитель сам привязан к этому слою|Not allowed: the parent is itself bound to this layer
@@ -326,7 +321,6 @@ Animation: кость двигает привязанные слои|Animation: 
 Пропустить|Skip
 Настройки инструмента «{}»|Tool settings “{}”
 Инструмент «{}»|Tool “{}”
-Символ: {}|Symbol: {}
 Liquify: проведите по картинке · кисть {}|Liquify: drag over the image · brush {}
 Перспектива · FX вкл: углы пишутся в ключи|Perspective · FX on: corners go to keys
 Перспектива · FX выкл: базовая форма|Perspective · FX off: base shape
@@ -388,7 +382,7 @@ Warp · FX выкл: базовая форма|Warp · FX off: base shape
 Любое действие можно отменить.|Any action can be undone.
 Проект сохраняется сам через пару секунд после правки.|The project saves itself a couple of seconds after an edit.
 Как добавить и анимировать текст|How to add and animate text
-Надпись, цвет и ключевые кадры|Caption, color and keyframes
+Надпись, цвет и ключевые кадры|Caption, color and keys
 Добавьте текст|Add text
 Нажмите инструмент «Текст» слева, введите надпись и подтвердите.|Tap the “Text” tool on the left, type the caption and confirm.
 Настройте вид|Adjust the look
@@ -501,12 +495,6 @@ Hold: мгновенное переключение|Hold: instant switching
 Перо|Pen
 Замкнуть|Close
 Убрать точку|Remove point
-Прямоугольник|Rectangle
-Лассо|Lasso
-Смазка|Smudge
-Заливка|Fill
-Выделение|Selection
-Пипетка: коснитесь холста, чтобы взять цвет|Color Picker: tap the canvas to pick a color
 Заливка: коснитесь замкнутой области (порог, расширение и зазор - в панели над холстом)|Fill: tap a closed area (threshold, expand and gap are in the bar above the canvas)
 Выделение: обведите область или коснитесь палочкой; внутри выделения тяните, чтобы перенести|Selection: outline an area or tap with the wand; drag inside the selection to move it
 Смазка: проведите по рисунку слоя-картинки|Smudge: drag across the drawing of an image layer
@@ -539,15 +527,12 @@ PNG-последовательность (ZIP)|PNG sequence (ZIP)
 Многослойный PSD текущего кадра: слои и группы сохраняются, режимы наложения тоже. Текст, видео, символы и вектор идут как растр; прозрачность слоя запекается в пиксели.|Layered PSD of the current frame: layers and groups are kept, blend modes too. Text, video, symbols and vector go as raster; layer opacity is baked into pixels.
 Все дорожки проекта сводятся в один WAV (стерео 44,1 кГц) на всю длительность проекта.|All project tracks are mixed into one WAV (stereo 44.1 kHz) for the whole project duration.
 Резервная копия проекта со всеми файлами. Её можно импортировать на экране проектов.|A backup of the project with all its files. It can be imported on the projects screen.
-Каждый кадр - PNG с прозрачным фоном, всё в одном ZIP. Это замена видео MOV с альфой: Android не умеет ProRes 4444.|Each frame is a PNG with a transparent background, all in one ZIP. This replaces MOV video with alpha: Android cannot do ProRes 4444.
+Каждый кадр - PNG с прозрачным фоном, всё в одном ZIP. Для видео с альфой выберите «MOV (альфа)».|Each frame is a PNG with a transparent background, all in one ZIP. For video with alpha, choose “MOV (alpha)”.
 Обрезать холст (Crop)|Crop canvas
 Изменить размер холста (Resize)|Resize canvas
 Сохранять пропорции|Keep proportions
 Допустимо от 64 до 4096 px. Действие нельзя отменить через Undo.|Allowed from 64 to 4096 px. This cannot be undone with Undo.
 Resize масштабирует слои вместе с холстом, Crop оставляет выбранную рамку. Эти действия нельзя отменить через Undo.|Resize scales layers with the canvas, Crop keeps the chosen frame. These actions cannot be undone with Undo.
-Применить|Apply
-Ширина|Width
-Высота|Height
 Резервная копия .tsproj сохранена|Backup .tsproj saved
 Не удалось сохранить копию|Could not save the backup
 Проект импортирован|Project imported
@@ -586,7 +571,6 @@ Transform Layer (null)|Transform Layer (null)
 Нужна физическая клавиатура. Отмена и повтор работают вместе с Ctrl.|A physical keyboard is required. Undo and redo work with Ctrl.
 Общие|General
 Инструменты|Tools
-Импорт|Import
 Экран|Display
 Жесты|Gestures
 Клавиатура|Keyboard
@@ -600,7 +584,7 @@ Transform Layer (null)|Transform Layer (null)
 Вернуть кадр после паузы|Reset Frame After Pause
 Вперёд/назад: кадры (иначе рисунки)|Forward/Backward: frames (otherwise drawings)
 Векторный режим работы|Vector Workflow
-Автодобавление ключей|Auto-Add Keyframes
+Автодобавление ключей|Auto-Add Keys
 Правка опорной точки слоя|Layer Pivot Editing
 Временные опорные точки|Temporary Pivots
 Показывать траекторию движения|Show Motion Path
@@ -623,7 +607,6 @@ Transform Layer (null)|Transform Layer (null)
 Шахматка в миниатюрах|Checker Pattern in Thumbnails
 Видимость маски выделения|Selection Mask Visibility
 Цвета костей|Bones Colors
-Сбросить|Reset
 Рисование пальцем|Finger Drawing
 Поворот холста двумя пальцами|Rotate Canvas 2 Fingers
 Щипок для смены фокуса|Pinch to Refocus
@@ -849,7 +832,7 @@ GL не ответил: восстановление отменено без и�
 Не удалось загрузить новый слой; пиксели не изменены|Could not load the new layer; pixels were not changed
 Не удалось отделить выделение; пиксели не изменены|Could not separate the selection; pixels were not changed
 Невозможно безопасно сохранить масштаб слоя; пиксели не изменены|Cannot safely preserve layer scale; pixels were not changed
-Ключи совпадают после изменения: операция отменена|Keyframes would collide; operation cancelled
+Ключи совпадают после изменения: операция отменена|Keys would collide; operation cancelled
 Слой и его группы должны быть видимы и разблокированы; группы PSD пока не поддерживаются|The layer and its groups must be visible and unlocked; PSD groups are not supported yet
 Перспектива для групп: в разработке|Perspective for groups: coming soon
 Warp для групп: в разработке|Warp for groups: coming soon
@@ -857,7 +840,7 @@ Warp для групп: в разработке|Warp for groups: coming soon
 Остановите воспроизведение перед редактированием эффектов группы|Stop playback before editing group effects
 Групповые эффекты с автоключом пока не поддерживаются|Group effects with auto-key are not supported yet
 Групповые эффекты недоступны: проверьте одинаковость цепочек, ключи, обтравку и блокировки|Group effects unavailable: check matching effect chains, keys, clipping and locks
-Группа: цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка|Group: chains differ or layers, keyframes, clipping or locks are unsupported
+Группа: цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка|Group: chains differ or layers, keys, clipping or locks are unsupported
 Группа: статические эффекты применяются ко всем вложенным слоям; автоключ пока не поддерживается|Group: static effects apply to all nested layers; auto-key is not supported yet
 Группа: ключи эффектов создаются на вложенных слоях; ромба группы пока нет|Group: effect keys are created on child layers; no group diamond yet
 Ключи эффектов на вложенных слоях|Key effects on child layers
@@ -867,4 +850,1214 @@ Warp для групп: в разработке|Warp for groups: coming soon
 Нет совпадающих ключей эффектов группы на этом кадре|No matching group effect keys on this frame
 Ключ −1|Key −1
 Ключ +1|Key +1
+Группы|Groups
+Границы клипа меняются перетаскиванием его краёв на таймлайне. Кнопка «Разделить» разрезает клип на текущем кадре.|Drag clip edges on the timeline to change its bounds. The Split button cuts the clip at the current frame.
+Границы клипа на таймлайне|Clip bounds on the timeline
+Края клипа|Clip edges
+Жёлтый маркер на холсте перетаскивается; «Пивот в центр» ставит точку в центр рамки. Пивот сохраняется в проекте и учитывается в экспорте.|Drag the yellow marker on the canvas; Pivot to Center puts the point in the middle of the frame. The pivot is saved in the project and used in export.
+Выделите слои и соберите их в группу. Группа вращается и масштабируется вокруг своей опорной точки.|Select layers and group them. The group rotates and scales around its pivot point.
+Траектория|Motion path
+Включите «Показывать траекторию» в настройках: путь опорной точки слоя рисуется на холсте. Траектория не экспортируется.|Turn on Show Motion Path in settings: the layer pivot path is drawn on the canvas. The path is not exported.
+Кнопка «Родитель» в инспекторе: слой повторяет сдвиг, поворот и масштаб родителя.|Parent button in the inspector: the layer follows the parent's move, rotation and scale.
+Ключи и траектория движения|Keys and motion path
+Опорная точка|Pivot point
+Связи|Links
+Группы, связи и опорные точки|Groups, links and pivots
+Совместимый экспорт видео|Compatible video export
+Маркеры форм|Form markers
+Hold (резко)|Hold (instant)
+Hold - резкая смена формы. Плавно/Линейно - кадры символа между двумя ключами проигрываются по кривой.|Hold is an instant form change. Smooth/Linear play the symbol frames between two keys along a curve.
+В проекте|In the project
+Время сборки кадра (UI) и отрисовки (GL), доля медленных кадров, слои вне экрана и проходы эффектов|Frame build time (UI) and draw time (GL), share of slow frames, off-screen layers and effect passes
+Вставлено ключей времени: {}|Time keys pasted: {}
+Вставлено маркеров: {}|Markers pasted: {}
+Дубликат не помещается в длительность|The duplicate does not fit in the duration
+Ключей: {}. Новый ключ из маркера - Hold: символ мгновенно переключается на форму и держит её до следующего ключа. Без ключей символ стоит на первом кадре.|Keys: {}. A new key from a marker is Hold: the symbol instantly switches to that form and holds it until the next key. Without keys the symbol stays on its first frame.
+Ключи времени не вставлены: выход за границы или символ удалён|Time keys not pasted: out of range or the symbol was deleted
+Маркеров удалено: {}|Markers deleted: {}
+Маркеров: {}|Markers: {}
+Маркеры не выбраны|No markers selected
+Маркеры не изменены: занятый кадр или выход за границы символа|Markers unchanged: the frame is taken or outside the symbol
+Маркеры отзеркалены|Markers mirrored
+Маркеры продублированы: {}|Markers duplicated: {}
+Метрики: прокрутите или запустите Play|Metrics: scrub or press Play
+На этом кадре нет ключа времени: сначала выберите маркер|No time key on this frame: pick a marker first
+Панель метрик производительности|Performance HUD
+Переход к следующему ключу: {}|Transition to the next key: {}
+Переход: {} (ключей: {})|Transition: {} (keys: {})
+Переход:|Transition:
+Плавно|Smooth
+Пока пусто: импортированные картинки и рисунки слоёв появятся здесь|Empty for now: imported pictures and layer drawings will appear here
+Символ без ключей держит первый кадр (Hold)|A symbol without keys holds its first frame (Hold)
+Символ без ключей крутит свою анимацию по кругу|A symbol without keys loops its own animation
+Скопировано маркеров: {}|Markers copied: {}
+Скрыто служебных файлов (кэш миниатюр, Liquify, кадры анимации): {}|Hidden service files (thumbnail cache, Liquify, animation frames): {}
+Скрыть файлы удалённых слоёв ({})|Hide files of deleted layers ({})
+Файлы удалённых слоёв ({})|Files of deleted layers ({})
+Цикл без ключей (внутренняя анимация по кругу)|Loop without keys (inner animation repeats)
+кадр 1 (Hold)|frame 1 (Hold)
+по кругу (цикл)|looping
+Кадр (UI): ср {} / p95 {} мс · GL: {} мс · медленных {}% · слоёв {}, вне экрана {} · FX в рамке {}, проходов {}, из кэша {} · групп из кэша {} · рисунков из кэша {}%|Frame (UI): avg {} / p95 {} ms · GL: {} ms · slow {}% · layers {}, off-screen {} · FX scissored {}, passes {}, cached {} · groups cached {} · drawings cached {}%
+«{}» с кадра {} (Hold)|“{}” from frame {} (Hold)
+Маркеры не сдвинуты: на целевом кадре слоя «{}» уже есть другой рисунок|Markers not moved: layer “{}” already has another drawing on the target frame
+Маркеры отзеркалены: формы поменялись местами вместе с ними|Markers mirrored: their forms swapped places with them
+Не удалось нарисовать символ «{}»: прежняя картинка сохранена, повтор при следующем кадре|Could not draw symbol “{}”: the previous picture is kept, retrying on the next frame
+В выделении нет ключей: выделите ключи рамкой (кнопка выделения на таймлайне)|No keys in the selection: select keys with a marquee (selection button on the timeline)
+Выделенные формы ещё не выбраны ни одним ключом времени: выберите маркер в панели символа на сцене|No time key picks the selected forms yet: pick a marker in the symbol panel on the stage
+Кривая - для ключей слоёв; переход ключей времени символа задаётся кнопками «Переход»|The curve applies to layer keys; symbol time key transitions are set with the “Transition” buttons
+На том же месте ещё экземпляров этого символа: {}. Каждый показывает свою форму - лишний удалите или скройте, иначе видны две формы сразу.|More instances of this symbol at the same spot: {}. Each shows its own form - delete or hide the extra one, otherwise two forms are visible at once.
+Не хватает памяти GPU для всех форм символа: часть форм показывается с задержкой|Not enough GPU memory for all symbol forms: some forms appear with a delay
+Общая кривая: ключи времени символа|Shared curve: symbol time keys
+Общий переход: {} (ключей: {})|Shared transition: {} (keys: {})
+Переход от каждого выделенного ключа к следующему. Между разными формами символ всегда меняет форму резко (Hold) - промежуточные формы не показываются.|Transition from each selected key to the next. Between different forms the symbol always switches sharply (Hold) - intermediate forms are never shown.
+Ось растяжения|Stretch Axis
+Качание|Swing
+Масштаб|Scale
+Угол 1, °|Angle 1, °
+Угол 2, °|Angle 2, °
+Начальная фаза|Starting Phase
+Синусоида|Sine
+Меандр|Square
+Пила|Sawtooth
+Вращение, Качание и Ось растяжения для группы - В разработке: сделайте из группы символ, его экземпляр качается и растягивается целиком|Spin, Swing and Stretch Axis for a group are in development: turn the group into a symbol - its instance swings and stretches as a whole
+Остановите воспроизведение: ключ времени ставится на кадр паузы|Stop playback: a time key is placed on the paused frame
+Импортировано как символ «Символ {}»: двойной тап открывает редактирование|Imported as symbol “Symbol {}”: double-tap opens editing
+Вставлено из библиотеки: {}|Inserted from the library: {}
+Область группы уже сохранена|Group bounds are already saved
+Область группы сохранена: теперь нажмите «Включить для группы»|Group bounds saved: now tap “Enable for group”
+Смаз действует только на выбранных слоях-контурах: выберите векторный слой|Smudge works only on selected path layers: select a vector layer
+Пивот в центр|Pivot to center
+Пивот по умолчанию|Default pivot
+Изображение как символ|Image as symbol
+Повернуть холст на 90°|Rotate canvas by 90°
+Сбросить поворот холста (0°)|Reset canvas rotation (0°)
+Цвет/толщина|Color/width
+Кисть на векторном слое рисует примитивы (путь, линия, прямоугольник, эллипс); на растровом - пиксели|On a vector layer the brush draws primitives (path, line, rectangle, ellipse); on a raster layer - pixels
+При выборе кисти/ластика слой выбирается или создаётся автоматически|Picking the brush/eraser selects or creates a layer automatically
+Ластик и смаз действуют только на выбранных слоях-контурах|Eraser and smudge work only on selected path layers
+Пивот действует только на время перетаскивания и не сохраняется|The pivot applies only while dragging and is not saved
+Поворот после 8° двумя пальцами, снап к 0/90/180/270°; только вид, экспорт не меняется|Two-finger rotation after 8°, snaps to 0/90/180/270°; view only, export is unchanged
+Опорная точка слоя перетаскивается на холсте; «Пивот в центр» в инспекторе|Drag the layer pivot on the canvas; “Pivot to center” is in the inspector
+Ключи кости: {}|Bone keys: {}
+Выбран ключ: {}|Selected key: {}
+Ключ не выбран: тапните ◆ на таймлайне|No key selected: tap a ◆ on the timeline
+◀ Предыдущий ключ|◀ Previous key
+◆ Добавить ключ|◆ Add key
+Следующий ключ ▶|Next key ▶
+◇ Удалить ключ|◇ Delete key
+Переход к следующему ключу|Transition to the next key
+График…|Graph…
+На этом кадре ключ кости уже есть|This frame already has a bone key
+Выберите ключ кости на таймлайне|Select a bone key on the timeline
+Ключей кости в этом направлении нет|No bone keys in this direction
+Группа: Вращение, Качание и Ось растяжения работают у самой группы; остальные эффекты недоступны - цепочки различаются или есть неподдерживаемые слои, ключи, обтравка или блокировка|Group: Spin, Swing and Stretch Axis work on the group itself; other effects are unavailable - the chains differ or there are unsupported layers, keys, clipping or locks
+Группа: Вращение, Качание и Ось растяжения - у самой группы (вокруг её пивота, ключи на строке группы); остальные эффекты - на вложенных слоях|Group: Spin, Swing and Stretch Axis apply to the group itself (around its pivot, keys on the group row); other effects go to the nested layers
+✕ Снять выделение|✕ Deselect
+Имя кости|Bone name
+Например: Предплечье|For example: Forearm
+Переименовать кость|Rename bone
+Сцены|Scenes
+Сцена|Scene
+Вне сцен|Outside scenes
+Сцены делят общий таймлайн на части: переход, Play и экспорт по сцене. Удаление сцены не удаляет кадры и ключи.|Scenes split the shared timeline into parts: jump, Play and export per scene. Deleting a scene keeps its frames and keys.
+Сцен пока нет: «+ Новая сцена» сделает текущий таймлайн первой сценой.|No scenes yet: “+ New scene” turns the current timeline into the first scene.
+Имя сцены|Scene name
+{} – {} · {} кадров|{} – {} · {} frames
+Переименовать сцену|Rename scene
+Удалить сцену|Delete scene
++ Новая сцена|+ New scene
+Разрезать на плейхеде|Split at playhead
+◀ Предыдущая|◀ Previous
+Следующая ▶|Next ▶
+Play только в текущей сцене|Play only the current scene
+Экспорт только текущей сцены|Export only the current scene
+Только сцена|Only scene
+Слишком много сцен|Too many scenes
+Проект достиг максимальной длительности|The project has reached its maximum length
+Сцена добавлена в конец таймлайна|Scene added at the end of the timeline
+Поставьте плейхед внутрь сцены, не на её первый кадр|Put the playhead inside a scene, not on its first frame
+Сцена разрезана на плейхеде|Scene split at the playhead
+Сцена удалена, кадры остались на таймлайне|Scene deleted, its frames stay on the timeline
+Сцен в этом направлении нет|No scenes in this direction
+Нельзя: экземпляр символа не может лежать внутри своего определения|Not allowed: a symbol instance cannot be inside its own definition
+Слой перенесён в группу и получил её эффекты|Layer moved into the group and received its effects
+Расширить клип|Extend clip
+Весь таймлайн|Whole timeline
+Управление сценами…|Manage scenes…
+Открыта сцена: Play, переходы и экспорт - в её границах|Scene opened: Play, navigation and export stay inside it
+Показан весь таймлайн|Showing the whole timeline
+Режим ключей: показаны только слои с ключами|Key mode: only layers with keys are shown
+Режим ключей выключен|Key mode off
+Ключей в этом направлении нет|No keys in this direction
+На этом кадре ключей нет|No keys on this frame
+Ключей нет|No keys
+Все привязки сняты|All links removed
+Клип уже занимает всю сцену|The clip already fills the scene
+Клип расширен до конца сцены|Clip extended to the end of the scene
+Клип расширен до конца проекта|Clip extended to the end of the project
+Слоёв с ключами: {}|Layers with keys: {}
+◀ Ключ|◀ Key
+Ключ ▶|Key ▶
+Ключи кадра|Frame keys
+Все ключи|All keys
+Все слои|All layers
+Привязанный слой повторяет сдвиг, поворот и масштаб родителя поверх своей трансформации; группы тоже передают трансформацию вложенным слоям.|A linked layer repeats its parent's move, rotation and scale on top of its own transform; groups also pass their transform to nested layers.
+Выбран слой|Selected layer
+нет|none
+Выбрать…|Choose…
+Цепочка привязок|Link chain
+Ведёт слоёв|Drives layers
+Выберите слой, чтобы назначить ему родителя.|Select a layer to assign its parent.
+Все привязки|All links
+Привязок пока нет.|No links yet.
+Отвязать всё|Unlink all
+Копия настроек сохранена|Settings backup saved
+Не удалось сохранить копию настроек|Could not save the settings backup
+Настройки восстановлены из копии|Settings restored from the backup
+Это не файл настроек VibeToon|This is not a VibeToon settings file
+Настройки отображения сброшены|Display settings reset
+«+ Изображение» сразу создаёт символ: картинка - определение, на холсте - экземпляр|“+ Image” creates a symbol right away: the picture is the definition, the canvas gets an instance
+Секвенция обрезана до {} кадров (больше за раз не импортируется)|Sequence trimmed to {} frames (more cannot be imported at once)
+Секвенция ({} кадров) импортирована как символ «Символ {}»|Sequence ({} frames) imported as symbol “Symbol {}”
+Секвенция импортирована: {} кадров. Проект продлён до конца секвенции|Sequence imported: {} frames. Project extended to the end of the sequence
+Секвенция импортирована: {} кадров|Sequence imported: {} frames
+Не удалось импортировать секвенцию|Could not import the sequence
+Секвенция картинок|Image sequence
+Секвенция картинок (покадровый слой)|Image sequence (frame-by-frame layer)
+Секвенция картинок как символ|Image sequence as symbol
+PSD проекта уже разложен на слои; вставка другого PSD из библиотеки - в разработке|The project PSD is already split into layers; inserting another PSD from the library is coming soon
+Не удалось вставить ассет|Could not insert the asset
+Файл ассета не найден|Asset file not found
+Пока пусто: импортированные картинки, видео, аудио и рисунки слоёв появятся здесь|Empty for now: imported images, videos, audio and layer drawings will appear here
+Картинки|Images
+Без звука|Mute
+В этом видео нет звуковой дорожки|This video has no audio track
+Звук слоя выключен|Layer sound off
+Звук слоя включён|Layer sound on
+Ключей: {}. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки и в WAV (у видео - его звуковая дорожка). В MP4 звука пока нет.|Keys: {}. Volume changes linearly between keys; it holds before the first and after the last. Works in playback, ruler scrubbing and WAV (for video - its own audio track). MP4 has no audio yet.
+Список ключей|Key list
+Всем ключам…|All keys…
+Дорожек на кадре|Tracks on this frame
+Своя кривая|Custom curve
+Только деформации|Deformers only
+У этого слоя пока нет ключей|This layer has no keys yet
+Удалить ключ|Delete key
+Интерполяция всем ключам: {}|Interpolation applied to all keys: {}
+Интерполяция ключа действует до следующего ключа; ключ слоя задаёт её всем его дорожкам на этом кадре (трансформация и деформации). Тап по строке - перейти к ключу.|A key's interpolation lasts until the next key; a layer key sets it for all of the layer's tracks on that frame (transform and deformers). Tap a row to go to the key.
+Отражение только вида холста; экспорт не меняется|Flips the canvas view only; export is unchanged
+Ключей: {}|Keys: {}
+Видео {}×{}, {} кадров, со звуком (AAC, стерео 44,1 кГц)|Video {}×{}, {} frames, with sound (AAC, stereo 44.1 kHz)
+Все дорожки проекта (и звук видео-слоёв) сводятся в один WAV (стерео 44,1 кГц) на всю длительность проекта или сцены. Дорожки «Без звука» пропускаются.|All project tracks (and the sound of video layers) are mixed into one WAV (stereo 44.1 kHz) for the whole project or scene. Muted tracks are skipped.
+Звук|Sound
+Звук в видео|Sound in video
+Звук…|Sound…
+Звук добавить не удалось - видео сохранено без звука|Could not add sound - the video was saved without sound
+Со звуком: AAC, стерео 44,1 кГц|With sound: AAC, stereo 44.1 kHz
+Кодирование и сведение звука: {}%|Mixing and encoding sound: {}%
+Картинки при импорте уменьшаются до длинной стороны холста (512-2048 px): меньше памяти и файлов проекта; видео не меняется|Imported images are downscaled to the canvas's long side (512-2048 px): less memory and smaller project files; videos are unchanged
+Панель инструмента показана|Tool panel shown
+Панель инструмента скрыта: тап по нему ещё раз вернёт её|Tool panel hidden: tap the tool again to bring it back
+Ключей: {}. Громкость меняется линейно между ключами; до первого и после последнего держится. Работает при воспроизведении, прослушивании линейки, в WAV и в звуке MP4 (у видео - его звуковая дорожка).|Keys: {}. Volume changes linearly between keys; it holds before the first and after the last. Works in playback, ruler scrubbing, WAV and MP4 sound (for video - its own audio track).
+Файл не похож на проект VibeToon: нужен .tsproj, .zip с project.json, project.json или PSD|The file does not look like a VibeToon project: use .tsproj, a .zip with project.json, project.json or a PSD
+Проект создан в более новой версии VibeToon: обновите приложение и повторите импорт|The project was created in a newer version of VibeToon: update the app and import again
+Файл проекта повреждён или обрезан: project.json не читается|The project file is damaged or truncated: project.json cannot be read
+Архив слишком большой или содержит слишком много файлов|The archive is too large or contains too many files
+Недостаточно места на устройстве для импорта|Not enough storage space on the device to import
+Не удалось прочитать выбранный файл|Could not read the selected file
+Импорт проекта…|Importing project…
+Файл распаковывается и проверяется. Существующие проекты не меняются.|The file is being unpacked and checked. Existing projects are not changed.
+Проект с таким именем уже есть - импортированный назван по-другому, ваш проект не изменён.|A project with this name already exists - the imported one got a different name, your project is unchanged.
+Все файлы проекта на месте.|All project files are in place.
+Не найдено файлов: {}. Эти слои будут пустыми; данные (ключи, кости, эффекты) сохранены.|Files not found: {}. These layers will be empty; their data (keys, bones, effects) is kept.
+Добавлено шрифтов: {}|Fonts added: {}
+Нет шрифтов: {} - текст покажется шрифтом по умолчанию|Missing fonts: {} - the text will use the default font
+Отменить импорт - удалить этот проект; остальные проекты не затрагиваются.|Undo import - delete this project; other projects are not affected.
+Открыть|Open
+Отменить импорт|Undo import
+Импорт не удался|Import failed
+Существующие проекты не изменены.|Existing projects were not changed.
+Выбрать другой файл|Choose another file
+PSD откроется в новом проекте: слои загружаются|The PSD opens in a new project: loading layers
+Импорт отменён: проект удалён|Import undone: the project was deleted
+Звук выключен - видео без звука|Sound is off - the video will be silent
+Звуковых дорожек в видео: {}|Sound tracks in the video: {}
+Все звуковые дорожки «Без звука» - видео без звука|All sound tracks are muted - the video will be silent
+Звук не попадает в экспортируемый отрезок - видео без звука|The sound is outside the exported range - the video will be silent
+Громкость звука на нуле - видео без звука|Sound volume is at zero - the video will be silent
+Файл звука не найден в проекте - видео без звука|The sound file is missing from the project - the video will be silent
+Звук не удалось подготовить (файл не декодируется) - видео сохранено без звука|Could not prepare the sound (the file cannot be decoded) - the video was saved without sound
+Сборка {}|Build {}
+Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость, реверс и Цикл работают для звука и видео; Цикл повторяет клип до конца проекта или сцены. Скорость и Цикл меняют и время ключей анимации слоя.|Drag clip edges on the timeline; drag the middle to move the selected clip. Speed, reverse and Loop work for sound and video; Loop repeats the clip until the end of the project or scene. Speed and Loop also change the timing of the layer's animation keys.
+GIF обрезан до {} кадров (больше за раз не импортируется)|GIF trimmed to {} frames (more cannot be imported at once)
+GIF ({} кадров) импортирован как символ «Символ {}»: крутится по кругу|GIF ({} frames) imported as symbol “Symbol {}”: it plays in a loop
+GIF без анимации импортирован как картинка|A GIF without animation was imported as an image
+GIF импортирован: {} кадров. Проект продлён до конца GIF|GIF imported: {} frames. Project extended to the end of the GIF
+GIF импортирован: {} кадров|GIF imported: {} frames
+GIF не прочитан: файл повреждён или слишком большой|Could not read the GIF: the file is damaged or too large
+Не удалось импортировать GIF|Could not import the GIF
+В GIF нет кадров|The GIF has no frames
+Новый PSD: замок слоя (пиксели, положение, весь слой) - замок, замок прозрачности - «Замок прозрачности»; уже открытые проекты не меняются|New PSD: a layer lock (pixels, position, whole layer) becomes a lock, a transparency lock becomes “Alpha lock”; projects already open are not changed
+Выкл.: текстовые слои нового PSD становятся редактируемым текстом (текст, размер, цвет, выравнивание; шрифт по умолчанию, поверх слоёв PSD)|Off: text layers of a new PSD become editable text (text, size, color, alignment; default font, above the PSD layers)
+Текстовые слои PSD стали редактируемым текстом: {}; остались картинкой: {}|PSD text layers became editable text: {}; kept as images: {}
+Текстовые слои PSD стали редактируемым текстом: {}; перенесено замков: {}|PSD text layers became editable text: {}; locks imported: {}
+Текстовые слои PSD стали редактируемым текстом: {}|PSD text layers became editable text: {}
+Перенесено замков слоёв PSD: {}|PSD layer locks imported: {}
+Выбран слой-картинка: «+ Изображение» вписывает картинку в его рисунок на плейхеде (пропорции, по центру) вместо нового слоя; Undo возвращает рисунок|With an image layer selected, “+ Image” fits the picture into its drawing at the playhead (keeping proportions, centered) instead of adding a new layer; Undo restores the drawing
+Картинка вставлена в рисунок «{}» на кадре {}|Picture inserted into the drawing “{}” at frame {}
+Слой изменился во время вставки: картинка не вставлена|The layer changed during insertion: the picture was not inserted
+Не удалось прочитать рисунок слоя|Could not read the layer drawing
+Не удалось вставить картинку в рисунок|Could not insert the picture into the drawing
+PNG не записан|PNG was not written
+Объединить|Union
+Вычесть|Subtract
+Пересечь|Intersect
+Исключить|Exclude
+Разобрать|Release
+Фигуры объединены|Shapes united
+Выбранная фигура вычтена из фигуры под ней|The selected shape was subtracted from the shape below it
+Осталось пересечение фигур|Only the overlap of the shapes remains
+Осталось то, что не перекрывается|Only the non-overlapping parts remain
+Под выбранной фигурой нет другой фигуры: операция берёт выбранную и предыдущую нарисованную|There is no shape below the selected one: the operation uses the selected shape and the one drawn before it
+Линии и ломаные не участвуют в булевых операциях: нужны замкнутые фигуры|Lines and open polylines can’t be used in boolean operations: closed shapes are needed
+Разобрать можно только фигуру булевой операции|Only a boolean operation shape can be released
+Фигура разобрана на две|The shape was released into two shapes
+Узлы фигуры булевой операции можно двигать; чтобы удалить узел, сначала нажмите «Разобрать»|Nodes of a boolean operation shape can be moved; to delete a node, tap “Release” first
+Сгладить узел|Smooth node
+Острый угол|Corner
+Сгладить контур|Smooth path
+У фигуры булевой операции ручки не правятся: сначала нажмите «Разобрать»|Handles of a boolean operation shape can’t be edited: tap “Release” first
+Ручки кривых есть только у контуров пера; у линии, прямоугольника, эллипса и фигур их нет|Only pen paths have curve handles; lines, rectangles, ellipses and preset shapes don’t
+У узла уже нет ручек|This node has no handles
+Узел нельзя сгладить: нужен соседний узел в другом месте|The node can’t be smoothed: it needs a neighboring node at a different position
+Узел сглажен: потяните ручку, чтобы изменить изгиб|Node smoothed: drag a handle to change the curve
+Узел стал углом|The node is now a corner
+Контур сглажен|Path smoothed
+Перо: тапами ставьте точки на векторном слое, протяжка от новой точки вытягивает ручки кривой, «Готово» завершает контур, тап по первой точке замыкает|Pen: tap to place points on a vector layer, drag from a new point to pull out curve handles, “Done” finishes the outline, tapping the first point closes it
+Независимые ручки|Independent handles
+У узла нет ручек: сначала «Сгладить узел» или вытяните ручки пером|The node has no handles: tap “Smooth node” first or pull handles out with the pen
+Ручки узла независимы: каждая двигается отдельно|The node’s handles are independent: each moves on its own
+Ручки узла связаны: вторая снова напротив первой|The node’s handles are linked: the second one is opposite the first again
+При редактировании символа слои главной сцены видны полупрозрачно вокруг него, выровненные по экземпляру; не выбираются и не экспортируются|While editing a symbol, main scene layers are shown semi-transparent around it, aligned to the instance; they can’t be selected and aren’t exported
+Насколько видна главная сцена вокруг открытого символа (5-100%)|How visible the main scene is around the open symbol (5–100%)
+Видео как символ|Video as Symbol
+Видео обрезано до {} кадров (больше за раз не импортируется)|Video trimmed to {} frames (more cannot be imported at once)
+Видео ({} кадров) импортировано как символ «Символ {}»: крутится по кругу|Video ({} frames) imported as symbol “Symbol {}”: it plays in a loop
+{}. Звук - отдельная дорожка|{}. The sound is on a separate track
+{}. Проект продлён до конца видео|{}. Project extended to the end of the video
+В файле нет видео|The file contains no video
+Не удалось получить кадры видео|Could not read the video frames
+Не удалось импортировать видео|Could not import the video
+PSD проекта уже разложен на слои: выберите другой PSD или «+ → PSD в текущий проект»|The project PSD is already split into layers: pick another PSD or “+ → PSD into current project”
+Это не PSD-файл|This is not a PSD file
+Не удалось вставить PSD|Could not insert the PSD
+Файл PSD не найден|PSD file not found
+Не удалось прочитать PSD|Could not read the PSD
+В PSD нет слоёв с пикселями|The PSD has no layers with pixels
+В PSD нет видимых слоёв с пикселями|The PSD has no visible layers with pixels
+PSD «{}» вставлен: слоёв {}|PSD “{}” inserted: {} layers
+PSD «{}» вставлен одним слоем|PSD “{}” inserted as a single layer
+PSD «{}» вставлен как покадровый слой: кадров {} (больше за раз не импортируется)|PSD “{}” inserted as a frame-by-frame layer: {} frames (more cannot be imported at once)
+PSD «{}» вставлен как покадровый слой: кадров {}|PSD “{}” inserted as a frame-by-frame layer: {} frames
+Режим импорта PSD|PSD Import Mode
+Для PSD, вставленного в текущий проект (+ → «PSD в текущий проект» или библиотека). PSD нового проекта всегда раскладывается слоями как в файле|For a PSD inserted into the current project (+ → “PSD into current project” or the library). A new project’s PSD is always split into layers as in the file
+Слои как в файле|Layers as in file
+Одним слоем|Single layer
+PSD в текущий проект|PSD into current project
+Не удалось сохранить папки библиотеки|Could not save library folders
+Удалить папку (файлы останутся)|Delete folder (files stay)
++ Папка|+ Folder
+Долгое нажатие на папку - переименовать или удалить; на файл - переложить|Long-press a folder to rename or delete it; long-press a file to move it
+Долгое нажатие на файл - положить в папку|Long-press a file to put it into a folder
+Папка пуста: долгое нажатие на файл в другой папке кладёт его сюда|The folder is empty: long-press a file in another folder to put it here
+Переименовать папку|Rename folder
+Пустое название или такая папка уже есть|Empty name, or such a folder already exists
+Сначала создайте папку: «+ Папка»|Create a folder first: “+ Folder”
+Убрать из папки|Remove from folder
+Холст и переход сцены|Scene canvas and transition
+Холст и переход|Canvas and transition
+свой фон|own background
+своих слоёв|own layers
++ Сцена с чистым холстом|+ Scene with a clean canvas
+Переход в сцену|Transition into the scene
+У первой сцены нет перехода: он идёт из предыдущей сцены.|The first scene has no transition: a transition comes from the previous scene.
+Между этой и предыдущей сценой есть промежуток: переход возможен только у соседних сцен.|There is a gap between this scene and the previous one: a transition is possible only between adjacent scenes.
+Без перехода|Cut
+Растворение|Dissolve
+Через чёрный|Through black
+Через белый|Through white
+Сдвиг влево|Push left
+{} кадров · {}|{} frames · {}
+Переход занимает поровну последние кадры предыдущей сцены и первые кадры этой. Растворение и сдвиг меняют только свои слои сцен; через чёрный/белый - весь кадр.|The transition takes the last frames of the previous scene and the first frames of this one in equal parts. Dissolve and push change only the scenes’ own layers; through black/white changes the whole frame.
+Фон сцены|Scene background
+Как у проекта|Same as project
+Слои сцены|Scene layers
+Галочка - слой виден в этой сцене. Снятая галочка у общего слоя делает его своим для остальных сцен. Свои слои других сцен здесь скрыты.|Checked: the layer is visible in this scene. Unchecking a shared layer makes it the own layer of the other scenes. Other scenes’ own layers are hidden here.
+В проекте пока нет слоёв.|The project has no layers yet.
+во всех сценах|in all scenes
+Во всех сценах|In all scenes
+сцен|scenes
+Слой должен остаться хотя бы в одной сцене: используйте глаз в панели слоёв|A layer must stay in at least one scene: use the eye in the Layers panel
+Сцена с чистым холстом: новые слои в ней можно сделать своими в «Холст и переход»|Scene with a clean canvas: new layers in it can be made its own in “Canvas and transition”
+Наверх группы|To top of group
+Вниз группы|To bottom of group
+Слой уже наверху группы|The layer is already at the top of the group
+Слой уже внизу группы|The layer is already at the bottom of the group
+Слой перенесён наверх группы|Layer moved to the top of the group
+Слой перенесён вниз группы|Layer moved to the bottom of the group
+Группа создана: слоёв {} (PSD и картинки вперемешку)|Group created: {} layers (PSD and images mixed)
+Маска по слою|Mask to Layer
+Выкл|Off
+Вкл|On
+Контекст GL потерян, пока приложение было свёрнуто - экспорт прерван|The GL context was lost while the app was in the background - export interrupted
+Ошибка экспорта|Export error
+Пустой отрезок|Empty range
+Кодек не открыт|The codec is not open
+Некорректный размер видео|Invalid video size
+Последовательность кадров|Frame sequence
+Проект ToonSquid (.tsproj) не читается напрямую: экспортируйте его в ToonSquid в PSD, GIF, видео или последовательность PNG (ZIP) и импортируйте этот файл|ToonSquid projects (.tsproj) can't be read directly: export the project from ToonSquid as PSD, GIF, video or a PNG sequence (ZIP) and import that file
+Формат не распознан. Поддерживаются: .tsproj/.zip VibeToon, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra), SVG и ZIP с кадрами PNG/JPEG|Unrecognized format. Supported: VibeToon .tsproj/.zip, PSD, Procreate, Lottie (.json/.lottie), OpenRaster (.ora), Krita (.kra), SVG and ZIP with PNG/JPEG frames
+В файле нет слоёв с пикселями|The file has no layers with pixels
+Анимация контуров фигур не переносится (взята первая форма)|Shape path animation is not imported (the first shape is used)
+Скругление звёзд и многоугольников не переносится|Star and polygon roundness is not imported
+Анимация групп внутри слоя-фигуры не переносится (взято первое положение)|Group animation inside a shape layer is not imported (the first position is used)
+Перекос (skew) не переносится|Skew is not imported
+Градиенты заменены сплошным цветом|Gradients replaced with a solid color
+Анимация цвета и прозрачности заливок не переносится|Fill color and opacity animation is not imported
+Анимация толщины обводки не переносится|Stroke width animation is not imported
+Пунктир обводки не переносится|Dashed strokes are not imported
+Trim Paths не переносится|Trim Paths is not imported
+Repeater не переносится|Repeater is not imported
+Merge Paths не переносится|Merge Paths is not imported
+Round Corners не переносится|Round Corners is not imported
+Эффекты фигур ({}) не переносятся|Shape effects ({}) are not imported
+В файле .lottie несколько анимаций - импортирована первая|The .lottie file has several animations - the first one was imported
+Композиция {}×{} уменьшена до {}×{}|Composition {}×{} scaled down to {}×{}
+Частота кадров {} округлена до {}|Frame rate {} rounded to {}
+Длительность обрезана до {} кадров|Duration trimmed to {} frames
+Слишком глубокая вложенность композиций|Compositions are nested too deeply
+Слои Lottie типа {} не переносятся|Lottie layers of type {} are not imported
+3D-слои импортированы как 2D|3D layers imported as 2D
+Time Remap не переносится|Time Remap is not imported
+Auto-Orient не переносится|Auto-Orient is not imported
+Маски слоёв Lottie не переносятся|Lottie layer masks are not imported
+Эффекты слоёв Lottie не переносятся|Lottie layer effects are not imported
+Track Matte не переносится: слой-подложка скрыт|Track Matte is not imported: the matte layer is hidden
+Не найдена вложенная композиция «{}»|Nested composition "{}" not found
+Выражения (expressions) не переносятся|Expressions are not imported
+Импортировано слоёв: {} (больше за раз не импортируется)|Layers imported: {} (the maximum per import)
+Не найдена картинка слоя «{}»|Image for layer "{}" not found
+Некоторые режимы наложения заменены на Normal|Some blend modes replaced with Normal
+Шрифты текста Lottie заменены шрифтом по умолчанию|Lottie text fonts replaced with the default font
+Текстовые элементы OpenRaster не переносятся|OpenRaster text elements are not imported
+Режимы наложения заменены на Normal: {}|Blend modes replaced with Normal: {}
+Холст {}×{} вписан в {}×{}|Canvas {}×{} fitted into {}×{}
+В файле Krita нет сведённой картинки (mergedimage.png): сохраните его в Krita в PSD или ORA|The Krita file has no merged image (mergedimage.png): save it in Krita as PSD or ORA
+Krita: слои хранятся во внутреннем формате - импортирована сведённая картинка. Для отдельных слоёв сохраните файл в Krita как PSD или ORA|Krita: layers are stored in an internal format - the merged image was imported. For separate layers, save the file in Krita as PSD or ORA
+Импортировано кадров: {} из {}|Frames imported: {} of {}
+Кадры разного размера растянуты до {}×{}|Frames of different sizes stretched to {}×{}
+Кадры по порядку имён файлов, по одному кадру проекта ({} fps)|Frames in file name order, one project frame each ({} fps)
+Холст {}×{} уменьшен до {}×{}|Canvas {}×{} scaled down to {}×{}
+Animation Assist: кадры сведены (режимы наложения внутри кадра - как Normal), настройки кальки и удержания кадров не переносятся|Animation Assist: frames are flattened (blend modes inside a frame act as Normal); onion skin and frame hold settings are not imported
+Текстовые слои импортированы картинками: {}|Text layers imported as images: {}
+Маски слоёв запечены в прозрачность|Layer masks baked into transparency
+Импортировано из: {}|Imported from: {}
+Не перенесено или упрощено:|Not imported or simplified:
+Файл другого приложения повреждён или в неподдерживаемой версии формата|The file from another app is damaged or uses an unsupported format version
+Файл не похож на проект: нужен .tsproj, .zip с project.json, project.json, PSD, Procreate, Lottie, OpenRaster, Krita или SVG|The file doesn't look like a project: use .tsproj, .zip with project.json, project.json, PSD, Procreate, Lottie, OpenRaster, Krita or SVG
+Проект Rough Animator не читается напрямую: экспортируйте анимацию в Rough Animator как последовательность PNG (ZIP), GIF или видео и импортируйте этот файл|Rough Animator projects can't be read directly: export the animation from Rough Animator as a PNG sequence (ZIP), GIF or video and import that file
+Не хватает памяти GPU: часть слоёв временно показана без обновления. Скройте лишние слои - показ восстановится сам|Not enough GPU memory: some layers are temporarily shown without updates. Hide unneeded layers - display will recover by itself
+Картинка слоя больше предела GPU: слой показан без обновления. Уменьшите её размер|The layer image exceeds the GPU limit: the layer is shown without updates. Reduce its size
+Не хватило памяти GPU: часть картинок слоёв в файле могла не обновиться ({})|Not enough GPU memory: some layer images in the file may not have updated ({})
+нет аудиодорожки|no audio track
+Аудио не содержит доступных сэмплов|The audio has no usable samples
+каналов больше двух|more than two channels
+Нужен файл шрифта TTF или OTF|A TTF or OTF font file is required
+Не удалось открыть файл|Could not open the file
+Не удалось прочитать шрифт|Could not read the font
+Не удалось прочитать изображение|Could not read the image
+Не удалось декодировать изображение|Could not decode the image
+Не удалось получить кадр видео|Could not get a video frame
+Пустой звук|Empty audio
+Кодек звука не выдал данных|The audio codec produced no data
+Пустой файл после сборки|Empty file after muxing
+Кодек звука завис|The audio codec stalled
+Кодек звука не сообщил формат|The audio codec did not report its format
+В видео нет дорожки картинки|The video has no picture track
+Не удалось сохранить проект|Could not save the project
+{} (копия)|{} (copy)
+{} копия|{} copy
+{} (звук)|{} (audio)
+Кадр|Frame
+кадр {}|frame {}
+Проект|Project
+Слой|Layer
+Back (перелёт)|Back (overshoot)
+Запуск кодека в фазе {}|Codec started in phase {}
+Кадр {} вне очереди (ожидается {}, фаза {})|Frame {} out of order (expected {}, phase {})
+Завершение до последнего кадра ({}/{})|Finished before the last frame ({}/{})
+Без зерна|No grain
+Скринтон|Screentone
+Бумага|Paper
+Горизонтальные линии|Horizontal lines
+Вертикальные линии|Vertical lines
+Обрыв последовательности юникода|Truncated Unicode escape
+Неверная последовательность юникода|Invalid Unicode escape
+Неверное экранирование: {}|Invalid escape: {}
+Файл GIF обрезан|The GIF file is truncated
+Это не GIF|This is not a GIF
+Слишком большой GIF: {}×{}|GIF is too large: {}×{}
+Опорные точки требуют формат версии 5|Pivot points require format version 5
+Некорректные опорные точки|Invalid pivot points
+Некорректный id пивота|Invalid pivot id
+Некорректная опорная точка|Invalid pivot point
+Некорректная координата пивота|Invalid pivot coordinate
+Прозрачный|Transparent
+Белый|White
+Чёрный|Black
+Серый|Gray
+GL-контекст потерян|GL context lost
+Нет совместимого кодека H.264|No compatible H.264 codec
+Кодек не предоставляет YUV Image|The codec does not provide a YUV Image
+Очищено: кэш {}, лишних файлов {} ({})|Cleaned up: cache {}, orphaned files {} ({})
+Не удалось импортировать|Import failed
+{}. Звук - отдельная дорожка. Проект продлён до конца видео|{}. The sound is on a separate track. Project extended to the end of the video
+Текст добавляется через addText|Text is added via addText
+Камера добавляется через addCameraLayer|Camera is added via addCameraLayer
+Transform Layer создаётся через addNullLayer|Transform Layer is created via addNullLayer
+Группа создаётся через groupSelected|Group is created via groupSelected
+Символ создаётся через createSymbol|Symbol is created via createSymbol
+Не удалось сохранить рисунок|Could not save the drawing
+Ключи времени очищены: символ держит первый кадр|Time keys cleared: the symbol holds its first frame
+Пивот X|Pivot X
+Пивот Y|Pivot Y
+{}  (свой)|{}  (custom)
+{} с|{} s
+Поток|Flow
+Перспектива для группы: нажмите «Включить для группы»|Perspective for group: tap “Enable for group”
+Warp для группы: нажмите «Включить для группы»|Warp for group: tap “Enable for group”
+Плавные анимации интерфейса|Smooth UI Animations
+Панели и окна появляются плавно; учитывается «Масштаб длительности анимации» Android (0 - без анимации)|Panels and windows appear smoothly; follows Android's “Animator duration scale” (0 turns animations off)
+На устройстве нет кодировщика видео для этого размера|The device has no video encoder for this size
+HEVC на этом устройстве не берёт {}×{}: видео будет в H.264|HEVC on this device cannot encode {}×{}: the video will be H.264
+На устройстве нет кодировщика HEVC: видео будет в H.264|The device has no HEVC encoder: the video will be H.264
+Устройство не кодирует {}×{} ({}): видео будет {}×{}|The device cannot encode {}×{} ({}): the video will be {}×{}
+Кодировщик заявляет до {} fps при {}×{}: файл записан с {} fps, но слабые устройства могут показывать его неплавно|The encoder declares up to {} fps at {}×{}: the file is written at {} fps, but weaker devices may play it unevenly
+Некорректная частота кадров|Invalid frame rate
+Некорректная частота звука|Invalid audio sample rate
+MOV уже закрыт|The MOV file is already closed
+Кадр MOV должен быть PNG|A MOV frame must be a PNG
+MOV создан без звука|The MOV file was created without audio
+В MOV нет ни одного кадра|The MOV file has no frames
+Нет совместимого кодека HEVC для {}×{}|No compatible HEVC codec for {}×{}
+Нет совместимого кодека H.264 для {}×{}|No compatible H.264 codec for {}×{}
+Со звуком: PCM 16 бит, стерео|With sound: PCM 16-bit, stereo
+MOV с альфа-каналом (PNG без потерь): откройте в After Effects, Premiere, Final Cut или DaVinci Resolve|MOV with alpha channel (lossless PNG): open it in After Effects, Premiere, Final Cut or DaVinci Resolve
+Не удалось записать MOV|Could not write the MOV file
+Кодек: {}, {}×{}, {} fps|Codec: {}, {}×{}, {} fps
+MOV (альфа)|MOV (alpha)
+{} fps (проект)|{} fps (project)
+Видео QuickTime с альфа-каналом: кадры PNG без потерь, звук PCM. Открывается в After Effects, Premiere, Final Cut и DaVinci Resolve. ProRes 4444 Android не кодирует, файл крупнее MP4.|QuickTime video with alpha channel: lossless PNG frames, PCM sound. Opens in After Effects, Premiere, Final Cut and DaVinci Resolve. Android cannot encode ProRes 4444, so the file is larger than MP4.
+MOV {}×{}, {} кадров|MOV {}×{}, {} frames
+4K в MOV: каждый кадр - PNG в несколько мегабайт, экспорт долгий и файл большой|4K in MOV: each frame is a PNG of several megabytes, export is slow and the file is large
+GIF показывает не больше {} fps: кадры проекта прорежены|GIF shows at most {} fps: project frames are thinned out
+Настройки видео: кодек, разрешение и FPS|Video settings: codec, resolution and FPS
+На устройстве нет кодировщика HEVC: доступен только H.264|The device has no HEVC encoder: only H.264 is available
+HEVC: файл примерно вдвое меньше при том же качестве, но старые телефоны и Windows без расширения его могут не открыть|HEVC: the file is about half the size at the same quality, but old phones and Windows without the extension may not open it
+Своя частота (1-120 fps)|Custom frame rate (1-120 fps)
+Экран показывает до {} кадров в секунду: при просмотре часть кадров пропускается, в экспорт попадают все|The screen shows up to {} frames per second: some frames are skipped during playback, export keeps all of them
+Трансформ: углы и стороны меняют размер, наклон или искажение; внутри рамки - перенос, снаружи - поворот; «Применить» переносит пиксели|Transform: corners and sides change size, skew or distortion; drag inside the box to move, outside to rotate; Apply moves the pixels
+Недопустимые значения трансформации|Invalid transform values
+Рамка вырождена, перекручена или слишком мала/велика: исправьте её или отмените|The box is degenerate, twisted or too small/large: fix it or cancel
+Свободно|Free
+Наклон|Skew
+Пропорционально|Proportional
+Центр|Center
+Левый верхний угол|Top-left corner
+Верхний край|Top edge
+Правый верхний угол|Top-right corner
+Левый край|Left edge
+Правый край|Right edge
+Левый нижний угол|Bottom-left corner
+Нижний край|Bottom edge
+Правый нижний угол|Bottom-right corner
+Числа…|Numbers…
+Новое выделение|New selection
+Добавить к выделению|Add to selection
+Вычесть из выделения|Subtract from selection
+Пересечь с выделением|Intersect with selection
+Выделить всё|Select all
+Расширить на 2 px|Expand by 2 px
+Сузить на 2 px|Contract by 2 px
+Направляющие|Guides
+Без направляющих|No guides
+Изометрическая сетка|Isometric grid
+Перспектива: 1 точка|Perspective: 1 point
+Перспектива: 2 точки|Perspective: 2 points
+Перспектива: 3 точки|Perspective: 3 points
+Эллипс и круг|Ellipse and circle
+Без симметрии|No symmetry
+Симметрия: вертикальная ось|Symmetry: vertical axis
+Симметрия: горизонтальная ось|Symmetry: horizontal axis
+Симметрия: обе оси|Symmetry: both axes
+Симметрия: радиальная|Symmetry: radial
+Править направляющие|Edit guides
+Притяжение|Snapping
+Лучи|Rays
+Сбросить направляющие|Reset guides
+Трансформация числами|Numeric transform
+Значения применяются поверх рамки относительно опорной точки|Values are applied on top of the box relative to the pivot point
+Ширина, %|Width, %
+Высота, %|Height, %
+Поворот, °|Rotation, °
+Наклон по X, °|Skew X, °
+Наклон по Y, °|Skew Y, °
+Сдвиг по X, px|Offset X, px
+Сдвиг по Y, px|Offset Y, px
+Отразить по горизонтали|Flip horizontally
+Отразить по вертикали|Flip vertically
+Ширина и высота 1–800 %, наклон меньше 85°|Width and height 1–800 %, skew below 85°
+Стилус|Stylus
+Чувствительность стилуса|Stylus sensitivity
+Кривая переводит нажим пера (по горизонтали) в нажим кисти (по вертикали): выше диагонали - мягче, ниже - жёстче. Действует на кисть и ластик|The curve maps pen pressure (horizontal) to brush pressure (vertical): above the diagonal is softer, below is firmer. Applies to the brush and the eraser
+Очень мягкая|Very soft
+Мягкая кривая|Soft curve
+Линейная|Linear
+Жёсткая кривая|Firm curve
+Очень жёсткая|Very firm
+График кривой нажима|Pressure curve graph
+Перетащите узел; коснитесь пустого места - новый узел; двойное касание узла - удалить|Drag a node; tap an empty spot to add a node; double-tap a node to delete it
+Проведите пером здесь, чтобы проверить нажим|Draw here with the pen to test pressure
+Нажим пера: {} % → кисть: {} %|Pen pressure: {} % → brush: {} %
+Палец или перо без датчика нажима рисуют с нажимом 100 %|A finger or a pen without a pressure sensor draws at 100 % pressure
+Наклон пера: {}°|Pen tilt: {}°
+Наклон пера: нет данных|Pen tilt: no data
+Стабилизация: {}|Stabilization: {}
+Стабилизация|Stabilization
+1 - почти сырой штрих, 10 - сильное сглаживание для чистого лайнарта. При отпускании хвост линии догоняет перо, конец не теряется. Работает с кистью, ластиком, направляющими и симметрией|1 - nearly raw stroke, 10 - strong smoothing for clean lineart. On release the line tail catches up with the pen, so the ending is not lost. Works with the brush, eraser, guides and symmetry
+Ластик на обратном конце пера|Eraser on the pen's back end
+Показывать нажим при рисовании|Show pressure while drawing
+Защита от ладони: вкладка «Жесты» → «Определение касаний»|Palm rejection: “Gestures” tab → “Touch Detection”
+Сбросить настройки пера|Reset pen settings
+Стаб.|Stab.
+Внутреннее свечение|Inner Glow
+Полутон|Halftone
+Живая линия|Line Boil
+Распространение|Spread
+Интенсивность (альфа)|Intensity (alpha)
+Режим|Mode
+Инверсия (от центра)|Invert (from center)
+Обычный|Normal
+Экран (наложение)|Screen
+Добавление|Add
+Умножение|Multiply
+Размер ячейки|Cell size
+Сдвиг тона|Tone shift
+Монохром|Monochrome
+Монохром на белом|Monochrome on white
+Цвета рисунка|Original colors
+Масштаб шума|Noise scale
+Частота дрожания, fps|Boil rate, fps
+Тип шума|Noise type
+Вариантов в цикле (0 - без повтора)|Variants per loop (0 - no repeat)
+Детализация|Detail
+Зерно|Seed
+Дрожание текстуры|Texture jitter
+Плавный|Smooth
+Зернистый|Grainy
+Волнистый|Wavy
+Свечение внутри контура: не выходит за альфу рисунка|Glow inside the outline: never spills past the drawing's alpha
+Полутон: точки в координатах холста, сетка не плывёт при сдвиге вида|Halftone: dots live in canvas coordinates, the grid stays put when the view moves
+Живая линия: рисунок меняется с частотой дрожания, а не с fps проекта|Line Boil: the drawing changes at the boil rate, not at the project fps
+Файл не похож на SVG: нет элемента <svg>|The file doesn't look like SVG: there is no <svg> element
+SVG повреждён: ошибка в разметке XML|The SVG is damaged: XML markup error
+В SVG нет фигур, которые можно перенести|The SVG has no shapes that can be imported
+SVG слишком большой для импорта|The SVG is too large to import
+Текст SVG не переносится: переведите текст в кривые в редакторе SVG|SVG text isn't imported: convert text to paths in your SVG editor
+Встроенные картинки SVG не переносятся|Embedded SVG images aren't imported
+Градиенты SVG заменены сплошным цветом|SVG gradients were replaced with a solid color
+Узоры (pattern) SVG заменены серым цветом|SVG patterns were replaced with gray
+Обтравочные контуры и маски SVG не применяются|SVG clipping paths and masks aren't applied
+Фильтры SVG (размытие, тени) не переносятся|SVG filters (blur, shadows) aren't imported
+Анимация SVG (SMIL) не переносится|SVG animation (SMIL) isn't imported
+Маркеры линий (стрелки на концах) не переносятся|Line markers (arrowheads) aren't imported
+Концы и углы обводки всегда скруглены|Stroke caps and joins are always round
+Сложные CSS-селекторы SVG не поддерживаются|Complex SVG CSS selectors aren't supported
+Сущности DOCTYPE в SVG не поддерживаются|DOCTYPE entities in SVG aren't supported
+SVG очень сложный: перенесены первые {} фигур|The SVG is very complex: the first {} shapes were imported
+Слишком много групп верхнего уровня: все фигуры в одном слое|Too many top-level groups: all shapes are in one layer
+Выберите один слой (или группу с включённой перспективой)|Select one layer (or a group with perspective enabled)
+Наклон вне допустимого диапазона (до ±75°) для этого слоя|Skew is out of range (up to ±75°) for this layer
+Наклон слоя изменён (Отменить возвращает прежнюю форму)|Layer skew changed (Undo restores the previous shape)
+Выберите векторный слой|Select a vector layer
+В векторном слое нет фигур|The vector layer has no shapes
+Сначала коснитесь узла фигуры (или выберите «Все фигуры слоя»)|Tap a shape node first (or choose “All layer shapes”)
+Трансформ фигур: углы и стороны меняют размер, наклон или искажение; внутри рамки - перенос, снаружи - поворот; «Применить» сохраняет|Shape transform: corners and sides change size, skew or distortion; inside the box moves, outside rotates; “Apply” saves
+Слой изменился: трансформация отменена|The layer changed: transform canceled
+Фигуры нельзя так исказить: уменьшите искажение|The shapes can't be distorted this way: reduce the distortion
+Фигуры трансформированы: прямоугольники, эллипсы и фигуры стали контурами, их узлы правятся пером|Shapes transformed: rectangles, ellipses and preset shapes became paths, edit their nodes with the Pen
+SVG вставлен: слоёв: {}, фигур: {}|SVG inserted: layers: {}, shapes: {}
+Трансформ фигур|Shape transform
+Наклон/искажение фигуры|Skew/distort shape
+Все фигуры слоя|All layer shapes
+Наклон…|Skew…
+Выпрямить|Straighten
+Наклон слоя|Layer skew
+Наклон хранится в углах перспективы: искажение углов и ключи анимации сохраняются|Skew is stored in the perspective corners: corner distortion and animation keys are kept
+Наклон от −75° до 75°|Skew from −75° to 75°
+Импорт SVG: что не перенесено|SVG import: what wasn't imported
+Понятно|Got it
+SVG в текущий проект (векторные слои)|SVG into current project (vector layers)
+один раз, затем последний кадр|once, then the last frame
+Без ключей времени:|Without time keys:
+Один раз|Play Once
+Hold (первый кадр)|Hold (first frame)
+Цикл: внутренняя анимация символа повторяется по кругу.|Loop: the symbol's inner animation repeats over and over.
+Один раз: анимация символа идёт с начала его плашки на таймлайне и замирает на последнем кадре - на холсте, при Play и в экспорте.|Play Once: the symbol's animation starts at the beginning of its timeline bar and stops on the last frame - on the canvas, during Play and in export.
+Hold: символ стоит на первом кадре.|Hold: the symbol stays on its first frame.
+Символ без ключей проиграется один раз и замрёт на последнем кадре|Without keys the symbol plays once and holds its last frame
+Калька включена: долгое нажатие на кнопку - цвета, глубина и прозрачность до/после (нужен покадровый слой)|Onion skin on: long-press the button for before/after colors, depth and opacity (needs a frame-by-frame layer)
+Рисунки до (предыдущие)|Drawings before (previous)
+Рисунки после (следующие)|Drawings after (next)
+Затухание: дальние рисунки бледнее|Falloff: farther drawings are fainter
+Тонировать цветом (выкл. - исходные цвета рисунков)|Tint with color (off - original drawing colors)
+Out of Pegs: призраки на своих местах|Out of Pegs: ghosts stay in place
+Out of Pegs: соседние рисунки стоят там, где слой был на их кадрах (с ключами трансформации), и не едут вместе с текущим рисунком, пока его двигают или трансформируют. Выкл. - призраки повторяют текущее положение слоя.|Out of Pegs: neighboring drawings stay where the layer was on their own frames (with transform keys) and don't move with the current drawing while it is being moved or transformed. Off - ghosts follow the layer's current position.
+Работает на слое-картинке с кадрами (кнопка «Добавить пустой кадр»). Настройки сохраняются в настройках приложения и в резервной копии настроек.|Works on an image layer with frames (the “Add empty frame” button). Settings are kept in the app settings and in the settings backup.
+Глубина:|Depth:
+Цвет:|Color:
+Круг HSV|HSV wheel
+Слой-путь (Path)|Path layer
+Слой костей (Bones)|Bone layer (Bones)
+Слой костей|Bone layer
+Маска|Mask
+Маска выкл.|Mask off
+Маска (инверсия)|Mask (inverted)
+На пути|On path
+Слой-маска|Mask layer
+Добавить маску слоя|Add layer mask
+Удалить маску слоя|Delete layer mask
+Маска из слоя выше|Mask from layer above
+Править маску|Edit mask
+К слою|Go to layer
+Отцепить|Detach
+По касательной|Along tangent
+Полож.|Position
+Прикрепить к пути…|Attach to path…
+Нарисовать путь|Draw path
+Дуга|Arc
+Кости этого слоя|Bones of this layer
+Костей в слое: {}|Bones in layer: {}
+Собрать свободные кости ({})|Collect free bones ({})
+На пути «{}»|On path “{}”
+Маска слоя «{}»: сама не рисуется. Ластик скрывает слой, кисть возвращает (с инверсией - наоборот).|Mask of layer “{}”: it is never drawn itself. The eraser hides the layer, the brush brings it back (inverted - the other way round).
+Слой-путь: не рисуется и не экспортируется. Прикрепите слои к пути в их свойствах; трансформация пути двигает их вместе с ним.|Path layer: it is not drawn or exported. Attach layers to the path in their properties; transforming the path moves them along with it.
+Слой костей: хозяин скелета. Сдвиг, поворот и масштаб слоя двигают все его кости и привязанные к ним слои; глаз скрывает кости на холсте.|Bone layer: the owner of a skeleton. Moving, rotating and scaling the layer moves all its bones and the layers bound to them; the eye hides the bones on the canvas.
+Слой пути и слой костей создаются из меню «＋»|Path and bone layers are created from the “＋” menu
+Слой костей создан: в него перенесены кости проекта|Bone layer created: the project's bones were moved into it
+Слой костей создан: режим «Кости» и «＋ Кость» рисуют кости этого слоя|Bone layer created: the “Bones” mode and “＋ Bone” draw bones of this layer
+Свободных костей нет|There are no free bones
+Свободные кости перенесены в слой костей|Free bones were moved into the bone layer
+Слой-путь создан: нарисуйте путь пальцем или выберите готовый; слои прикрепляются в их свойствах|Path layer created: draw the path with a finger or pick a ready one; layers are attached in their properties
+Сначала выберите слой-путь|Select a path layer first
+Путь заменён|Path replaced
+Проведите пальцем по холсту: новый путь заменит текущий|Swipe across the canvas: the new path replaces the current one
+Рисование пути выключено|Path drawing off
+Путь нарисован|Path drawn
+Слишком короткий путь: проведите пальцем дальше|The path is too short: swipe farther
+Этот слой нельзя прикрепить к пути|This layer can't be attached to a path
+Нельзя: слой-путь привязан к этому слою|Not possible: the path layer is bound to this layer
+Слой прикреплён к пути «{}»: двигайте «Положение на пути» и ставьте ключи|Layer attached to path “{}”: move “Position on path” and set keys
+Слой отцеплен от пути|Layer detached from the path
+Слой не может быть маской самого себя|A layer can't be its own mask
+У этого слоя своя маска: он не может быть маской|This layer has its own mask: it can't be a mask
+Слой-маска не может получить свою маску|A mask layer can't get its own mask
+Этот слой уже маска другого слоя|This layer is already the mask of another layer
+Слой не найден|Layer not found
+Маска недоступна для этого слоя|A mask isn't available for this layer
+У слоя уже есть маска|The layer already has a mask
+Маска добавлена и выбрана: ластик скрывает слой, кисть возвращает|Mask added and selected: the eraser hides the layer, the brush brings it back
+Не удалось создать маску|Could not create the mask
+Над слоем нет подходящего слоя для маски|There is no suitable layer above for a mask
+Слой «{}» стал маской: видно там, где он непрозрачный|Layer “{}” became a mask: visible where it is opaque
+Маска отвязана: теперь это обычный слой|Mask unlinked: it is a regular layer now
+Слой костей не дублируется: создайте новый и нарисуйте кости|A bone layer can't be duplicated: create a new one and draw bones
+Миниатюры|Thumbnails
+Список|List
+Поиск слоя|Search layers
+Очистить поиск|Clear search
+Свернуть все|Collapse all
+Развернуть все|Expand all
+Ничего не найдено: измените поиск или фильтр|Nothing found: change the search or filter
+Кость|Bone
+Свернуть / развернуть|Collapse / expand
+Слоёв на пути: {}|Layers on path: {}
+Найдено: {} из {}|Found: {} of {}
+Рисунки|Drawings
+Медиа|Media
+Маски|Masks
+Кости и пути|Bones and paths
+Свои кисти|Custom brushes
+Сохранить текущую как свою|Save current as custom
+Импорт кистей…|Import brushes…
+Экспорт кистей…|Export brushes…
+Удалить кисть|Delete brush
+Свои кисти: «⋮» → «Сохранить текущую как свою» или «Импорт кистей…»|Custom brushes: “⋮” → “Save current as custom” or “Import brushes…”
+Своих кистей уже 100: удалите ненужные|You already have 100 custom brushes: delete some
+Кисть сохранена: {}|Brush saved: {}
+Кисть удалена: {}|Brush deleted: {}
+Кисти экспортированы: {}|Brushes exported: {}
+Не удалось сохранить файл кистей|Could not save the brush file
+Своя кисть|Custom brush
+Свой ластик|Custom eraser
+Своя кисть {}|Custom brush {}
+Свой ластик {}|Custom eraser {}
+Последние цвета|Recent colors
+Палитры|Palettes
+Палитра|Palette
+Новая палитра из последних цветов|New palette from recent colors
+Импорт палитры…|Import palette…
+Экспорт палитр…|Export palettes…
+Удалить палитру|Delete palette
+Палитра сохранена|Palette saved
+Палитра удалена|Palette deleted
+В палитре уже 64 цвета|The palette already has 64 colors
+Палитры экспортированы: {}|Palettes exported: {}
+Не удалось сохранить файл палитры|Could not save the palette file
+Направление|Direction
+Авто|Auto
+Слева направо|Left to right
+Справа налево|Right to left
+Текст пишется справа налево (определено по первой букве)|The text runs right to left (detected from the first letter)
+Файл пустой|The file is empty
+Файл слишком большой (больше 1 МБ)|The file is too large (over 1 MB)
+Файл повреждён: это не JSON|The file is damaged: it is not JSON
+Это не файл кистей VibeToon|This is not a VibeToon brush file
+Это не файл палитры (нужен .json VibeToon, .gpl GIMP или список HEX)|This is not a palette file (use a VibeToon .json, a GIMP .gpl or a HEX list)
+Это файл палитры: импортируйте его в окне цвета|This is a palette file: import it in the color window
+Это файл кистей: импортируйте его в меню кистей|This is a brush file: import it in the brush menu
+Файл из более новой версии VibeToon: обновите приложение|The file is from a newer VibeToon version: update the app
+В файле нет ни одной исправной кисти|The file has no valid brushes
+В файле нет ни одного цвета|The file has no colors
+Нечего экспортировать|Nothing to export
+Импортировано кистей: {}|Brushes imported: {}
+Импортировано кистей: {}, пропущено повреждённых: {}|Brushes imported: {}, damaged skipped: {}
+Импортировано кистей: {}, не поместилось: {} (не больше 100)|Brushes imported: {}, did not fit: {} (100 max)
+Импортировано палитр: {}, цветов: {}|Palettes imported: {}, colors: {}
+Импортировано палитр: {}, цветов: {}, пропущено: {}|Palettes imported: {}, colors: {}, skipped: {}
+Импортировано палитр: {}, не поместилось: {} (не больше 50)|Palettes imported: {}, did not fit: {} (50 max)
+Наклон пера|Pen tilt
+Не влияет|No effect
+Толщина|Thickness
+Штриховка|Shading
+Плоское перо|Flat nib
+Сила наклона: {} %|Tilt strength: {} %
+Сила наклона|Tilt strength
+Толщина - наклонённое перо рисует шире; Штриховка - шире и прозрачнее, как карандаш боком; Плоское перо - штамп сплющивается и поворачивается по направлению пера. Действует на кисть, ластик и векторные кисти, кроме «Ровная»|Thickness: a tilted pen draws wider; Shading: wider and lighter, like a pencil on its side; Flat nib: the stamp flattens and turns with the pen direction. Works for the brush, the eraser and vector brushes except “Uniform”
+Датчика наклона нет: кисть рисует без изменений|No tilt sensor: the brush draws unchanged
+Наклон пера {}°: не влияет на кисть (выберите режим ниже)|Pen tilt {}°: does not affect the brush (choose a mode below)
+Наклон пера {}° → толщина ×{}|Pen tilt {}° → thickness ×{}
+Наклон пера {}° → штриховка: толщина ×{}, плотность {} %|Pen tilt {}° → shading: thickness ×{}, density {} %
+Наклон пера {}° → штамп сплющен до {} % и повёрнут по перу|Pen tilt {}° → stamp flattened to {} % and turned with the pen
+Ровная|Uniform
+По нажиму|By pressure
+Тушь|Ink
+Каллиграфия|Calligraphy
+Перетаскивание слоёв выключено во время поиска и фильтра|Layer dragging is off while searching or filtering
+Перетащить слой|Drag layer
+Ключи костей на кадре: {}|Bone keys on frame: {}
+Ключ и автоключ - всей цепочке кости и другим выбранным костям|Key and auto-key: the whole bone chain and other selected bones
+Ключ - выбранным костям|Key: selected bones
+Продлевать проект под аудио и видео|Extend project for audio and video
+Импорт и экспорт в фоне|Background import and export
+Ключи всей цепочке костей|Keys for the whole bone chain
+Слои, кости в режиме анимации и эффекты: первая правка на кадре > 0 ставит исходный ключ на кадре 0. Деформации Mesh/Warp/перспективы/пинов ключуются всегда, когда включена анимация (FX); ретайминг не поддерживается|Layers, bones in animation mode and effects: the first edit on a frame > 0 adds the original key on frame 0. Mesh/Warp/perspective/pin deformations are always keyed when animation (FX) is on; retiming is not supported
+«Добавить ключ» и автоключ кости фиксируют позу всей цепочки (например, плечо, предплечье и кисть) и других выбранных костей|"Add Key" and bone auto-key lock the pose of the whole chain (e.g. upper arm, forearm and hand) and other selected bones
+Импорт и экспорт видео продолжаются, если свернуть приложение: идёт служба с уведомлением о ходе работы|Video import and export continue when the app is minimized: a service runs with a progress notification
+Если добавленное аудио или видео длиннее проекта, проект продлевается до его конца (не дольше предела длительности); Undo отменяет и продление|If added audio or video is longer than the project, the project is extended to its end (up to the duration limit); Undo also reverts the extension
+Длительность (мин:сек)|Duration (min:sec)
+Например 1:30 или 0:05:12 (мин:сек:кадры)|For example 1:30 or 0:05:12 (min:sec:frames)
+Всего кадров|Total frames
+Наибольшая длительность при этой частоте: {}|Longest duration at this frame rate: {}
+Импорт и экспорт|Import and export
+Работа продолжается в фоне|Work continues in the background
+VibeToon: экспорт {} %|VibeToon: exporting {} %
+VibeToon: экспорт|VibeToon: exporting
+VibeToon: импорт {} %|VibeToon: importing {} %
+VibeToon: импорт|VibeToon: importing
+VibeToon: фоновая работа|VibeToon: background work
+Подготовка кадров|Preparing frames
+Подготовка медиа|Preparing media
+можно свернуть приложение|you can minimize the app
+Нажмите, чтобы вернуться в VibeToon|Tap to return to VibeToon
+Задач: {}|Tasks: {}
+Скрыть панель|Hide panel
+Показать панель|Show panel
+Выбрать все ключи слоя|Select all layer keys
+У слоя нет ключей|The layer has no keys
+Выбрано ключей слоя: {}|Layer keys selected: {}
+Цвет взят кнопкой пера|Color picked with the pen button
+Наклон пера {}° → перо почти вертикально: штамп не меняется|Pen tilt {}° → pen almost upright: the stamp does not change
+Не использовать|Do not use
+Ластик, пока зажата|Eraser while held
+Обратный конец пера: ластик|Pen back end: eraser
+Кнопка пера нажата: {}|Pen button pressed: {}
+Кнопка пера|Pen button
+Зажмите кнопку на корпусе и коснитесь холста: «Ластик» стирает этим штрихом, «Пипетка» берёт цвет в кисть. Работает с кистью; обратный конец пера всегда важнее кнопки|Hold the barrel button and touch the canvas: "Eraser" erases with that stroke, "Color Picker" picks the color into the brush. Works with the brush; the pen's back end always wins over the button
+Кривая ключа|Key curve
+Кривая ключа: кадр {}|Key curve: frame {}
+У дорожек этого ключа разные кривые: выбор задаст одну всем|This key's tracks have different curves: a choice sets one for all
+Меняется только этот ключ, до следующего; остальные ключи не трогаются|Only this key changes, up to the next one; other keys are untouched
+Выберите один ключ: тапните ◆ на таймлайне|Select one key: tap ◆ on the timeline
+Только ключ кадра {}: остальные ключи не меняются|Only the key on frame {}: other keys stay unchanged
+Обзор приложения|App overview
+Минутный тур: где что лежит|A one-minute tour: where everything is
+Привет! Это VibeToon|Hi! This is VibeToon
+Минутный тур по экрану редактора: холст в центре, инструменты слева, слои и свойства справа, таймлайн внизу. Подробности - в остальных уроках «Обучения». «Пропустить» закрывает тур в любой момент.|A one-minute tour of the editor screen: canvas in the middle, tools on the left, layers and properties on the right, timeline at the bottom. Details are in the other Learn lessons. Skip closes the tour at any time.
+Сверху слева: добавить картинку, видео, звук, PSD, текст, камеру или новый слой. Рядом - «Отменить» и «Повторить».|Top left: add an image, video, sound, PSD, text, a camera or a new layer. Next to it are Undo and Redo.
+верхняя панель, слева|top bar, left
+Инструменты слева|Tools on the left
+«Трансформ» двигает, вращает и масштабирует; ниже - Кисть, Ластик, Заливка, Текст, Warp, Перспектива и Liquify. Набор меняется вместе с режимом.|Transform moves, rotates and scales; below are Brush, Eraser, Fill, Text, Warp, Perspective and Liquify. The set changes with the mode.
+Три режима|Three modes
+«Объект» - обычная работа со слоями, «Кости» - скелет персонажа, «Сетка» - Mesh для мягкой деформации картинки.|Object is regular layer work, Bones is the character skeleton, Mesh softly deforms the picture.
+Список слоёв справа: глаз скрывает, замок блокирует, перетаскивание меняет порядок и кладёт в группы. Зажмите строку - меню слоя.|The layer list is on the right: the eye hides, the lock locks, dragging reorders and puts layers into groups. Long-press a row for the layer menu.
+Свойства, эффекты и наложение|Properties, effects and blending
+Вкладка «Свойства»: положение, прозрачность, цвет, «Обрезка» и «Эффекты» (размытие, свечение, Turbulent). Режим наложения (Multiply, Screen...) - в меню слоя.|The Properties tab: position, opacity, color, Crop and Effects (blur, glow, Turbulent). The blend mode (Multiply, Screen...) is in the layer menu.
+Анимация ключами|Animating with keys
+Выберите объект, поставьте плейхед на кадр, измените его и нажмите «Add Key». Между ключами движение считается само; f(x) задаёт плавность.|Select an object, put the playhead on a frame, change it and tap Add Key. Motion between keys is computed automatically; f(x) sets the easing.
+В режиме «Кости» инструмент «+Кость» рисует скелет протяжкой по холсту, «Автопривязка» привязывает к нему слои. Тянете кость - двигается персонаж.|In Bones mode the +Bone tool draws the skeleton by dragging on the canvas, Auto bind attaches layers to it. Drag a bone and the character moves.
+Сетка (Mesh)|Mesh
+В режиме «Сетка» выберите слой и нажмите «Сгенерировать» или «По контуру»: вершины сетки гнут картинку плавно, как резину.|In Mesh mode select a layer and tap Generate or By contour: the mesh vertices bend the picture smoothly, like rubber.
+Проверка и экспорт|Preview and export
+«Играть» показывает анимацию, «Export» сохраняет MP4, GIF или картинки ровно так, как на холсте. Тур можно повторить из «Обучения».|Play shows the animation, Export saves MP4, GIF or images exactly as on the canvas. You can repeat the tour from Learn.
+Тур проходит на учебном проекте с тремя фигурами - можно смело пробовать.|The tour runs on the tutorial project with three shapes, so feel free to experiment.
+Каждая тема подробно - в карточках ниже: холст, текст, кости, Mesh, слои, липсинг, таймлайн.|Each topic in detail is in the cards below: canvas, text, bones, Mesh, layers, lip sync, timeline.
+Обзор интерфейса|Interface tour
+Выберите слой-картинку: обрезка работает с PNG, рисунками, текстом, видео и слоями PSD|Select a picture layer: crop works with PNG, drawings, text, video and PSD layers
+Видимая часть: {}×{} px из {}×{}|Visible part: {}×{} px of {}×{}
+Видимая часть картинки|Visible part of the picture
+Сверху|Top
+Снизу|Bottom
+По содержимому|Fit to content
+Рамка на холсте - предпросмотр: нажмите «Применить», чтобы сохранить обрезку|The frame on the canvas is a preview: tap Apply to save the crop
+Файл картинки не меняется: края скрываются на холсте и в экспорте и едут вместе с поворотом, сеткой и анимацией|The image file is not changed: edges are hidden on the canvas and in export and follow rotation, mesh and animation
+Картинка слоя ещё не загружена|The layer picture is not loaded yet
+Содержимое занимает всю картинку: обрезать нечего|The content fills the whole picture: nothing to crop
+Рамка не менялась|The frame has not changed
+Обрезка снята|Crop removed
+Обрезка применена|Crop applied
+Кривая выбранных ключей ({})|Curve of selected keys ({})
+Ключей: {} на слоях: {} - одна кривая всем, остальные ключи не меняются|Keys: {} on layers: {} - one curve for all, other keys stay unchanged
+Ключей: {} - одна кривая всем, остальные ключи не меняются|Keys: {} - one curve for all, other keys stay unchanged
+У выбранных ключей разные кривые: выбор задаст одну всем|The selected keys have different curves: a choice sets one for all
+Выделите ключи на таймлайне|Select keys on the timeline
+Кривая ключа времени|Time key curve
+Кривая ключей времени ({})|Time key curve ({})
+Между разными формами кривая плавно растворяет одну форму в другую, чужие формы не появляются; внутри формы ведёт её кадры|Between different forms the curve smoothly dissolves one form into the other, no other forms appear; within a form it drives its frames
+Дата: сначала новые|Date: newest first
+Дата: сначала старые|Date: oldest first
+Размер: сначала большие|Size: largest first
+Размер: сначала маленькие|Size: smallest first
+Свой порядок|Custom order
+Проектов перенесено из папки: {}|Projects moved out of the folder: {}
+Проектов перенесено в «{}»: {}|Projects moved to "{}": {}
+Удалено проектов: {}|Projects deleted: {}
+Выбрать все|Select all
+Ничего не найдено|Nothing found
+Папка пуста. Перетащите сюда проект (долгое нажатие и перенос на папку) или выделите проекты и нажмите «В папку».|The folder is empty. Drag a project here (long press and drop on the folder) or select projects and tap Move to folder.
+В папку (проектов: {})|Move to folder (projects: {})
+Создать и перенести|Create and move
+Удалить проекты ({})?|Delete projects ({})?
+Выбранные проекты и все их файлы будут удалены без возможности восстановления. Сначала сохраните нужные копии .tsproj.|The selected projects and all their files will be deleted permanently. Save any .tsproj backups you need first.
+Выбран|Selected
+Не выбран|Not selected
+Проектов: {}|Projects: {}
+Удалить папку (проекты останутся)|Delete folder (projects stay)
+Переход от каждого выделенного ключа к следующему: Hold - резкая смена формы, остальные - форма плавно растворяется в форму следующего ключа по кривой (чужие формы не появляются).|Transition from each selected key to the next: Hold switches the form instantly, the others smoothly dissolve the form into the next key's form along the curve (no other forms appear).
+Hold - резкая смена формы. Остальные переходы и своя кривая плавно растворяют форму в форму следующего ключа (чужие формы не появляются); внутри одной формы ведут её кадры.|Hold switches the form instantly. Other transitions and a custom curve smoothly dissolve the form into the next key's form (no other forms appear); within one form they drive its frames.
+Загрузка проекта…|Loading project…
+Отпустите - проект вернётся в «Мои работы»|Release to move the project back to My projects
+Перетащите сюда, чтобы убрать из папки|Drag here to remove from the folder
+Кривая скопирована: вставьте её в другой ключ или набор ключей|Curve copied: paste it onto another key or set of keys
+Выделите ключ: его кривая будет скопирована|Select a key: its curve will be copied
+Сначала скопируйте кривую: «Копировать» в редакторе кривой или «Копировать кривую»|Copy a curve first: Copy in the curve editor or Copy curve
+Кривая вставлена (ключей: {})|Curve pasted (keys: {})
+Копировать кривую|Copy curve
+Вставить кривую|Paste curve
+Сохранить…|Save…
+Мои кривые|My curves
+Удалить кривую «{}»?|Delete curve “{}”?
+Кривая пропадёт из «Моих кривых». Ключи, которым она уже назначена, не изменятся.|The curve will be removed from My curves. Keys that already use it will not change.
+Перезаписать|Overwrite
+Сохранить кривую|Save curve
+Кривая с таким названием уже есть - она будет перезаписана|A curve with this name exists - it will be overwritten
+Кривая появится в «Пресетах» → «Мои кривые» во всех проектах|The curve will appear in Presets → My curves in all projects
+Моя кривая|My curve
+Кривая перезаписана: {}|Curve overwritten: {}
+Кривая сохранена: {}|Curve saved: {}
+Точечный выбор|Point select
+Кости: точечный выбор|Bones: point select
+Точечный выбор: касайтесь слоёв - касание добавляет или снимает слой, удержание только добавляет|Point select: tap layers - a tap adds or removes a layer, a hold only adds
+Лассо: обведите слои пальцем|Lasso: draw around layers with your finger
+Слой закрыт замком|Layer is locked
+Под пальцем нет видимого слоя|No visible layer under your finger
+Добавлен слой «{}» (выбрано: {})|Added layer “{}” (selected: {})
+Снят слой «{}» (выбрано: {})|Removed layer “{}” (selected: {})
+Слой «{}» уже выбран (выбрано: {})|Layer “{}” is already selected (selected: {})
+Дублировать можно картинки, видео, текст, рисунки и слои PSD|Only images, video, text, drawings and PSD layers can be duplicated
+Скрытый слой не сливается: включите глаз у обоих слоёв|A hidden layer can't be merged: turn on visibility for both layers
+Слой изменился: повторите слияние|The layer changed: merge again
+Слито вниз: результат с режимом наложения сохранён в нижнем слое|Merged down: the blended result is kept in the lower layer
+Слой PSD уже растровый: рисуйте, выделяйте и отделяйте части прямо на нём|A PSD layer is already raster: draw, select and split parts right on it
+Рисовать можно на слое-картинке или слое PSD: выберите его или создайте «Новый слой»|You can draw on an image layer or PSD layer: select one or create a New layer
+Слой PSD: сначала «Вырезать в новый слой» или «Копировать в новый слой», затем трансформируйте часть|PSD layer: first use Cut to new layer or Copy to new layer, then transform the part
+Выберите слой-картинку или слой PSD|Select an image layer or PSD layer
+Слой и его группы должны быть видимы и разблокированы|The layer and its groups must be visible and unlocked
+Слой с маской, слой-маска и слой на пути пока не поддерживаются|Masked layers, mask layers and layers on a path aren't supported yet
+Над слоем есть обтравочный слой: новый слой встал бы под ним и изменил обтравку|A clipped layer sits above: the new layer would go under it and change the clipping
+Выделение сделано на другом слое: выберите его или выделите область заново|The selection was made on another layer: select it or make the selection again
+Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы). Ниже своих - прежняя общая цепочка вложенных слоёв|Group: effects apply to the whole group - on the canvas, in Play and export (keys on the group row). Below the group's own effects is the former shared chain of nested layers
+Группа: эффекты применяются к группе целиком - на холсте, в Play и экспорте (ключи на строке группы), независимо от слоёв внутри|Group: effects apply to the whole group - on the canvas, in Play and export (keys on the group row), regardless of the layers inside
+Слой продублирован без анимации|Layer duplicated without animation
+Калька включена: соседние рисунки слоя или соседние слои-рисунки; долгое нажатие - глубина, шаг, прозрачность и цвета|Onion skin on: neighboring drawings of the layer or neighboring drawing layers; long press for depth, step, opacity and colors
+Длина нового кадра: {}|New frame length: {}
+Новый кадр: {}, длина {}|New frame: {}, length {}
+Длина слоя-рисунка: {}|Drawing layer length: {}
+Длина рисунка: {}|Drawing length: {}
+Рисунков в этом направлении нет|No drawings in this direction
+Пустой кадр: здесь нет рисунка|Empty frame: there is no drawing here
+Пустой кадр: создан новый рисунок на кадре {} - рисуйте|Empty frame: a new drawing was created at frame {} - draw
+Новый рисунок «{}»: кадры {}–{}, рисуйте|New drawing “{}”: frames {}–{}, draw
+Часть отделена в новый слой и перенесена: дальше её можно двигать отдельно|The part was split into a new layer and moved: now you can move it separately
+встык|back to back
+встык, промежуток {}|back to back, gap {}
+каскад, шаг {}|cascade, step {}
+Лесенка: {} клипов, {}|Stagger: {} clips, {}
+Лесенка снизу вверх: {} клипов, {}|Stagger bottom to top: {} clips, {}
+Лесенка: {} клипов, {}; {} не поместились в проект и упёрлись в его конец (увеличьте длительность)|Stagger: {} clips, {}; {} didn't fit in the project and stop at its end (increase the duration)
+Флажков нет: поставьте маркер кадра кнопкой ⚑|No flags: place a frame marker with the ⚑ button
+Плашка уже на месте|The clip is already in place
+Плашка: кадры {}–{} ({})|Clip: frames {}–{} ({})
+Шаг:|Step:
+каждый|every
+через {}|skip {}
+Калька во время воспроизведения|Onion skin during playback
+Соседние слои-рисунки (Рисунок 1, Рисунок 2…) тоже|Neighboring drawing layers (Drawing 1, Drawing 2…) too
+Работает на слое с кадрами (кнопка «+ Кадр») и на рисунках-слоях лесенкой: призраки - соседние слои той же группы со своими плашками. Настройки сохраняются в настройках приложения и в резервной копии настроек.|Works on a layer with frames (the + Frame button) and on staggered drawing layers: ghosts are neighboring layers of the same group with their own clips. Settings are kept in the app settings and in the settings backup.
+< Кадр|< Frame
+Кадр >|Frame >
++ Кадр|+ Frame
+Дубль кадра|Duplicate frame
+Длина:|Length:
+Короче на кадр|One frame shorter
+Длиннее на кадр|One frame longer
+Новый кадр: {}|New frame: {}
+Плашка: флажки и плейхед|Clip: flags and playhead
+Точное время…|Exact time…
+Магнит (прилипание краёв)|Magnet (snap edges)
+Начало к плейхеду|Start to playhead
+Конец к плейхеду|End to playhead
+Обрезать слева до плейхеда|Trim left to playhead
+Обрезать справа до плейхеда|Trim right to playhead
+Начало к флажку|Start to flag
+Конец к флажку|End to flag
+Обрезать слева до флажка|Trim left to flag
+Обрезать справа до флажка|Trim right to flag
+Вписать между флажками|Fit between flags
+Точное время|Exact time
+Секунды|Seconds
+Кадры|Frames
+Начало|Start
+Конец|End
+Длительность|Duration
+Кадры {}–{}, длительность {} кадр. при {} fps|Frames {}–{}, duration {} fr. at {} fps
+Введите число: 2.5, 2с, 48к или 1:05|Enter a number: 2.5, 2s, 48f or 1:05
+Суффиксы: с / s - секунды, к / f - кадры; запятая или точка. Конец - граница: плашка 2–5 с видна до кадра перед 5 с.|Suffixes: s - seconds, f - frames; comma or dot. The end is a boundary: a 2–5 s clip is visible up to the frame before 5 s.
+Встык|Back to back
+Каскад со сдвигом|Cascade with offset
+Промежуток между плашками: {} кадр.|Gap between clips: {} fr.
+Сдвиг начала каждой следующей: {} кадр.|Start offset of each next clip: {} fr.
+Направление: снизу вверх (с последнего выбранного)|Direction: bottom to top (from the last selected)
+Направление: сверху вниз (по порядку выбора)|Direction: top to bottom (in selection order)
+Встык: следующая плашка начинается там, где кончилась предыдущая (+ промежуток, минус - нахлёст). Каскад: начала сдвигаются на шаг, длины не меняются.|Back to back: the next clip starts where the previous one ended (+ gap, minus - overlap). Cascade: starts shift by the step, lengths stay the same.
+У слоя есть ключи анимации. Как сделать копию?|The layer has animation keys. How should it be copied?
+С анимацией - копия со всеми ключами (трансформация, деформеры, эффекты). Без анимации - чистый слой без ключей, стоит как на текущем кадре.|With animation - a copy with all keys (transform, deformers, effects). Without animation - a clean layer without keys, posed as on the current frame.
+Без анимации|Without animation
+С анимацией|With animation
+Не удалось перенести проектов: {}|Could not move projects: {}
+Короче на кадр (удерживайте)|One frame shorter (hold)
+Длиннее на кадр (удерживайте)|One frame longer (hold)
+Импорт PSD, изображения, видео или аудио - в «Действиях» (сверху слева); рисовать можно сразу кистью|Import PSD, images, video or audio from “Actions” (top left); you can start drawing with the brush right away
+PSD проекта уже разложен на слои: выберите другой PSD или «Действия» → «PSD в текущий проект»|The project PSD is already split into layers: pick another PSD or “Actions” → “PSD into current project”
+Слой костей создан: режим «Кости» и «+Кость» рисуют кости этого слоя|Bone layer created: the “Bones” mode and “+Bone” draw bones of this layer
+Выберите слой (или ⊕ → «Анимационный (покадровый)») - на нём ведётся покадровая анимация|Select a layer (or ⊕ → “Animation (frame-by-frame)”): frame-by-frame animation lives on it
+Анимационный слой «{}»: рисуйте, «+ Кадр» ставит следующий рисунок|Animation layer “{}”: draw, “+ Frame” creates the next drawing
+Сначала создайте сетку: «Авто-сетка» или «+Пин» по слою|Create a mesh first: “Auto mesh” or “+Pin” on the layer
+Сетка: выберите слой и нажмите «Авто-сетка» или коснитесь его инструментом «+Пин»|Mesh: select a layer and tap “Auto mesh”, or touch it with the “+Pin” tool
+Режим костей: «+Кость» и протяжка пальцем рисуют кость|Bone mode: “+Bone” and a finger drag draw a bone
+Минутный тур по экрану редактора: холст в центре, инструменты слева, слои и свойства справа, таймлайн внизу. «Далее» и «Назад» листают шаги, «Пропустить» закрывает тур. Подробности - в остальных уроках «Обучения».|A one-minute tour of the editor: canvas in the middle, tools on the left, layers and properties on the right, timeline at the bottom. “Next” and “Back” flip the steps, “Skip” closes the tour. Details are in the other “Tutorials” lessons.
+Меню «Действия»|The “Actions” menu
+Сверху слева: импорт PSD, SVG, картинок, секвенций, видео и звука, текст, камера, вид холста, экспорт и настройки. Рядом - «Отменить» и «Повторить».|Top left: import PSD, SVG, images, sequences, video and sound, text, camera, canvas view, export and settings. Next to it are “Undo” and “Redo”.
+«Трансформ» двигает, вращает и масштабирует; ниже - Выделение, Кисть, Ластик, Смазка, Заливка, Пипетка, Текст, Путь, Warp, Перспектива и Liquify. В режимах «Кости» и «Сетка» сверху появляются их инструменты.|“Transform” moves, rotates and scales; below it are Selection, Brush, Eraser, Smudge, Fill, Color Picker, Text, Path, Warp, Perspective and Liquify. In the “Bones” and “Mesh” modes their own tools appear at the top.
+«Объект» - обычная работа со слоями, «Кости» - скелет персонажа, «Сетка» - Mesh и пины для мягкой деформации картинки.|“Object” is regular layer work, “Bones” is the character skeleton, “Mesh” is a mesh with pins for soft image deformation.
+Вкладка «Слои» справа: глаз скрывает, замок блокирует, ручка ≡ справа в строке меняет порядок и кладёт слой в группу. Зажмите строку - меню слоя. Кнопка ⊕ над списком добавляет новый слой: пиксельный, покадровый, векторный, группу, фон.|The “Layers” tab on the right: the eye hides, the lock locks, the ≡ handle on the right of a row reorders and drops the layer into a group. Press and hold a row for the layer menu. The ⊕ button above the list adds a new layer: pixel, frame-by-frame, vector, group, background.
+над списком слоёв|above the layer list
+Вкладка «Свойства»: положение, масштаб, поворот, цвет, «Обрезка» и «Эффекты» (размытие, свечение, Turbulent). Прозрачность «Непр.» и режим наложения (Multiply, Screen…) - под списком слоёв у выбранного слоя.|The “Properties” tab: position, scale, rotation, color, “Crop” and “Effects” (blur, glow, Turbulent). Opacity “Opac.” and the blend mode (Multiply, Screen…) are below the layer list for the selected layer.
+Выберите объект, поставьте плейхед на кадр, измените объект и нажмите «◆ Add Key». Между ключами движение считается само; «Кривые (Easing)» на панели инструментов таймлайна задают плавность.|Select an object, put the playhead on a frame, change the object and tap “◆ Add Key”. Motion between keys is computed automatically; “Curves (Easing)” on the timeline toolbar sets the smoothness.
+Покадровая анимация|Frame-by-frame animation
+Выберите слой (или ⊕ → «Анимационный (покадровый)»): под панелью воспроизведения появится строка рисунков. «+ Кадр» ставит следующий чистый рисунок длиной «Новый кадр: N» - эту плашку можно тянуть пальцем. «Длина:» − / + меняет длину рисунка (удерживайте - быстрее). «Калька (Onion Skin)» показывает соседние рисунки: прошлые красным, будущие зелёным. Подробно - урок «Покадровая анимация».|Select a layer (or ⊕ → “Animation (frame-by-frame)”): a drawings row appears below the playback bar. “+ Frame” adds the next blank drawing with the length “New frame: N” - you can drag this chip with a finger. “Length:” − / + changes the drawing length (hold for faster). “Onion skin” shows neighboring drawings: past ones in red, future ones in green. Details are in the “Frame-by-frame animation” lesson.
+строка рисунков под панелью воспроизведения (у выбранного слоя)|drawings row below the playback bar (for the selected layer)
+В режиме «Сетка» выберите слой и нажмите «Авто-сетка» - или инструментом «+Пин» коснитесь слоя, сетка построится сама. Пины гнут картинку плавно, как резину: «+Пин» ставит пин, «Пин» тянет его.|In the “Mesh” mode select a layer and tap “Auto mesh” - or touch the layer with the “+Pin” tool and the mesh is built automatically. Pins bend the image smoothly, like rubber: “+Pin” places a pin, “Pin” drags it.
+Каждая тема подробно - в карточках ниже: холст, текст, покадровая анимация, кости, Mesh, слои, липсинг, таймлайн.|Each topic in detail is in the cards below: canvas, text, frame-by-frame animation, bones, mesh, layers, lip sync, timeline.
+Рисунки, длина кадра и калька|Drawings, frame length and onion skin
+Покадровый слой|Frame-by-frame layer
+Нажмите ⊕ над списком слоёв и выберите «Анимационный (покадровый)». Пока слой выбран, под панелью воспроизведения видна строка рисунков: «< Кадр», «Кадр >», «+ Кадр», «Дубль кадра», «Удалить кадр», «Длина:» − / + и «Новый кадр: N».|Tap ⊕ above the layer list and choose “Animation (frame-by-frame)”. While the layer is selected, the drawings row is visible below the playback bar: “< Frame”, “Frame >”, “+ Frame”, “Duplicate frame”, “Delete frame”, “Length:” − / + and “New frame: N”.
+меню кнопки ⊕|⊕ button menu
+Первый рисунок|First drawing
+Выберите «Кисть» и нарисуйте первую фазу прямо на холсте.|Choose “Brush” and draw the first pose right on the canvas.
+Длина нового кадра|New frame length
+Плашка «Новый кадр: N» - сколько кадров держится каждый новый рисунок. Ведите по ней пальцем влево или вправо: число меняется от 1 до 48 и сохраняется, когда палец отпущен. Касание открывает меню с ползунком и быстрыми значениями. 2 - анимация «на двойках», 1 - «на единицах».|The “New frame: N” chip is how many frames each new drawing holds. Drag it left or right with a finger: the number changes from 1 to 48 and is saved when you lift the finger. A tap opens a menu with a slider and quick values. 2 means animating “on twos”, 1 means “on ones”.
+Новый кадр: N|New frame: N
+строка рисунков, в конце|drawings row, at the end
+Новый кадр|New frame
++ Кадр: следующий рисунок|+ Frame: the next drawing
+«+ Кадр» ставит чистый рисунок сразу после текущего, длиной «Новый кадр», и переводит плейхед на него. Нарисуйте следующую фазу. Каждый рисунок - отдельный отрезок на дорожке слоя.|“+ Frame” adds a blank drawing right after the current one, with the “New frame” length, and moves the playhead to it. Draw the next pose. Each drawing is a separate segment on the layer track.
+строка рисунков|drawings row
+Дубль и удаление|Duplicate and delete
+«Дубль кадра» копирует рисунок под плейхедом сразу следом, той же длины - удобно чуть поправить фазу. «Удалить кадр» убирает рисунок под плейхедом, последний рисунок слоя удалить нельзя.|“Duplicate frame” copies the drawing under the playhead right after it, with the same length - handy for slightly adjusting a pose. “Delete frame” removes the drawing under the playhead; the last drawing of a layer cannot be deleted.
+Длина рисунка: − / + с удержанием|Drawing length: − / + with hold
+«−» и «+» после «Длина:» укорачивают или удлиняют рисунок под плейхедом на кадр. Удерживайте кнопку - длина меняется всё быстрее (по 1, затем по 2 и по 4 кадра), отпустите - остановится. Рисунок не заходит на следующий, вся серия отменяется одним «Отменить». После короткого рисунка остаётся пустой промежуток: там слой не виден, а кисть сама начинает новый рисунок.|“−” and “+” after “Length:” shorten or lengthen the drawing under the playhead by one frame. Hold the button and the length changes faster and faster (by 1, then by 2 and by 4 frames); release to stop. A drawing never overlaps the next one, and the whole series is undone with a single “Undo”. A short drawing leaves an empty gap: the layer is not visible there, and the brush starts a new drawing by itself.
+строка рисунков, после «Длина:»|drawings row, after “Length:”
+Переход по рисункам|Moving between drawings
+«< Кадр» и «Кадр >» прыгают к предыдущему и следующему рисунку. Стрелки «Предыдущий кадр» и «Следующий кадр» на панели воспроизведения шагают по одному кадру; в «Настройках» пункт «Вперёд/назад: кадры (иначе рисунки)» переключает их на прыжки по рисункам.|“< Frame” and “Frame >” jump to the previous and next drawing. The “Previous frame” and “Next frame” arrows on the playback bar step one frame at a time; in “Settings” the “Forward/Backward: frames (otherwise drawings)” option switches them to jumping between drawings.
+строка рисунков, слева|drawings row, on the left
+Рисунки отдельными слоями|Drawings as separate layers
+Можно вести каждый рисунок отдельным слоем со своей плашкой (Рисунок 1, Рисунок 2… лесенкой). Если у выбранной картинки нет своих рисунков, но есть плашка, «+ Кадр» создаёт новый слой-рисунок прямо над текущим: его плашка начинается там, где кончилась плашка текущего. «Дубль кадра» копирует слой следом, «Длина:» − / + меняют длину плашки, «< Кадр» и «Кадр >» выбирают соседний слой-рисунок.|You can keep each drawing on its own layer with its own clip (Drawing 1, Drawing 2… staggered). If the selected image has no drawings of its own but has a clip, “+ Frame” creates a new drawing layer right above it: its clip starts where the current clip ends. “Duplicate frame” copies the layer right after it, “Length:” − / + change the clip length, “< Frame” and “Frame >” select the neighboring drawing layer.
+Включите «Калька (Onion Skin)» на панели воспроизведения: соседние рисунки видны полупрозрачно - предыдущие красным, следующие зелёным, ближайший ярче. Работает и на слое с рисунками, и на слоях-рисунках одной группы.|Turn on “Onion skin” on the playback bar: neighboring drawings are shown semi-transparent - previous ones in red, next ones in green, the nearest one brighter. It works both on a layer with drawings and on drawing layers of one group.
+Настройки кальки|Onion skin settings
+Долгое нажатие на кнопку кальки: «Глубина» (0-4 рисунка до и после), «Прозрачность» и «Цвет» каждой стороны, «Шаг» (каждый или через 1-3 рисунка), «Калька во время воспроизведения», «Соседние слои-рисунки… тоже», «Затухание», «Тонировать цветом» и «Out of Pegs». «Сбросить» возвращает исходные значения.|Long-press the onion skin button: “Depth” (0-4 drawings before and after), “Opacity” and “Color” for each side, “Step” (every drawing or every 2nd-4th), “Onion skin during playback”, “Neighboring drawing layers… too”, “Falloff”, “Tint with color” and “Out of Pegs”. “Reset” restores the defaults.
+долгое нажатие на кнопку кальки|long-press the onion skin button
+Проверьте в движении|Check it in motion
+«Играть»: рисунки сменяются со своими длинами, пустые промежутки пусты. Калька в Play видна, если включена «Калька во время воспроизведения». Экспорт GIF и MP4 показывает те же отрезки.|“Play”: drawings change with their own lengths, empty gaps stay empty. Onion skin is visible during playback if “Onion skin during playback” is on. GIF and MP4 export shows the same segments.
+На двойках (длина 2) при 24 fps - 12 рисунков в секунду: классика рисованной анимации.|On twos (length 2) at 24 fps means 12 drawings per second: classic hand-drawn animation.
+Сначала нарисуйте ключевые позы, потом добавляйте промежуточные фазы между ними, глядя на кальку.|Draw the key poses first, then add in-between poses, looking at the onion skin.
+Рисунки старых проектов без длины держатся до следующего рисунка, как раньше.|Drawings from older projects without a length hold until the next drawing, as before.
+В редакторе откройте «Действия» (сверху слева) и выберите тип файла. Картинка встанет по центру холста.|In the editor open “Actions” (top left) and choose the file type. An image is placed in the center of the canvas.
+Если ничего не выделено, два пальца двигают и масштабируют вид. Вернуть вид: «Сбросить вид холста» в «Действиях» или двойное касание кнопки фокуса на верхней панели.|If nothing is selected, two fingers pan and zoom the view. To reset the view: “Reset canvas view” in “Actions” or double-tap the focus button on the top bar.
+меню «Действия»|the “Actions” menu
+Перейдите на нужный кадр и нажмите «◆ Add Key» на таймлайне.|Go to the frame you need and tap “◆ Add Key” on the timeline.
+Перейдите на другой кадр, подвиньте текст и снова нажмите «◆ Add Key». Текст поедет между ключами.|Go to another frame, move the text and tap “◆ Add Key” again. The text will travel between the keys.
+Нажмите «Играть».|Tap “Play”.
+«Кривые (Easing)» на панели инструментов таймлайна меняют плавность движения.|“Curves (Easing)” on the timeline toolbar changes how smooth the motion is.
+В левой панели прокрутите вниз и выберите «Warp». На слое появится решётка 4×4 (16 точек); «Раздел X» и «Раздел Y» делают её гуще.|Scroll down the left panel and choose “Warp”. A 4×4 grid (16 points) appears on the layer; “X divisions” and “Y divisions” make it denser.
+левая панель, после «Путь»|left panel, after “Path”
+Mesh: сетка и пины|Mesh: mesh and pins
+Переключитесь в режим «Сетка», выберите слой и нажмите «Авто-сетка» («Стандарт» - меньше вершин, «Высокая» - больше). «+Пин» ставит пины (на слое без сетки первое касание само строит её), «Пин» тянет их, «Разрез» режет сетку, «Кисть» мягко сдвигает вершины.|Switch to the “Mesh” mode, select a layer and tap “Auto mesh” (“Standard” - fewer vertices, “High” - more). “+Pin” places pins (on a layer without a mesh the first touch builds one), “Pin” drags them, “Cut” cuts the mesh, “Brush” gently shifts vertices.
+левая панель в режиме «Сетка»|left panel in the “Mesh” mode
+«Перспектива» наклоняет слой за 4 угла. «Свойства» → «Эффекты» → Turbulent Displace добавляет волнистость и Line Boil. «Liquify» двигает пиксели картинки пальцем.|“Perspective” tilts a layer by its 4 corners. “Properties” → “Effects” → Turbulent Displace adds waviness and Line Boil. “Liquify” pushes image pixels with a finger.
+Порядок, группы, свайпы, мультивыбор|Order, groups, swipes, multi-select
+Порядок и группы|Order and groups
+Потяните строку за ручку ≡ справа: вверх-вниз меняет порядок, на группу - слой станет её дочерним, на слой в корне - выйдет из группы. Долгое нажатие на саму строку открывает меню слоя (переименовать, дублировать, слить вниз, создать символ…).|Drag a row by the ≡ handle on the right: up and down reorders, onto a group makes the layer its child, onto a root layer takes it out of the group. A long press on the row itself opens the layer menu (rename, duplicate, merge down, create symbol…).
+Свайпы и мультивыбор|Swipes and multi-select
+Свайп по строке влево открывает меню слоя, вправо - добавляет слой к выделению. Кнопка «Мультивыбор» над списком включает выбор нескольких слоёв; снизу появятся «Удалить выбранные», «Слить в один слой» (нижний слой сохраняет анимацию) и «Сгруппировать (папка)».|Swiping a row to the left opens the layer menu, to the right adds the layer to the selection. The “Multi-select” button above the list turns on selecting several layers; “Delete selected”, “Merge into one layer” (the bottom layer keeps its animation) and “Group (folder)” appear below.
+Прозрачность и наложение|Opacity and blending
+Выберите один слой: под списком появятся «Непр.» (прозрачность), кнопка режима наложения (Normal, Multiply, Screen…), «Alpha» (рисовать только по непрозрачному) и обтравка «Clip».|Select one layer: below the list you get “Opac.” (opacity), the blend mode button (Normal, Multiply, Screen…), “Alpha” (paint only over opaque pixels) and the “Clip” clipping mask.
+Кнопка ⊕ над списком: пиксельный, анимационный (покадровый), векторный слой, группа, фон, камера, слой-путь и слой костей.|The ⊕ button above the list: pixel, frame-by-frame animation, vector layer, group, background, camera, path layer and bone layer.
+Замок в строке слоя защищает его от случайных правок.|The lock in a layer row protects it from accidental edits.
+Включите «Кисть» и нажмите «Новый слой» в панели кисти: каждая форма рта (A, O, M, Rest...) рисуется на своём слое.|Turn on “Brush” and tap “New layer” in the brush panel: each mouth shape (A, O, M, Rest...) is drawn on its own layer.
+Включите «Мультивыбор», отметьте слои, зажмите строку слоя и выберите «Создать символ». В окне выберите «Слои как кадры»: каждый слой станет кадром символа, а на кадре появится маркер с именем слоя.|Turn on “Multi-select”, check the layers, press and hold a layer row and choose “Create symbol”. In the dialog choose “Layers as frames”: each layer becomes a symbol frame, and a marker with the layer name appears on that frame.
+⊕ над списком слоёв → «Аудио» (или «Действия» → «Аудио (MP3, WAV)»). Проект сам продлится до конца звука. Волна видна на плашке звука; перетаскивание плейхеда по линейке играет короткий фрагмент - так находят начало каждой фонемы на слух.|⊕ above the layer list → “Audio” (or “Actions” → “Audio (MP3, WAV)”). The project extends to the end of the sound automatically. The waveform is shown on the sound clip; dragging the playhead along the ruler plays a short snippet - this is how you find the start of each phoneme by ear.
+меню кнопки ⊕ над списком слоёв|⊕ button menu above the layer list
+Выделите символ на основной сцене: во вкладке «Свойства», раздел «Время», нажмите «Выбрать маркер». Откроется плавающая панель с картинками: перетащите её, куда удобно, спрячьте к краю или закройте крестиком. Остановите плейхед на звуке и тапните нужный рот.|Select the symbol on the main scene: in the “Properties” tab, “Time” section, tap “Pick marker”. A floating panel with pictures opens: drag it wherever you like, tuck it to the edge or close it with the cross. Stop the playhead on the sound and tap the mouth you need.
+Нажмите «Выделение ключей рамкой» рядом с «◆ Add Key», обведите ключи и потяните - они сдвинутся вместе. Появится строка действий: «Копировать», «Вставить», «Удалить», «Растянуть ×2», «Реверс», общая кривая.|Tap “Box-select keys” next to “◆ Add Key”, draw a box around keys and drag - they move together. An action row appears: “Copy”, “Paste”, “Delete”, “Stretch ×2”, “Reverse”, shared curve.
+Выделите несколько слоёв и нажмите «Лесенка»: плашки встанут встык - конец одной совпадёт с началом следующей. Долгое нажатие - настройки: встык с промежутком или каскад со сдвигом, направление.|Select several layers and tap “Stagger”: the clips line up end to end - the end of one matches the start of the next. Long press for settings: end to end with a gap or a cascade with an offset, and direction.
+панель инструментов таймлайна (на телефоне - «Ещё» ⋮)|timeline toolbar (on a phone - “More” ⋮)
+Плашки к флажкам и плейхеду|Clips to flags and playhead
+«Плашка: флажки и плейхед» (значок линейки): начало или конец к плейхеду или флажку, обрезка, «Вписать между флажками» и «Точное время…» в секундах или кадрах.|“Clip: flags and playhead” (ruler icon): start or end to the playhead or a flag, trimming, “Fit between flags” and “Exact time…” in seconds or frames.
+панель инструментов таймлайна|timeline toolbar
+Маркеры кадров|Frame markers
+«Маркер кадра» (флажок) ставит или убирает флажок на плейхеде, соседние кнопки прыгают к предыдущему и следующему флажку.|“Frame marker” (flag) adds or removes a flag at the playhead; the neighboring buttons jump to the previous and next flag.
+Потяните серый хват на верхней границе таймлайна вверх или вниз. «Свернуть таймлайн» (⏏) прячет его до одной строки.|Drag the gray grip on the top edge of the timeline up or down. “Collapse timeline” (⏏) shrinks it to a single row.
+первая строка таймлайна, справа|first timeline row, on the right
+В «Действиях» (или ⊕ над списком слоёв) выберите «Камера (Pan & Zoom)». Камера - отдельный слой, её положение и масштаб можно анимировать ключами.|In “Actions” (or ⊕ above the layer list) choose “Camera (Pan & Zoom)”. The camera is a separate layer; its position and scale can be animated with keys.
+Выберите камеру, измените X, Y, Scale X или Scale Y во вкладке «Свойства» и поставьте ключи «◆ Add Key». Движение вида пальцами без выделения не меняет экспорт.|Select the camera, change X, Y, Scale X or Scale Y in the “Properties” tab and set keys with “◆ Add Key”. Moving the view with your fingers without a selection does not change the export.
+Привязка плейхеда и плашек|Snapping the playhead and clips
+Нажмите «Магнит» на панели инструментов таймлайна. Плейхед при перетаскивании прилипает к ключам, маркерам и краям клипов, а края плашек - к флажкам, плейхеду и краям других плашек.|Tap “Magnet” on the timeline toolbar. While dragging, the playhead snaps to keys, markers and clip edges, and clip edges snap to flags, the playhead and edges of other clips.
+Нажмите кнопку ещё раз, чтобы свободно перемещать плейхед и плашки.|Tap the button again to move the playhead and clips freely.
+Включите «Мультивыбор», отметьте слои и нажмите «Сгруппировать (папка)». Группа вращается и масштабируется вокруг своей опорной точки.|Turn on “Multi-select”, check the layers and tap “Group (folder)”. A group rotates and scales around its own pivot.
+«Привязать к родителю (Parent)» во вкладке «Свойства»: слой повторяет сдвиг, поворот и масштаб родителя. Все связи видны в окне «Иерархия трансформаций».|“Bind to parent” in the “Properties” tab: the layer follows the parent's move, rotation and scale. All links are shown in the “Transform hierarchy” window.
+Жёлтый маркер на холсте перетаскивается; «Пивот в центр» во вкладке «Свойства» ставит точку в центр рамки. Пивот сохраняется в проекте и учитывается в экспорте.|The yellow marker on the canvas can be dragged; “Pivot to center” in the “Properties” tab puts the pivot in the center of the frame. The pivot is saved in the project and used in export.
+Выберите слой и поставьте ключи на разных кадрах кнопкой «◆ Add Key». Двигайте ключи инструментом «Выделение ключей рамкой»; «Список ключей» показывает все ключи слоя.|Select a layer and set keys on different frames with the “◆ Add Key” button. Move keys with the “Box-select keys” tool; “Key list” shows all keys of the layer.
+Включите «Показывать траекторию движения» в «Настройках»: путь опорной точки слоя рисуется на холсте. Траектория не экспортируется.|Turn on “Show Motion Path” in “Settings”: the path of the layer pivot is drawn on the canvas. The path is not exported.
+Края, разрез и расширение клипа|Clip edges, split and extend
+Границы клипа меняются перетаскиванием его краёв на таймлайне. «Разрезать клип» (ножницы) делит клип на плейхеде на две части, «Расширить клип» тянет клипы выделенных слоёв до конца сцены или проекта.|Clip bounds change by dragging its edges on the timeline. “Split clip” (scissors) splits the clip at the playhead into two parts, “Extend clip” stretches the clips of the selected layers to the end of the scene or project.
+Кнопка сейчас не видна: выберите слой или откройте нужную панель или режим (на телефоне часть кнопок таймлайна - под «Ещё» ⋮).|The button is not visible right now: select a layer or open the right panel or mode (on a phone some timeline buttons are under “More” ⋮).
+Слить в один слой|Merge into one layer
+Сгруппировать (папка)|Group (folder)
+Группы не сливаются: откройте группу и отметьте нужные слои внутри|Groups are not merged: open the group and check the layers inside it
+Слой заблокирован|The layer is locked
+Скрытый слой не сливается: включите глаз у всех сливаемых слоёв|A hidden layer is not merged: turn on the eye of every layer being merged
+Слои изменились: повторите слияние|The layers changed: merge again
+Слито в «{}», анимация сохранена. Часть верхнего слоя за рамкой нижнего обрезана (Undo вернёт)|Merged into “{}”, the animation is kept. The part of the upper layer outside the lower layer's frame was cut off (Undo restores it)
+Слито в «{}»: анимация нижнего слоя сохранена, ключи верхних застыли на текущем кадре|Merged into “{}”: the lower layer's animation is kept, the upper layers' keys froze at the current frame
+Слито в «{}»: ключи, кости и деформеры нижнего слоя сохранены|Merged into “{}”: the lower layer's keys, bones and deformers are kept
+Слито в один слой «{}»|Merged into one layer “{}”
+Скорость {}: плашка {} → {} кадров|Speed {}: clip {} → {} frames
+Скорость {}: плашка {} → {} кадров, проект продлён до предела {} кадров|Speed {}: clip {} → {} frames, the project was extended to the limit of {} frames
+Скорость {}: ключи и рисунки слоя пересчитаны, плашка {} → {} кадров, проект продлён до {} кадров|Speed {}: the layer's keys and drawings were retimed, clip {} → {} frames, the project was extended to {} frames
+Скорость {}: ключи и рисунки слоя пересчитаны, плашка {} → {} кадров|Speed {}: the layer's keys and drawings were retimed, clip {} → {} frames
+Подготовка Play…|Preparing Play…
+Края клипа тянутся пальцем на таймлайне, выбранный клип можно перетащить за середину. Скорость 0.10x–3.0x: у звука и видео играет источник, у анимированного слоя пересчитывается время всех его ключей, рисунков и ключей времени символа (плашка растягивается, проект при нужде продлевается). Реверс работает для звука и видео; Цикл повторяет клип до конца проекта или сцены.|Drag the clip edges on the timeline with a finger; drag the selected clip by its middle to move it. Speed 0.10x–3.0x: sound and video play their source faster or slower, an animated layer has all its keys, drawings and symbol time keys retimed (the clip stretches, the project is extended if needed). Reverse works for sound and video; Loop repeats the clip to the end of the project or scene.
+VibeToon: экспорт завершён|VibeToon: export finished
+VibeToon: экспорт отменён|VibeToon: export cancelled
+VibeToon: экспорт прерван|VibeToon: export interrupted
+VibeToon: экспорт не удался|VibeToon: export failed
+VibeToon: экспорт ждёт {} %|VibeToon: export waiting {} %
+VibeToon: экспорт ждёт|VibeToon: export waiting
+Работа приостановлена · вернитесь в VibeToon, чтобы продолжить|Work is paused · return to VibeToon to continue
+Сохранено: {}|Saved: {}
+Файл сохранён в папку проекта|The file was saved in the project folder
+Файл не записан|No file was written
+Не удалось записать файл|Could not write the file
+Нажмите, чтобы открыть VibeToon|Tap to open VibeToon
+Приложение было закрыто, экспорт остановлен. Откройте проект и запустите экспорт снова|The app was closed and the export stopped. Open the project and start the export again
+Экран редактора закрылся во время экспорта. Запустите экспорт снова|The editor screen closed during the export. Start the export again
+Прошлый экспорт не завершился: приложение было закрыто системой. Запустите экспорт снова|The previous export did not finish: the system closed the app. Start the export again
+Дождитесь окончания экспорта или отмените его|Wait for the export to finish or cancel it
+Итоги экспорта|Export results
+Отменить экспорт|Cancel export
+Экспорт завершён|Export finished
+Экспорт отменён|Export cancelled
+Экспорт прерван|Export interrupted
+Экспорт не удался|Export failed
+Проект: {}|Project: {}
+Открыть проект|Open project
+Не удалось открыть картинку референса|Could not open the reference image
+Перетащите, чтобы передвинуть окно|Drag to move the window
+Референс|Reference
+Заменить картинку|Replace image
+Развернуть окно|Expand window
+Свернуть окно|Collapse window
+Закрыть референс|Close reference
+Потяните, чтобы изменить размер|Drag to resize
+Окно референса…|Reference window…
+Окно референса|Reference window
+«Действия» → «Окно референса…»: выберите картинку-образец, и она появится в небольшом окне поверх редактора - поза, пропорции и цвета всегда перед глазами. Окно тянется за шапку, уголок меняет размер, кнопка с чёрточкой сворачивает его в полоску, крестик ✕ закрывает. В сцену, проект и экспорт референс не попадает.|“Actions” → “Reference window…”: pick a sample image and it appears in a small window over the editor, keeping the pose, proportions and colors in view. Drag the window by its header, resize it with the corner, the dash button collapses it to a strip, the ✕ closes it. The reference never goes into the scene, the project or the export.
+Картинка-образец поверх холста|A sample image over the canvas
+Откройте окно|Open the window
+Откройте «Действия» (сверху слева) и выберите «Окно референса…», затем картинку в системном окне выбора файлов (PNG, JPEG или WebP). Она появится в небольшом окне поверх редактора.|Open “Actions” (top left) and choose “Reference window…”, then pick an image in the system file picker (PNG, JPEG or WebP). It appears in a small window over the editor.
+Зачем оно|Why it helps
+Образец всегда перед глазами: по нему удобно рисовать позу, силуэт и пропорции, сверять цвета и детали с модель-листом - не переключаясь в галерею и не добавляя картинку слоем в проект.|The sample stays in view: draw the pose, silhouette and proportions from it, check colors and details against a model sheet - without switching to the gallery or adding the picture to the project as a layer.
+Передвиньте и измените размер|Move and resize
+Тяните окно за шапку со словом «Референс» - оно не уходит за край экрана. Уголок справа внизу меняет размер, картинка сохраняет пропорции. Положите окно туда, где оно не мешает рисовать.|Drag the window by the header labeled “Reference” - it stays on screen. The bottom-right corner resizes it, and the picture keeps its proportions. Put the window where it doesn't get in the way of drawing.
+Сверните, замените, закройте|Collapse, replace, close
+Кнопка с чёрточкой в шапке сворачивает окно в узкую полоску, кнопка-квадрат разворачивает обратно. Значок картинки заменяет образец, крестик ✕ закрывает окно.|The dash button in the header collapses the window to a narrow strip, the square button expands it again. The image icon replaces the sample, the ✕ closes the window.
+Не часть сцены|Not part of the scene
+Референс - только окно интерфейса: его нет в слоях, на холсте, в «Отменить», в файле проекта и в экспорте. При переходе к другому проекту окно остаётся, пока вы не закроете его крестиком.|The reference is just an interface window: it is not in the layers, on the canvas, in “Undo”, in the project file or in the export. When you switch to another project the window stays until you close it with the ✕.
+Картинка уменьшается до 1024 px по длинной стороне - окно почти не занимает память.|The picture is scaled down to 1024 px on the long side, so the window uses almost no memory.
+Нужен образец прямо в кадре? Добавьте его слоем: «Действия» → «Изображение (PNG, JPG)».|Need the sample inside the frame? Add it as a layer: “Actions” → “Image (PNG, JPG)”.
+Перетащите, чтобы передвинуть подсказку|Drag to move the hint
+Свернуть подсказку|Collapse the hint
+Развернуть подсказку|Expand the hint
+Закрыть урок|Close the lesson
+Шаг {} из {}: {}|Step {} of {}: {}
 """
