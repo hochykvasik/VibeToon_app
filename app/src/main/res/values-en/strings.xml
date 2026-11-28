@@ -2394,4 +2394,17 @@
     <string name="ui_could_not_delete_the_project">Could not delete the project</string>
     <string name="ui_projects_that_could_not_be_deleted">Projects that could not be deleted: {}</string>
     <string name="ui_maximum_drawing_length_frames">Maximum drawing length: {} frames</string>
+    <string name="ui_select_a_layer_to_clear_it">Select a layer to clear it</string>
+    <string name="ui_only_a_drawing_or_vector_layer_can_b">Only a drawing or vector layer can be cleared</string>
+    <string name="ui_stop_playback_first">Stop playback first</string>
+    <string name="ui_the_layer_is_already_empty">The layer is already empty</string>
+    <string name="ui_clear_layer">Clear layer</string>
+    <string name="ui_clear_the_layer">Clear the layer “{}”?</string>
+    <string name="ui_you_can_bring_the_drawing_back_with_">You can bring the drawing back with “Undo”</string>
+    <string name="ui_layer_cleared_undo_brings_the_drawin">Layer cleared: “Undo” brings the drawing back</string>
+    <string name="ui_smaller">Smaller</string>
+    <string name="ui_larger">Larger</string>
+    <string name="ui_step_of_3">Step {} of {}</string>
+    <string name="ui_previous_step">Previous step</string>
+    <string name="ui_next_step">Next step</string>
 </resources>

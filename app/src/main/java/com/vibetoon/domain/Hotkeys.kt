@@ -45,5 +45,9 @@ object Hotkeys {
     }
 
     /** Размер кисти шагом в ~15% (размер логарифмический), в пределах 1..1500. */
-    fun resize(size: Float, bigger: Boolean): Float = (if (bigger) size * 1.15f + 0.5f else size / 1.15f - 0.5f).coerceIn(1f, 1500f)
+    /** Клавиши [ ]: размер ×/÷ 1.15 в пределах 1..1500; испорченный размер (NaN) возвращается к 24 px (спринт 62). */
+    fun resize(size: Float, bigger: Boolean): Float {
+        if (!size.isFinite()) return 24f
+        return (if (bigger) size * 1.15f + 0.5f else size / 1.15f - 0.5f).coerceIn(1f, 1500f)
+    }
 }

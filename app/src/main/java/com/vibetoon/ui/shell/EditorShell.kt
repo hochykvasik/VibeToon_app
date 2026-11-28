@@ -702,7 +702,7 @@ private fun TopBar(
         // спринт 61: правая группа кнопок - полоса с прокруткой (ActionBarLayout): на узком телефоне кнопки не сжимаются,
         // имя проекта получает не меньше 96 dp и сокращается «…»
         val leftButtons = if (compact) 2 else 3
-        val rightButtons = (if (refocus) 1 else 0) + 3 + (if (compact) 1 else 2) + (if (wide) 3 else 1)   // кнопка Export с подписью - как две
+        val rightButtons = (if (refocus) 1 else 0) + 4 + (if (compact) 1 else 2) + (if (wide) 3 else 1)   // спринт 62: + «Очистить слой»   // кнопка Export с подписью - как две
         val plan = com.vibetoon.domain.ui.ActionBarLayout.plan(maxWidth.value - 8f - leftButtons * 42f, rightButtons, hasTitle = true, leftHanded = false, buttonDp = 42f)
         Row(
             Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
@@ -758,6 +758,8 @@ private fun TopBar(
                 add { BarIcon(Icons.Default.AutoAwesome, "FX: вкл — правки пишутся в ключи, выкл — в базовую форму", active = fxOn) { vm.toggleFx() } }
                 add { BarIcon(Icons.Default.Undo, "Отменить", enabled = canUndo && !playing) { vm.undo() } }
                 add { BarIcon(Icons.Default.Redo, "Повторить", enabled = canRedo && !playing) { vm.redo() } }
+                // спринт 62: очистка выбранного слоя рядом с Undo/Redo - подтверждение под кнопкой, «Отменить» вернёт рисунок
+                add { QuickClearButton(vm, playing) }
                 add {
                     if (compact) IconButton(onClick = onExport, modifier = Modifier.size(40.dp).coachTarget("Export")) {
                         Icon(Icons.Default.IosShare, com.vibetoon.ui.i18n.L("Экспорт…"), modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
@@ -784,6 +786,33 @@ private fun TopBar(
             }
             ActionStrip(plan.stripDp.dp, mirrored = false, items = acts, fade = barFade)
         }
+        }
+    }
+}
+
+/**
+ * Спринт 62: «Очистить слой» в верхней строке (телефон в портрете - без похода в панель слоёв). Нажатие открывает
+ * подтверждение прямо под кнопкой; кнопка неактивна, когда выбранный слой очистить нельзя (QuickClear).
+ */
+@Composable
+private fun QuickClearButton(vm: MainViewModel, playing: Boolean) {
+    val sel by vm.selected.collectAsStateWithLifecycle()
+    val rowsNow by vm.rows.collectAsStateWithLifecycle()
+    val st = remember(sel, rowsNow, playing) { vm.quickClearState() }
+    var confirm by remember { mutableStateOf(false) }
+    Box {
+        BarIcon(Icons.Default.DeleteSweep, "Очистить слой", enabled = com.vibetoon.domain.ui.QuickClear.enabled(st)) { confirm = true }
+        DropdownMenu(expanded = confirm, onDismissRequest = { confirm = false }) {
+            Text(com.vibetoon.ui.i18n.L("Очистить слой «{}»?").replace("{}", vm.quickClearName()), fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 260.dp))
+            Text("Рисунок можно вернуть кнопкой «Отменить»", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp).widthIn(max = 260.dp))
+            DropdownMenuItem(
+                text = { Text("Очистить", color = MaterialTheme.colorScheme.error) },
+                leadingIcon = { Icon(Icons.Default.DeleteSweep, null, tint = MaterialTheme.colorScheme.error) },
+                onClick = { confirm = false; vm.quickClear() }
+            )
+            DropdownMenuItem(text = { Text("Отмена") }, onClick = { confirm = false })
         }
     }
 }
@@ -1187,7 +1216,9 @@ private fun PaintToolRow(vm: MainViewModel, onColor: () -> Unit) {
             if (prev != null) androidx.compose.foundation.Image(prev, null, modifier = Modifier.height(24.dp).width(64.dp), contentScale = androidx.compose.ui.layout.ContentScale.Fit)
             com.vibetoon.ui.DropText(cur?.title ?: "Кисти", 12.sp, Modifier.padding(start = 6.dp))
         }
-        com.vibetoon.ui.inspector.ScrubBox("Размер", p.size, 1f, 1500f, { v -> vm.updatePaint { it.copy(size = v) } }, log = true)
+        // спринт 62: пока размер меняется (удержание поля или шаг ‹ ›), на холсте виден кружок этого размера
+        com.vibetoon.ui.inspector.ScrubBox("Размер", p.size, 1f, 1500f, { v -> vm.updatePaint { it.copy(size = v) } }, log = true,
+            onHold = vm::holdSizePreview, onStep = vm::pulseSizePreview)
         com.vibetoon.ui.inspector.ScrubBox("Непр.", p.opacity * 100f, 1f, 100f, { v -> vm.updatePaint { it.copy(opacity = v / 100f) } }, perPx = 0.35f)
         com.vibetoon.ui.inspector.ScrubBox("Жёстк.", p.hardness * 100f, 0f, 100f, { v -> vm.updatePaint { it.copy(hardness = v / 100f) } }, perPx = 0.35f)
         // Stylus sprint: стабилизация 1–10 общая для кисти и ластика (хранится в настройках и резервной копии)

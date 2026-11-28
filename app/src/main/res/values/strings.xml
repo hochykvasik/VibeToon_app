@@ -2394,4 +2394,17 @@
     <string name="ui_could_not_delete_the_project">Не удалось удалить проект</string>
     <string name="ui_projects_that_could_not_be_deleted">Не удалось удалить проектов: {}</string>
     <string name="ui_maximum_drawing_length_frames">Максимальная длина рисунка: {} кадров</string>
+    <string name="ui_select_a_layer_to_clear_it">Выберите слой, чтобы очистить его</string>
+    <string name="ui_only_a_drawing_or_vector_layer_can_b">Очистить можно рисованный или векторный слой</string>
+    <string name="ui_stop_playback_first">Остановите воспроизведение</string>
+    <string name="ui_the_layer_is_already_empty">Слой уже пуст</string>
+    <string name="ui_clear_layer">Очистить слой</string>
+    <string name="ui_clear_the_layer">Очистить слой «{}»?</string>
+    <string name="ui_you_can_bring_the_drawing_back_with_">Рисунок можно вернуть кнопкой «Отменить»</string>
+    <string name="ui_layer_cleared_undo_brings_the_drawin">Слой очищен: «Отменить» вернёт рисунок</string>
+    <string name="ui_smaller">Меньше</string>
+    <string name="ui_larger">Больше</string>
+    <string name="ui_step_of_3">Шаг {} из {}</string>
+    <string name="ui_previous_step">Предыдущий шаг</string>
+    <string name="ui_next_step">Следующий шаг</string>
 </resources>

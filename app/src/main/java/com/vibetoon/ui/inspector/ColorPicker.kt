@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.vibetoon.domain.paint.ColorPalette
 import com.vibetoon.domain.paint.ColorModels
+import com.vibetoon.domain.paint.ColorMemory
 import com.vibetoon.domain.paint.PaletteExchange
 import com.vibetoon.domain.paint.UserPalette
 import androidx.compose.foundation.layout.height
@@ -70,13 +71,16 @@ fun ColorPickerDialog(
     onEyedropper: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val hsv = remember { ColorModels.hsbOf(initial) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val prefs = ctx.getSharedPreferences("vt_colors", android.content.Context.MODE_PRIVATE)
+    // Спринт 62: окно помнит оттенок, насыщенность и яркость до обнуления (ColorMemory) - открытое на чёрном,
+    // оно ставит маркер круга туда, где он был, а яркость 0 → 100 % возвращает прежний цвет, а не серый
+    val hsv = remember { ColorMemory.open(initial, ColorMemory.decode(prefs.getString(ColorMemory.PREF_KEY, null))) }
     var hue by remember { mutableFloatStateOf(hsv.h) }
     var sat by remember { mutableFloatStateOf(hsv.s) }
     var value by remember { mutableFloatStateOf(hsv.v) }
+    var lit by remember { mutableFloatStateOf(hsv.lit) }
     var hex by remember { mutableStateOf(hexOf(initial)) }
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val prefs = ctx.getSharedPreferences("vt_colors", android.content.Context.MODE_PRIVATE)
     // Спринт 37: режим «Круг / RGB / HSB» запоминается между открытиями окна
     var mode by remember { mutableStateOf(prefs.getInt("mode", ColorModels.MODE_WHEEL).takeIf { it in ColorModels.MODES } ?: ColorModels.MODE_WHEEL) }
     var palette by remember { mutableStateOf(ColorPalette.decode(prefs.getString("recent", null))) }
@@ -128,8 +132,16 @@ fun ColorPickerDialog(
     val shownColors = palettes.getOrNull(palIndex)?.colors ?: palette
 
     fun current(): Long = ColorModels.argb(hue.coerceIn(0f, 360f), sat.coerceIn(0f, 1f), value.coerceIn(0f, 1f))
+    fun memo(): ColorMemory.Memo = ColorMemory.Memo(current(), hue, sat, value, lit)
+    fun applyMemo(m: ColorMemory.Memo) { hue = m.h; sat = m.s; value = m.v; lit = m.lit }
     /** Готовый цвет (палитра, HEX, RGB): оттенок серого/чёрного не сбрасывается в 0. */
-    fun setArgb(c: Long) { val h = ColorModels.hsbOf(c, hue, sat); hue = h.h; sat = h.s; value = h.v }
+    fun setArgb(c: Long) = applyMemo(ColorMemory.withArgb(memo(), c))
+    /** Яркость (круг: ползунок, HSB: B): оттенок и насыщенность стоят, яркость до обнуления запоминается. */
+    fun setValue(v: Float) = applyMemo(ColorMemory.withValue(memo(), v))
+    // запись уходит в настройки при любом закрытии окна (Готово, мимо окна, пипетка)
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { prefs.edit().putString(ColorMemory.PREF_KEY, ColorMemory.encode(memo())).apply() }
+    }
     fun push() {
         val c = current()
         hex = hexOf(c)
@@ -158,9 +170,8 @@ fun ColorPickerDialog(
                                 val r = min(size.width, size.height) / 2f
                                 var deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
                                 if (deg < 0) deg += 360f
-                                hue = deg
-                                if (value < 0.05f) value = 1f   // чёрный нельзя "покрасить" без яркости
-                                sat = (sqrt(dx * dx + dy * dy) / r).coerceIn(0f, 1f)
+                                // чёрный нельзя "покрасить" без яркости: возвращается яркость до обнуления (спринт 62)
+                                applyMemo(ColorMemory.pickWheel(memo(), deg, (sqrt(dx * dx + dy * dy) / r).coerceIn(0f, 1f)))
                                 push()
                             }
                             detectTapGestures { pick(it) }
@@ -173,9 +184,7 @@ fun ColorPickerDialog(
                                 val r = min(size.width, size.height) / 2f
                                 var deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
                                 if (deg < 0) deg += 360f
-                                hue = deg
-                                if (value < 0.05f) value = 1f
-                                sat = (sqrt(dx * dx + dy * dy) / r).coerceIn(0f, 1f)
+                                applyMemo(ColorMemory.pickWheel(memo(), deg, (sqrt(dx * dx + dy * dy) / r).coerceIn(0f, 1f)))
                                 push()
                             }
                             detectDragGestures(onDragStart = { pick(it) }) { change, _ -> change.consume(); pick(change.position) }
@@ -207,11 +216,11 @@ fun ColorPickerDialog(
                         }
                         ColorModels.MODE_HSB -> {
                             val (hi, si, bi) = ColorModels.hsbInts(ColorModels.Hsb(hue, sat, value))
-                            ChannelSlider("H", hi, 360, "°", (0..6).map { Color.hsv((it * 60f) % 360f, 1f, 1f) }) { hue = it.toFloat().coerceIn(0f, 360f); if (value < 0.05f && sat > 0f) value = 1f; push() }
+                            ChannelSlider("H", hi, 360, "°", (0..6).map { Color.hsv((it * 60f) % 360f, 1f, 1f) }) { hue = it.toFloat().coerceIn(0f, 360f); if (value < ColorMemory.DARK && sat > 0f) value = lit; push() }
                             ChannelSlider("S", si, 100, "%", listOf(Color.hsv(hue % 360f, 0f, value), Color.hsv(hue % 360f, 1f, value))) { sat = it / 100f; push() }
-                            ChannelSlider("B", bi, 100, "%", listOf(Color.Black, Color.hsv(hue % 360f, sat, 1f))) { value = it / 100f; push() }
+                            ChannelSlider("B", bi, 100, "%", listOf(Color.Black, Color.hsv(hue % 360f, sat, 1f))) { setValue(it / 100f); push() }
                         }
-                        else -> ScrubSlider("Яркость", value, 0f..1f, "${(value * 100).toInt()}%") { value = it; push() }
+                        else -> ScrubSlider("Яркость", value, 0f..1f, "${(value * 100).toInt()}%") { setValue(it); push() }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         // превью: слева старый цвет, справа новый

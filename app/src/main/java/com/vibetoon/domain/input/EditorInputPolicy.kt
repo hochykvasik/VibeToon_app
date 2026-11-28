@@ -13,8 +13,11 @@ object EditorInputPolicy {
     }
     /** До порога движения мультитап не должен сдвигать камеру/слой и создавать ключи. */
     fun transformGestureStarted(maxDistance: Float, touchSlop: Float): Boolean = maxDistance > touchSlop
-    fun cursorRadius(brushSize: Float, screenWidth: Float, layerWidth: Int): Float =
-        (brushSize / 2f * (screenWidth / layerWidth.coerceAtLeast(1))).coerceAtLeast(2f)
+    /** Спринт 62 (аудит): NaN/бесконечность (вырожденный слой, испорченный пресет) - минимальный кружок, не NaN. */
+    fun cursorRadius(brushSize: Float, screenWidth: Float, layerWidth: Int): Float {
+        val r = brushSize / 2f * (screenWidth / layerWidth.coerceAtLeast(1))
+        return if (r.isFinite()) r.coerceAtLeast(2f) else 2f
+    }
     fun showCursor(cursorEnabled: Boolean): Boolean = cursorEnabled
 
     /**
