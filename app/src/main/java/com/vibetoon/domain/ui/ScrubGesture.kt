@@ -82,6 +82,7 @@ object ScrubGesture {
 
     private fun clampTo(v: Float, min: Float, max: Float): Float {
         val lo = minOf(min, max); val hi = maxOf(min, max)
-        return if (v.isFinite()) v.coerceIn(lo, hi) else lo
+        // долгая протяжка у логарифмического поля даёт exp(...) = ∞ - это «до упора вправо», а не минимум
+        return when { v.isNaN() -> lo; v == Float.POSITIVE_INFINITY -> hi; else -> v.coerceIn(lo, hi) }
     }
 }

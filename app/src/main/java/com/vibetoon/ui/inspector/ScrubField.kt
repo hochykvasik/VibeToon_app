@@ -98,6 +98,8 @@ internal fun Modifier.scrubGesture(
             if (c.isConsumed || ev.changes.count { it.pressed } > 1) return@awaitEachGesture
             last = c.position; lastTime = c.uptimeMillis
             decision = com.vibetoon.domain.ui.ScrubGesture.decide(mode, last.x - down.position.x, last.y - down.position.y, lastTime - t0, !c.pressed, slop)
+            // решающий сдвиг поглощаем сразу: прокрутка-родитель (она получает событие после поля) его уже не возьмёт
+            if (decision == com.vibetoon.domain.ui.ScrubGesture.Decision.SCRUB || decision == com.vibetoon.domain.ui.ScrubGesture.Decision.TAP) c.consume()
         }
         when (decision) {
             com.vibetoon.domain.ui.ScrubGesture.Decision.TAP -> onTap(down.position.x, size.width.toFloat())
