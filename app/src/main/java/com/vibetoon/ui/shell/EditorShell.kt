@@ -803,7 +803,7 @@ private fun QuickClearButton(vm: MainViewModel, playing: Boolean) {
     Box {
         BarIcon(Icons.Default.DeleteSweep, "Очистить слой", enabled = com.vibetoon.domain.ui.QuickClear.enabled(st)) { confirm = true }
         DropdownMenu(expanded = confirm, onDismissRequest = { confirm = false }) {
-            Text("Очистить слой «${vm.quickClearName()}»?", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            Text(com.vibetoon.ui.i18n.L("Очистить слой «{}»?").replace("{}", vm.quickClearName()), fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 260.dp))
             Text("Рисунок можно вернуть кнопкой «Отменить»", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp).widthIn(max = 260.dp))

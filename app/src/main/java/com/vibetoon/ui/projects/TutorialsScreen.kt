@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,6 +35,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import com.vibetoon.ui.i18n.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -349,36 +353,98 @@ fun Tutorial.coachSession() = com.vibetoon.ui.shell.Coach.Session(
     }
 )
 
+/**
+ * Экран урока. Спринт 62 (раскладка - [com.vibetoon.domain.ui.TutorialLayout]): на узком экране схема - полоса
+ * сверху, шаги во всю ширину без вложенных карточек, внизу закреплённая панель «‹ Шаг N из M ›» и кнопка «Пройти в
+ * редакторе» (подпись в две строки, без обрезки). На широком - две колонки, у левши шаги слева, схема справа.
+ */
 @Composable
 fun TutorialDetailScreen(t: Tutorial, onClose: () -> Unit, onShowInEditor: (() -> Unit)? = null) {
     BackHandler(onBack = onClose)
+    val leftHanded = com.vibetoon.ui.theme.LocalAppSettings.current?.leftHanded == true
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().height(52.dp).background(t.color.copy(alpha = 0.18f)).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onClose) { Icon(Icons.Default.ArrowBack, com.vibetoon.ui.i18n.L("Назад")) }
-                Text(t.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-            }
-            Row(Modifier.fillMaxSize().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(Modifier.weight(0.7f).fillMaxSize().clip(RoundedCornerShape(16.dp)).background(t.color.copy(alpha = 0.15f))) {
-                    Diagram(t.diagram, t.color, Modifier.fillMaxSize().padding(12.dp))
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+            val plan = com.vibetoon.domain.ui.TutorialLayout.plan(maxWidth.value, maxHeight.value, leftHanded)
+            val plateStacked = com.vibetoon.domain.ui.TutorialLayout.plateStacked(plan.textWidthDp)
+            val list = androidx.compose.foundation.lazy.rememberLazyListState()
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            // строки списка: 0 - подзаголовок (и кнопка редактора на широком), 1..N - шаги, дальше - советы
+            val stepAt = { i: Int -> 1 + i }
+            // шаг, выбранный кнопками ‹ ›: остаётся текущим, пока виден (последние шаги не доезжают до верха списка)
+            var target by androidx.compose.runtime.remember(t) { androidx.compose.runtime.mutableIntStateOf(-1) }
+            val current by androidx.compose.runtime.remember(t) {
+                androidx.compose.runtime.derivedStateOf {
+                    val visible = list.layoutInfo.visibleItemsInfo.map { it.index - 1 }.filter { it in t.steps.indices }
+                    if (target in visible) target else (list.firstVisibleItemIndex - 1).coerceIn(0, (t.steps.size - 1).coerceAtLeast(0))
                 }
-                Column(Modifier.weight(1.3f).fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(t.subtitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-                    if (onShowInEditor != null) androidx.compose.material3.Button(
-                        onClick = onShowInEditor, modifier = Modifier.fillMaxWidth(),
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = t.color)
-                    ) { com.vibetoon.ui.IconText(androidx.compose.material.icons.Icons.Default.PlayArrow, "Пройти в редакторе: кнопки подсвечиваются", 14.sp) }
-                    t.steps.forEachIndexed { i, step -> StepCard(i + 1, step, t.color) }
-                    if (t.tips.isNotEmpty()) Card(colors = CardDefaults.cardColors(containerColor = t.color.copy(alpha = 0.12f))) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Lightbulb, null, tint = t.color, modifier = Modifier.size(18.dp))
-                                Text("Советы", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
+            }
+            fun goTo(i: Int) {
+                if (t.steps.isEmpty()) return
+                val k = i.coerceIn(0, t.steps.size - 1)
+                target = k
+                scope.launch { list.animateScrollToItem(stepAt(k)) }
+            }
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().height(52.dp).background(t.color.copy(alpha = 0.18f)).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onClose) { Icon(Icons.Default.ArrowBack, com.vibetoon.ui.i18n.L("Назад")) }
+                    Text(t.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 2, lineHeight = 21.sp,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                }
+                val steps: @Composable (Modifier) -> Unit = { m ->
+                    androidx.compose.foundation.lazy.LazyColumn(m, state = list, verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)) {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(t.subtitle, fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                                if (onShowInEditor != null && !plan.bottomAction) EditorButton(t.color, onShowInEditor)
                             }
-                            for (tip in t.tips) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("•", fontSize = 13.sp)
-                                Text(tip, fontSize = 13.sp)
+                        }
+                        t.steps.forEachIndexed { i, step -> item { StepCard(i + 1, step, t.color, plateStacked) } }
+                        if (t.tips.isNotEmpty()) item { TipsBlock(t) }
+                    }
+                }
+                if (plan.stacked) {
+                    Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)) {
+                        Box(Modifier.padding(top = 12.dp, bottom = 12.dp).fillMaxWidth().height(plan.diagramHeightDp.dp).clip(RoundedCornerShape(16.dp)).background(t.color.copy(alpha = 0.15f))) {
+                            Diagram(t.diagram, t.color, Modifier.fillMaxSize().padding(8.dp))
+                        }
+                        steps(Modifier.weight(1f).fillMaxWidth())
+                    }
+                } else {
+                    Row(Modifier.weight(1f).fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        val diagram = @Composable {
+                            Box(Modifier.weight(plan.diagramFraction).fillMaxSize().clip(RoundedCornerShape(16.dp)).background(t.color.copy(alpha = 0.15f))) {
+                                Diagram(t.diagram, t.color, Modifier.fillMaxSize().padding(12.dp))
                             }
+                        }
+                        if (!plan.diagramRight) diagram()
+                        steps(Modifier.weight(1f - plan.diagramFraction).fillMaxSize())
+                        if (plan.diagramRight) diagram()
+                    }
+                }
+                // нижняя панель: переход по шагам и кнопка «Пройти в редакторе» - у большого пальца
+                if (plan.bottomAction && t.steps.isNotEmpty()) {
+                    Surface(tonalElevation = 3.dp, shadowElevation = 6.dp, modifier = Modifier.fillMaxWidth()) {
+                        val nav = @Composable { m: Modifier ->
+                            Row(m, verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { goTo(current - 1) }, enabled = current > 0, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Default.ChevronLeft, com.vibetoon.ui.i18n.L("Предыдущий шаг"))
+                                }
+                                Text(com.vibetoon.ui.i18n.L("Шаг {} из {}").replaceFirst("{}", "${current + 1}").replaceFirst("{}", "${t.steps.size}"),
+                                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    maxLines = 1, modifier = Modifier.weight(1f))
+                                IconButton(onClick = { goTo(current + 1) }, enabled = current < t.steps.size - 1, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Default.ChevronRight, com.vibetoon.ui.i18n.L("Следующий шаг"))
+                                }
+                            }
+                        }
+                        // узкий экран - две строки (шаги, кнопка); низкий широкий (телефон в ландшафте) - одна строка
+                        if (plan.stacked) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            nav(Modifier.fillMaxWidth())
+                            if (onShowInEditor != null) EditorButton(t.color, onShowInEditor)
+                        } else Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            nav(Modifier.width(240.dp))
+                            if (onShowInEditor != null) Box(Modifier.weight(1f)) { EditorButton(t.color, onShowInEditor) }
                         }
                     }
                 }
@@ -387,35 +453,65 @@ fun TutorialDetailScreen(t: Tutorial, onClose: () -> Unit, onShowInEditor: (() -
     }
 }
 
+/** «Пройти в редакторе»: подпись переносится (до двух строк), не обрезается «…» на узком экране. */
 @Composable
-private fun StepCard(n: Int, step: TutorialStep, color: Color) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.size(30.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
-                Text("$n", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(step.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Text(step.text, fontSize = 14.sp, lineHeight = 20.sp)
-                for (b in step.buttons) ButtonPlate(b, color)
-                step.tip?.let {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Top) {
-                        Icon(Icons.Default.Lightbulb, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
-                        Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
-                    }
-                }
-            }
+private fun EditorButton(color: Color, onClick: () -> Unit) {
+    androidx.compose.material3.Button(
+        onClick = onClick, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = color)
+    ) {
+        Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
+        Text("Пройти в редакторе: кнопки подсвечиваются", fontSize = 14.sp, lineHeight = 18.sp, maxLines = 2,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+@Composable
+private fun TipsBlock(t: Tutorial) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(t.color.copy(alpha = 0.12f)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Lightbulb, null, tint = t.color, modifier = Modifier.size(18.dp))
+            Text("Советы", modifier = Modifier.padding(start = 6.dp), fontWeight = FontWeight.SemiBold)
+        }
+        for (tip in t.tips) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("•", fontSize = 13.sp)
+            Text(tip, fontSize = 13.sp, lineHeight = 18.sp)
         }
     }
 }
 
-/** Плашка «кнопка интерфейса»: значок (или чип) в рамке, как в редакторе, и подпись, где её искать. */
+/**
+ * Шаг урока. Спринт 62: без вложенной карточки - номер слева, текст на всю ширину, плашки кнопок под текстом; шаги
+ * разделены тонкой линией, а не рамками (на узком экране текст не зажат двумя отступами карточек).
+ */
 @Composable
-private fun ButtonPlate(b: UiButton, color: Color) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = 0.10f)).padding(8.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+private fun StepCard(n: Int, step: TutorialStep, color: Color, plateStacked: Boolean) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(28.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
+                Text("$n", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+            Text(step.title, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        }
+        Text(step.text, fontSize = 15.sp, lineHeight = 22.sp)
+        for (b in step.buttons) ButtonPlate(b, color, plateStacked)
+        step.tip?.let {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Top) {
+                Icon(Icons.Default.Lightbulb, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+                Text(it, fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+            }
+        }
+        androidx.compose.material3.HorizontalDivider(Modifier.padding(top = 2.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+    }
+}
+
+/**
+ * Плашка «кнопка интерфейса»: значок (или чип) в рамке, как в редакторе, и подпись, где её искать. Спринт 62: в
+ * узкой колонке ([stacked]) подпись под кнопкой во всю ширину, а не в остатке строки справа.
+ */
+@Composable
+private fun ButtonPlate(b: UiButton, color: Color, stacked: Boolean) {
+    val chip = @Composable {
         Box(
             Modifier.clip(RoundedCornerShape(if (b.chip) 8.dp else 20.dp)).background(MaterialTheme.colorScheme.surface)
                 .border(1.dp, color, RoundedCornerShape(if (b.chip) 8.dp else 20.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
@@ -424,12 +520,17 @@ private fun ButtonPlate(b: UiButton, color: Color) {
             if (b.icon != null) Icon(b.icon, com.vibetoon.ui.i18n.L(b.label), tint = color, modifier = Modifier.size(24.dp))
             else Text(b.label, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = color)
         }
+    }
+    val caption = @Composable {
         Column {
-            Text(b.label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(b.label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             val location = com.vibetoon.ui.i18n.L(b.where)
-            Text(com.vibetoon.ui.i18n.L("Где: {}").replace("{}", location), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            Text(com.vibetoon.ui.i18n.L("Где: {}").replace("{}", location), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         }
     }
+    val m = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = 0.10f)).padding(8.dp)
+    if (stacked) Column(m, verticalArrangement = Arrangement.spacedBy(6.dp)) { chip(); caption() }
+    else Row(m, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { chip(); Box(Modifier.weight(1f)) { caption() } }
 }
 
 /** Простые схемы: цепочка костей, две позы, решётка Warp, дерево слоёв, дорожка с ключами, треугольная сетка. */

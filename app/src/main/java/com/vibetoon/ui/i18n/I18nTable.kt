@@ -2083,6 +2083,17 @@ val I18N_IDS: Map<String, Int> = mapOf(
     "Не удалось переименовать проект" to R.string.ui_could_not_rename_the_project,
     "Не удалось создать копию проекта" to R.string.ui_could_not_duplicate_the_project,
     "Не удалось удалить проект" to R.string.ui_could_not_delete_the_project,
+    "Выберите слой, чтобы очистить его" to R.string.ui_select_a_layer_to_clear_it,
+    "Очистить можно рисованный или векторный слой" to R.string.ui_only_a_drawing_or_vector_layer_can_b,
+    "Остановите воспроизведение" to R.string.ui_stop_playback_first,
+    "Слой уже пуст" to R.string.ui_the_layer_is_already_empty,
+    "Очистить слой" to R.string.ui_clear_layer,
+    "Рисунок можно вернуть кнопкой «Отменить»" to R.string.ui_you_can_bring_the_drawing_back_with_,
+    "Слой очищен: «Отменить» вернёт рисунок" to R.string.ui_layer_cleared_undo_brings_the_drawin,
+    "Меньше" to R.string.ui_smaller,
+    "Больше" to R.string.ui_larger,
+    "Предыдущий шаг" to R.string.ui_previous_step,
+    "Следующий шаг" to R.string.ui_next_step,
 )
 
 /** Шаблоны с подстановкой: регулярное выражение русской строки (группы = значения) -> ресурс; от самых конкретных к общим. */
@@ -2313,6 +2324,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^Привязано\\ слоёв:\\ (.+?)\$" to R.string.ui_layers_bound,
     "^Слоёв\\ с\\ ключами:\\ (.+?)\$" to R.string.ui_layers_with_keys,
     "^Кисть\\ сохранена:\\ (.+?)\$" to R.string.ui_brush_saved,
+    "^Очистить\\ слой\\ «(.+?)»\\?\$" to R.string.ui_clear_the_layer,
     "^\\ \\ Маркеры\\ \\ кадр\\ (.+?)\$" to R.string.ui_markers_frame,
     "^Шрифт\\ добавлен:\\ (.+?)\$" to R.string.ui_font_added,
     "^Маркер\\ «(.+?)»:\\ кадр\\ (.+?)\$" to R.string.ui_marker_frame,
@@ -2380,6 +2392,7 @@ val I18N_TEMPLATES: List<Pair<String, Int>> = listOf(
     "^(.+?)\\ \\(копия\\)\$" to R.string.ui_copy_2,
     "^(.+?)\\ \\ \\(свой\\)\$" to R.string.ui_custom_2,
     "^Проект:\\ (.+?)\$" to R.string.ui_project_2,
+    "^Шаг\\ (.+?)\\ из\\ (.+?)\$" to R.string.ui_step_of_3,
     "^Символ\\ (.+?)\$" to R.string.ui_symbol,
     "^Группа\\ (.+?)\$" to R.string.ui_group_3,
     "^Слоёв:\\ (.+?)\$" to R.string.ui_layers_2,

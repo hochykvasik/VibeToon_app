@@ -2070,4 +2070,17 @@ VibeToon: экспорт ждёт|VibeToon: export waiting
 Не удалось удалить проект|Could not delete the project
 Не удалось удалить проектов: {}|Projects that could not be deleted: {}
 Максимальная длина рисунка: {} кадров|Maximum drawing length: {} frames
+Выберите слой, чтобы очистить его|Select a layer to clear it
+Очистить можно рисованный или векторный слой|Only a drawing or vector layer can be cleared
+Остановите воспроизведение|Stop playback first
+Слой уже пуст|The layer is already empty
+Очистить слой|Clear layer
+Очистить слой «{}»?|Clear the layer “{}”?
+Рисунок можно вернуть кнопкой «Отменить»|You can bring the drawing back with “Undo”
+Слой очищен: «Отменить» вернёт рисунок|Layer cleared: “Undo” brings the drawing back
+Меньше|Smaller
+Больше|Larger
+Шаг {} из {}|Step {} of {}
+Предыдущий шаг|Previous step
+Следующий шаг|Next step
 """
