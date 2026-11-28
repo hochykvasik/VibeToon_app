@@ -663,7 +663,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         psdPending = false
         thumbGen++; thumbs.clear(); thumbPending.clear()   // миниатюры прошлого проекта не должны всплывать у новых слоёв
         playScenes.clear()   // спринт 55: сцены Play прошлого проекта
-        stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null
+        stroker = null; clearShapeAssist(); _paintCursor.value = null; _paintTool.value = null; hideSizePreview()
         paintSizes.clear(); paintDirty.clear(); versionedRasterIds.clear(); mediaIds.reset()
         deformCache.clear()   // спринт 43: готовые сетки прошлого проекта не держат память
         // спринт 47: кэши прошлого проекта (участники символов, видимость, сетки, пиксели PSD для «Пластики») не держат память
@@ -2515,7 +2515,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // Пипетка удержанием не конкурирует со штрихом, выделением, костью или деформером.
     private var canvasLongPressClaimed = false
-    fun beginCanvasGesture() { canvasLongPressClaimed = false }
+    fun beginCanvasGesture() { canvasLongPressClaimed = false; if (_sizePreview.value != null) hideSizePreview() }
     fun isCanvasLongPressClaimed() = canvasLongPressClaimed
     fun finishCanvasGesture(): Boolean {
         RenderHost.view?.setInteractive(false)
@@ -4404,7 +4404,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** «Очистить»: все пиксели слоя становятся прозрачными; слой, его ключи и свойства остаются; отменяется Undo. */
-    fun clearLayer(id: Int) {
+    fun clearLayer(id: Int, done: String = "Слой очищен") {
         if (_playing.value) return
         if (isLockedId(id)) { lockedNotice(); return }
         val view = RenderHost.view ?: return
@@ -4426,7 +4426,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             commitPaintOp(op)
             withContext(Dispatchers.Default) { op.compress() }
             enforcePaintBudget()
-            _state.value = UiState.Message("Слой очищен")
+            _state.value = UiState.Message(done)
         }
     }
 
@@ -8107,6 +8107,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         clearRulerGesture()
         _gradientMode.value = false
         _paintTool.value = t
+        hideSizePreview()
         if (t != null) {
             ensurePixelTarget()?.let { requestPaintSize(it) }
             requestBrushPreviews()
@@ -8121,6 +8122,88 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Меняет настройки активного инструмента (кисти или ластика). */
     fun updatePaint(change: (BrushParams) -> BrushParams) {
         if (_paintTool.value == PaintTool.ERASER) _eraser.value = change(_eraser.value) else _brush.value = change(_brush.value)
+        if (sizeHold || _sizePreview.value != null) refreshSizePreview()
+    }
+
+    // ---- спринт 62: кружок размера кисти на холсте, пока меняется размер ----
+
+    private val _sizePreview = MutableStateFlow<FloatArray?>(null)
+    /** Контур кружка размера (экранные точки x0, y0, x1, y1...) или null - не показывать. */
+    val sizePreview: StateFlow<FloatArray?> = _sizePreview.asStateFlow()
+    private var sizeHold = false
+    private var sizePulseAt = 0L
+    private var sizePulseJob: kotlinx.coroutines.Job? = null
+
+    /** Палец держит поле «Размер» (регулировка): кружок виден до отпускания, после - сразу исчезает. */
+    fun holdSizePreview(on: Boolean) {
+        sizeHold = on
+        sizePulseJob?.cancel()
+        if (on) refreshSizePreview() else { sizePulseAt = 0L; _sizePreview.value = null }
+    }
+
+    /** Шаг ‹ › или клавиша [ ]: кружок на [BrushSizePreview.PULSE_MS] и исчезает сам. */
+    fun pulseSizePreview() {
+        sizePulseAt = SystemClock.uptimeMillis()
+        refreshSizePreview()
+        sizePulseJob?.cancel()
+        sizePulseJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(com.vibetoon.domain.paint.BrushSizePreview.PULSE_MS)
+            if (!sizeHold) { sizePulseAt = 0L; _sizePreview.value = null }
+        }
+    }
+
+    private fun hideSizePreview() { sizeHold = false; sizePulseAt = 0L; sizePulseJob?.cancel(); _sizePreview.value = null }
+
+    /** Экранные оси пикселя картинки слоя, на котором рисует кисть; нет слоя - оси холста (1 px документа). */
+    private fun sizePreviewAxes(): com.vibetoon.domain.paint.BrushSizePreview.Axes? {
+        val id = paintTargetId()
+        val tex = id?.let { paintSizes[it] ?: run { requestPaintSize(it); null } }
+        val q = id?.let { texQuad(it) }
+        if (tex != null && q != null && q.size >= 8) {
+            val o = toScreen(q[0], q[1]); val x = toScreen(q[2], q[3]); val y = toScreen(q[6], q[7])
+            com.vibetoon.domain.paint.BrushSizePreview.axes(x.first - o.first, x.second - o.second, y.first - o.first, y.second - o.second, tex[0], tex[1])?.let { return it }
+        }
+        val o = toScreen(0f, 0f); val x = toScreen(1f, 0f); val y = toScreen(0f, 1f)
+        return com.vibetoon.domain.paint.BrushSizePreview.axes(x.first - o.first, x.second - o.second, y.first - o.first, y.second - o.second, 1, 1)
+    }
+
+    private fun refreshSizePreview() {
+        if (!com.vibetoon.domain.paint.BrushSizePreview.visible(sizeHold, sizePulseAt, SystemClock.uptimeMillis()) || _paintTool.value == null) {
+            _sizePreview.value = null; return
+        }
+        val c = com.vibetoon.domain.paint.BrushSizePreview.center(viewW, viewH) ?: run { _sizePreview.value = null; return }
+        val a = sizePreviewAxes() ?: run { _sizePreview.value = null; return }
+        val p = paintParams()
+        _sizePreview.value = com.vibetoon.domain.paint.BrushSizePreview.outline(c.first, c.second, p.size, p.roundness, a).takeIf { it.isNotEmpty() }
+    }
+
+    // ---- спринт 62: быстрая очистка выбранного слоя (кнопка рядом с «Отменить / Повторить») ----
+
+    /** Состояние кнопки очистки для выбранного слоя (см. [com.vibetoon.domain.ui.QuickClear]). */
+    fun quickClearState(): com.vibetoon.domain.ui.QuickClear.State {
+        val id = _selected.value
+        val kind = when {
+            id == null || id >= BONE_ID_BASE -> com.vibetoon.domain.ui.QuickClear.Kind.NONE
+            isVectorLayer(id) -> com.vibetoon.domain.ui.QuickClear.Kind.VECTOR
+            layers.any { it.id == id && it.kind == LayerKind.LAYER } && media.none { it.id == id && it.kind != MediaKind.IMAGE } ->
+                com.vibetoon.domain.ui.QuickClear.Kind.RASTER
+            layers.none { it.id == id } -> com.vibetoon.domain.ui.QuickClear.Kind.NONE
+            else -> com.vibetoon.domain.ui.QuickClear.Kind.OTHER
+        }
+        return com.vibetoon.domain.ui.QuickClear.state(kind, id != null && isLockedId(id), _playing.value, id?.let { vectorCount(it) } ?: 0)
+    }
+
+    /** Имя слоя для подтверждения очистки. */
+    fun quickClearName(): String = _selected.value?.let { id -> layers.firstOrNull { it.id == id }?.name }.orEmpty()
+
+    /** Очистка после подтверждения: рисованный слой - пиксели (одна запись Undo), векторный - примитивы. */
+    fun quickClear() {
+        val st = quickClearState()
+        if (!com.vibetoon.domain.ui.QuickClear.enabled(st)) { _state.value = UiState.Message(com.vibetoon.domain.ui.QuickClear.reason(st)); return }
+        val id = _selected.value ?: return
+        if (stroker != null) paintCancel()
+        if (isVectorLayer(id)) { clearVectors(); _state.value = UiState.Message("Слой очищен: «Отменить» вернёт рисунок") }
+        else clearLayer(id, "Слой очищен: «Отменить» вернёт рисунок")
     }
 
     /** Горячие клавиши физической клавиатуры. */
@@ -8133,8 +8216,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             com.vibetoon.domain.HotkeyAction.BRUSH -> setPaintTool(PaintTool.BRUSH)
             com.vibetoon.domain.HotkeyAction.ERASER -> setPaintTool(PaintTool.ERASER)
             com.vibetoon.domain.HotkeyAction.SELECT -> setPaintTool(null)
-            com.vibetoon.domain.HotkeyAction.BRUSH_SMALLER -> updatePaint { it.copy(size = com.vibetoon.domain.Hotkeys.resize(it.size, false)) }
-            com.vibetoon.domain.HotkeyAction.BRUSH_BIGGER -> updatePaint { it.copy(size = com.vibetoon.domain.Hotkeys.resize(it.size, true)) }
+            com.vibetoon.domain.HotkeyAction.BRUSH_SMALLER -> { updatePaint { it.copy(size = com.vibetoon.domain.Hotkeys.resize(it.size, false)) }; if (_paintTool.value != null) pulseSizePreview() }
+            com.vibetoon.domain.HotkeyAction.BRUSH_BIGGER -> { updatePaint { it.copy(size = com.vibetoon.domain.Hotkeys.resize(it.size, true)) }; if (_paintTool.value != null) pulseSizePreview() }
             com.vibetoon.domain.HotkeyAction.DELETE -> if (_keySel.value.isNotEmpty()) deleteSelectedKeys() else deleteSelected()
         }
     }

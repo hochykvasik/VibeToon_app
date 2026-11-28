@@ -507,6 +507,7 @@ fun EditorCanvas(vm: MainViewModel, modifier: Modifier) {
         MeshOverlayLayer(vm)
         PinOverlayLayer(vm)
         BrushCircleLayer(vm)
+        BrushSizePreviewLayer(vm)   // спринт 62: кружок размера кисти, пока меняется размер
         CameraAngleBadge(vm)
         PerfHudLayer(vm)
         PivotOverlay(vm)
@@ -1281,6 +1282,33 @@ private fun BrushCircleLayer(vm: MainViewModel) {
     Canvas(Modifier.fillMaxSize().clipToBounds()) {
         drawCircle(Color.Black.copy(alpha = 0.5f), b[2], Offset(b[0], b[1]), style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()))
         drawCircle(Color.White, b[2], Offset(b[0], b[1]), style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+    }
+}
+
+/**
+ * Спринт 62: кружок размера кисти в середине видимой области холста, пока меняется размер (поле «Размер», шаги ‹ ›,
+ * клавиши [ ]). Контур уже в экранных координатах с учётом зума, поворота/отражения холста и слоя (BrushSizePreview);
+ * касаний не принимает и исчезает сразу после отпускания поля - следов на холсте не остаётся.
+ */
+@Composable
+private fun BrushSizePreviewLayer(vm: MainViewModel) {
+    val pts by vm.sizePreview.collectAsStateWithLifecycle()
+    val p = pts ?: return
+    if (p.size < 6) return
+    Canvas(Modifier.fillMaxSize().clipToBounds()) {
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(p[0], p[1])
+            var i = 2
+            while (i + 1 < p.size) { lineTo(p[i], p[i + 1]); i += 2 }
+            close()
+        }
+        drawPath(path, Color.Black.copy(alpha = 0.55f), style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()))
+        drawPath(path, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+        var cx = 0f; var cy = 0f
+        for (k in 0 until p.size / 2) { cx += p[k * 2]; cy += p[k * 2 + 1] }
+        val c = Offset(cx / (p.size / 2), cy / (p.size / 2))
+        drawCircle(Color.Black.copy(alpha = 0.55f), 2.5.dp.toPx(), c)
+        drawCircle(Color.White, 1.5.dp.toPx(), c)
     }
 }
 
